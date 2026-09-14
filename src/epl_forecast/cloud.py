@@ -53,8 +53,15 @@ def sync_data(root: Path, store: R2Store) -> dict:
     root = Path(root)
     existing = set(store.keys())
     uploaded = 0
+    new_manifests = []
     for directory in IMMUTABLE_DATA_DIRECTORIES:
         paths = sorted(path for path in (root / directory).rglob("*") if path.is_file())
+        if directory == "manifests":
+            new_manifests = [
+                json.loads(path.read_text())
+                for path in paths
+                if path.relative_to(root).as_posix() not in existing
+            ]
         uploaded += _upload_missing(store, root, paths, existing)
         existing.update(path.relative_to(root).as_posix() for path in paths)
     audits = sorted(path for path in (root / "audits").glob("*.json") if path.is_file())
@@ -64,7 +71,7 @@ def sync_data(root: Path, store: R2Store) -> dict:
     remote_requests = list(
         store.get_json("state/collection.json", {}).get("latest_by_url", {}).values()
     )
-    manifests = manifest_state([*remote_manifests, *read_manifests(root)])
+    manifests = manifest_state([*remote_manifests, *new_manifests])
     requests = collection_state([*remote_requests, *read_requests(root)])
     store.put_json("state/manifests.json", manifests)
     store.put_json("state/collection.json", requests)

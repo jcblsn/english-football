@@ -90,6 +90,23 @@ def test_data_sync_writes_objects_before_mutable_state(tmp_path):
     }
 
 
+def test_data_sync_does_not_expand_a_compact_catalog_with_cached_manifests(tmp_path):
+    cached = {"batch_id": "cached", "files": [], "request": {}}
+    path = tmp_path / "manifests/cached.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(cached))
+    compact = {"batch_id": "compact", "covers_history": True, "files": []}
+    store = Store()
+    store.objects["manifests/cached.json"] = path.read_bytes()
+    store.put_json("state/manifests.json", manifest_state([compact]))
+
+    result = sync_data(tmp_path, store)
+
+    assert result["uploaded"] == 0
+    assert result["manifests"] == 1
+    assert store.get_json("state/manifests.json") == manifest_state([compact])
+
+
 def test_compaction_preserves_row_level_cutoffs(tmp_path):
     root = tmp_path / "source"
     common = {
