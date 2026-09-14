@@ -1,0 +1,11 @@
+interface:
+  display_name: "Datawrapper Charts"
+  short_description: "Create and review Page 324 charts"
+  default_prompt: "Use $datawrapper-charts to create or edit a Page 324 Datawrapper chart."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "datawrapper"
+      description: "Datawrapper MCP server"
+      transport: "stdio"

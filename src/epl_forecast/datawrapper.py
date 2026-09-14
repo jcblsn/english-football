@@ -5,6 +5,7 @@ import io
 import json
 import re
 import tomllib
+from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -57,13 +58,17 @@ class DatawrapperClient:
         except HTTPError as error:
             detail = error.read().decode(errors="replace").strip()
             suffix = f": {detail[:500]}" if detail else ""
-            raise DatawrapperError(f"Datawrapper API returned HTTP {error.code}{suffix}") from None
+            raise DatawrapperError(
+                f"Datawrapper API returned HTTP {error.code} for {endpoint}{suffix}"
+            ) from None
         except (URLError, TimeoutError) as error:
             raise DatawrapperError(
                 f"Datawrapper API request failed: {type(error).__name__}"
             ) from None
         if status not in expected:
-            raise DatawrapperError(f"Datawrapper API returned unexpected HTTP {status}")
+            raise DatawrapperError(
+                f"Datawrapper API returned unexpected HTTP {status} for {endpoint}"
+            )
         if not payload:
             return None
         try:
@@ -80,7 +85,7 @@ class DatawrapperClient:
         )
 
     def update_chart(self, chart_id: str, properties: dict) -> dict:
-        return self.request("PATCH", f"/charts/{chart_id}", properties)
+        return self.request("PATCH", f"/charts/{chart_id}", properties, expected=(200, 201))
 
     def upload_data(self, chart_id: str, data: str) -> None:
         self.request(
@@ -92,7 +97,7 @@ class DatawrapperClient:
         )
 
     def publish_chart(self, chart_id: str) -> dict:
-        return self.request("POST", f"/charts/{chart_id}/publish", {})
+        return self.request("POST", f"/charts/{chart_id}/publish", {}, expected=(200, 201))
 
 
 def load_chart_id(config_path: Path) -> str:
@@ -132,13 +137,18 @@ def latest_forecast(site: Path) -> dict:
 
 def chart_data(forecast: dict) -> str:
     rows = sorted(
-        ((team["name"], team["events"]["title_probability"]) for team in forecast["teams"]),
+        (
+            (team["name"], Decimal(str(team["events"]["title_probability"])) * 100)
+            for team in forecast["teams"]
+        ),
         key=lambda row: (-row[1], row[0]),
     )
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["Club", "Chance"])
-    writer.writerows(rows)
+    writer.writerows(
+        (name, format(value, "f").rstrip("0").rstrip(".") or "0") for name, value in rows
+    )
     return output.getvalue()
 
 
@@ -156,8 +166,8 @@ def chart_properties(forecast: dict) -> dict:
                 "intro": f"The M7 model estimates each club's chance of winning the {season} Premier League.",
                 "byline": "Page 324",
                 "source-name": "Page 324 forecast",
-                "source-url": "https://github.com/jcblsn/english-football",
-                "number-format": "0.[0]%",
+                "source-url": "",
+                "number-format": "0.[00]%",
             },
             "annotate": {
                 "notes": f"Forecast from {generated_date}. Based on {forecast['simulations']:,} simulated seasons."
@@ -165,7 +175,7 @@ def chart_properties(forecast: dict) -> dict:
             "visualize": {
                 "resort-bars": True,
                 "sort-asc": False,
-                "value-label-format": "0.[0]%",
+                "value-label-format": "0.[00]%",
                 "value-label-visibility": "show",
             },
         },

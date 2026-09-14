@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from epl_forecast.datawrapper import DatawrapperError, chart_data, load_api_key, publish
+from epl_forecast.datawrapper import (
+    DatawrapperError,
+    chart_data,
+    chart_properties,
+    load_api_key,
+    publish,
+)
 
 
 class Client:
@@ -35,6 +41,7 @@ def forecast():
         "teams": [
             {"name": "Second", "events": {"title_probability": 0.25}},
             {"name": "First", "events": {"title_probability": 0.75}},
+            {"name": "Small", "events": {"title_probability": 0.0034}},
         ],
     }
 
@@ -71,7 +78,11 @@ def test_api_key_must_be_in_env_file(tmp_path):
 
 
 def test_chart_data_ranks_real_probabilities():
-    assert chart_data(forecast()) == "Club,Chance\nFirst,0.75\nSecond,0.25\n"
+    assert chart_data(forecast()) == "Club,Chance\nFirst,75\nSecond,25\nSmall,0.34\n"
+    properties = chart_properties(forecast())
+    assert properties["metadata"]["axes"] == {"bars": "Chance"}
+    assert properties["metadata"]["describe"]["source-url"] == ""
+    assert properties["metadata"]["visualize"]["value-label-format"] == "0.[00]%"
 
 
 def test_publish_creates_once_then_updates_the_same_chart(tmp_path):
