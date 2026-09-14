@@ -20,7 +20,8 @@ from epl_forecast.data.sources import COMPETITIONS, season_name, source_url
 from epl_forecast.datasets import Dataset
 from epl_forecast.storage import sha256_bytes, write_json
 
-FIXTURE_REFRESH_SECONDS = 12 * 3600
+FIXTURE_REFRESH_SECONDS = 3600
+FIXTURE_DETAIL_REFRESH_SECONDS = 15 * 60
 
 
 def normalized_request(fetcher, endpoint, params=None, **kwargs):
@@ -29,8 +30,8 @@ def normalized_request(fetcher, endpoint, params=None, **kwargs):
     return body
 
 
-def prioritized_players(root, start, end):
-    data = Dataset(root)
+def prioritized_players(root, start, end, store=None):
+    data = Dataset(root, store=store)
     try:
         return data.rows(
             "WITH seasons AS (SELECT player_id, season_id, competition_id FROM memberships UNION "
@@ -149,8 +150,8 @@ def identity_contradictions(data):
     return report
 
 
-def recent_readiness(root, end):
-    data = Dataset(root)
+def recent_readiness(root, end, store=None):
+    data = Dataset(root, store=store)
     try:
         cohorts = {
             (comp["id"], season_name(year)): {
@@ -195,7 +196,11 @@ def recent_readiness(root, end):
     )
     lineups_ready = all(r["finished"] == r["finished_with_starter_minutes"] for r in rows)
     identity_ready = not any(contradictions.values())
-    current = prioritized_players(root, end, end)
+    current = (
+        prioritized_players(root, end, end)
+        if store is None
+        else prioritized_players(root, end, end, store)
+    )
     current_ids = {p["api_id"] for p in current}
     report = {
         "audited_at": datetime.now(UTC).isoformat(),
@@ -392,19 +397,20 @@ def fixture_details_due(fixtures, records, now):
         else:
             due = kickoff - timedelta(minutes=90) <= now <= kickoff + timedelta(hours=6)
             due = due and (
-                previous is None or (now - previous).total_seconds() >= FIXTURE_REFRESH_SECONDS
+                previous is None
+                or (now - previous).total_seconds() >= FIXTURE_DETAIL_REFRESH_SECONDS
             )
         if due and (
-            previous is None or (now - previous).total_seconds() >= FIXTURE_REFRESH_SECONDS
+            previous is None or (now - previous).total_seconds() >= FIXTURE_DETAIL_REFRESH_SECONDS
         ):
             selected.append(fixture["id"])
     return selected
 
 
-def collect(root=Path("data"), season=None):
+def collect(root=Path("data"), season=None, store=None):
     now = datetime.now(UTC)
     year = season if season is not None else now.year - (now.month < 7)
-    fetcher = Fetcher(root)
+    fetcher = Fetcher(root, store=store)
     errors = []
 
     def attempt(function, *args, **kwargs):
@@ -492,7 +498,7 @@ def collect(root=Path("data"), season=None):
                 fetcher,
                 "fixtures",
                 {"ids": "-".join(map(str, selected[offset : offset + 20]))},
-                max_age=FIXTURE_REFRESH_SECONDS,
+                max_age=FIXTURE_DETAIL_REFRESH_SECONDS,
             )
     record_body = attempt(
         fetcher.get, "fpl", fpl.URL, context={"season_id": season_name(year)}, max_age=1800
@@ -529,7 +535,7 @@ def collect(root=Path("data"), season=None):
     )
     if response:
         attempt(understat_ingest.ingest, root, *response)
-    data = Dataset(root)
+    data = Dataset(root, store=store)
     matches = data.rows(
         "SELECT DISTINCT t.match_id, t.source_match_id, f.match_date "
         "FROM team_process t JOIN fixtures f USING(match_id) "

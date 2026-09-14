@@ -69,12 +69,23 @@ def retain(root, provider, url, payload, retrieved_at, evidence_basis, context=N
 
 
 class Fetcher:
-    def __init__(self, root=Path("data"), reserve=0):
-        self.root, self.reserve = Path(root), reserve
+    def __init__(self, root=Path("data"), reserve=0, store=None):
+        self.root, self.reserve, self.store = Path(root), reserve, store
         self.last_call = 0.0
         self.interval = 0.26
         self.remaining = None
-        self.records = [json.loads(p.read_text()) for p in (self.root / "requests").glob("*.json")]
+        local = [json.loads(p.read_text()) for p in (self.root / "requests").glob("*.json")]
+        remote = (
+            list(store.get_json("state/collection.json", {}).get("latest_by_url", {}).values())
+            if store
+            else []
+        )
+        self.records = list(
+            {
+                (record["url"], record["retrieved_at"], record["source_sha256"]): record
+                for record in [*remote, *local]
+            }.values()
+        )
         self.latest = {}
         for r in sorted(self.records, key=lambda r: r["retrieved_at"]):
             self.latest[r["url"]] = r
@@ -85,6 +96,8 @@ class Fetcher:
             age = (datetime.now(UTC) - datetime.fromisoformat(old["retrieved_at"])).total_seconds()
             if historical or (max_age is not None and age < max_age):
                 path = self.root / old["raw_path"]
+                if not path.exists() and self.store:
+                    self.store.download(old["raw_path"], path)
                 if file_hash(path) != old["source_sha256"]:
                     raise ValueError(f"Raw checksum mismatch: {path}")
                 return old, path.read_bytes()
