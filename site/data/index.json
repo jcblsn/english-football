@@ -1,8 +1,46 @@
 {
-  "archived_at": "2026-09-12T16:56:28.120992+00:00",
-  "latest": "2026-09-12T165348Z",
+  "archived_at": "2026-09-13T19:35:21.776503+00:00",
+  "latest": "2026-09-13T193232Z",
   "schema_version": 1,
   "snapshots": [
+    {
+      "competitions": [
+        {
+          "competition_id": "eng-premier-league",
+          "competition_name": "Premier League",
+          "href": "forecasts/2026-09-13T193232Z/eng-premier-league.json",
+          "matches": 11,
+          "model_id": "M7-xg-v1",
+          "season_id": "2026-2027"
+        },
+        {
+          "competition_id": "eng-championship",
+          "competition_name": "Championship",
+          "href": "forecasts/2026-09-13T193232Z/eng-championship.json",
+          "matches": 14,
+          "model_id": "M7-xg-v1",
+          "season_id": "2026-2027"
+        },
+        {
+          "competition_id": "eng-league-one",
+          "competition_name": "League One",
+          "href": "forecasts/2026-09-13T193232Z/eng-league-one.json",
+          "matches": 36,
+          "model_id": "M7-xg-v1",
+          "season_id": "2026-2027"
+        },
+        {
+          "competition_id": "eng-league-two",
+          "competition_name": "League Two",
+          "href": "forecasts/2026-09-13T193232Z/eng-league-two.json",
+          "matches": 36,
+          "model_id": "M7-xg-v1",
+          "season_id": "2026-2027"
+        }
+      ],
+      "generated_at": "2026-09-13T19:33:15.509095+00:00",
+      "snapshot_id": "2026-09-13T193232Z"
+    },
     {
       "competitions": [
         {

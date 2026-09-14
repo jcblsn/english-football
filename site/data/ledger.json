@@ -1,5 +1,5 @@
 {
-  "archived_at": "2026-09-12T16:56:28.173420+00:00",
+  "archived_at": "2026-09-13T19:35:21.843385+00:00",
   "pending_season_snapshots": [
     {
       "competition_id": "eng-championship",
@@ -42,6 +42,11 @@
       "snapshot_id": "2026-09-12T165348Z"
     },
     {
+      "competition_id": "eng-championship",
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-13T193232Z"
+    },
+    {
       "competition_id": "eng-league-one",
       "season_id": "2026-2027",
       "snapshot_id": "2026-09-11T143335Z"
@@ -62,6 +67,11 @@
       "snapshot_id": "2026-09-12T165348Z"
     },
     {
+      "competition_id": "eng-league-one",
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-13T193232Z"
+    },
+    {
       "competition_id": "eng-league-two",
       "season_id": "2026-2027",
       "snapshot_id": "2026-09-11T143335Z"
@@ -80,6 +90,11 @@
       "competition_id": "eng-league-two",
       "season_id": "2026-2027",
       "snapshot_id": "2026-09-12T165348Z"
+    },
+    {
+      "competition_id": "eng-league-two",
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-13T193232Z"
     },
     {
       "competition_id": "eng-premier-league",
@@ -120,6 +135,11 @@
       "competition_id": "eng-premier-league",
       "season_id": "2026-2027",
       "snapshot_id": "2026-09-12T165348Z"
+    },
+    {
+      "competition_id": "eng-premier-league",
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-13T193232Z"
     }
   ],
   "schema_version": 1,
@@ -591,14 +611,74 @@
       "p_home": 0.564477,
       "season_id": "2026-2027",
       "snapshot_id": "2026-09-11T212051Z"
+    },
+    {
+      "competition_id": "eng-premier-league",
+      "generated_at": "2026-09-11T21:21:31.696612+00:00",
+      "kickoff_time": "2026-09-12T12:30:00-04:00",
+      "match_id": "eng-premier-league:2026-2027:tottenham-hotspur:everton",
+      "outcome": "D",
+      "p_away": 0.32885,
+      "p_draw": 0.245267,
+      "p_home": 0.425883,
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-11T212051Z"
+    },
+    {
+      "competition_id": "eng-premier-league",
+      "generated_at": "2026-09-12T16:54:29.610835+00:00",
+      "kickoff_time": "2026-09-12T19:00:00+00:00",
+      "match_id": "eng-premier-league:2026-2027:sunderland:arsenal",
+      "outcome": "A",
+      "p_away": 0.589528,
+      "p_draw": 0.221705,
+      "p_home": 0.188767,
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-12T165348Z"
+    },
+    {
+      "competition_id": "eng-championship",
+      "generated_at": "2026-09-12T16:55:06.850176+00:00",
+      "kickoff_time": "2026-09-13T11:00:00+00:00",
+      "match_id": "eng-championship:2026-2027:sheffield-united:wolverhampton-wanderers",
+      "outcome": "A",
+      "p_away": 0.379234,
+      "p_draw": 0.238455,
+      "p_home": 0.382311,
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-12T165348Z"
+    },
+    {
+      "competition_id": "eng-premier-league",
+      "generated_at": "2026-09-12T16:54:29.610835+00:00",
+      "kickoff_time": "2026-09-13T13:00:00+00:00",
+      "match_id": "eng-premier-league:2026-2027:coventry-city:brighton-hove-albion",
+      "outcome": "A",
+      "p_away": 0.462446,
+      "p_draw": 0.231729,
+      "p_home": 0.305825,
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-12T165348Z"
+    },
+    {
+      "competition_id": "eng-premier-league",
+      "generated_at": "2026-09-12T16:54:29.610835+00:00",
+      "kickoff_time": "2026-09-13T15:30:00+00:00",
+      "match_id": "eng-premier-league:2026-2027:manchester-united:manchester-city",
+      "outcome": "A",
+      "p_away": 0.403857,
+      "p_draw": 0.226907,
+      "p_home": 0.369236,
+      "season_id": "2026-2027",
+      "snapshot_id": "2026-09-12T165348Z"
     }
   ],
   "summary": {
     "eng-championship": {
-      "brier": 0.577117,
-      "classwise_ece": 0.13701,
-      "log_loss": 0.971466,
-      "scored": 11
+      "brier": 0.578055,
+      "classwise_ece": 0.13884,
+      "log_loss": 0.971311,
+      "scored": 12
     },
     "eng-league-one": {
       "brier": 0.697228,
@@ -613,17 +693,17 @@
       "scored": 12
     },
     "eng-premier-league": {
-      "brier": 0.980913,
-      "classwise_ece": 0.401656,
-      "log_loss": 1.537046,
-      "scored": 5
+      "brier": 0.777375,
+      "classwise_ece": 0.318676,
+      "log_loss": 1.255221,
+      "scored": 9
     },
     "overall": {
-      "brier": 0.683704,
-      "classwise_ece": 0.110481,
-      "log_loss": 1.121613,
-      "scored": 39
+      "brier": 0.666924,
+      "classwise_ece": 0.094826,
+      "log_loss": 1.098279,
+      "scored": 44
     }
   },
-  "unsettled": 102
+  "unsettled": 97
 }
