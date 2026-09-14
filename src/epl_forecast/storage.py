@@ -1,7 +1,13 @@
 import hashlib
 import json
+import os
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import boto3
+from botocore.exceptions import ClientError
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -29,3 +35,171 @@ def write_immutable(path: Path, payload: bytes) -> None:
     except FileExistsError:
         if path.read_bytes() != payload:
             raise ValueError(f"Refusing to overwrite immutable file: {path}") from None
+
+
+def load_environment(path: Path = Path(".env")) -> None:
+    if not path.is_file():
+        return
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        name, separator, value = line.partition("=")
+        name = name.strip()
+        if separator and name and name not in os.environ:
+            os.environ[name] = value.strip().strip("\"'")
+
+
+@dataclass(frozen=True)
+class R2Config:
+    account_id: str
+    bucket: str
+    access_key_id: str
+    secret_access_key: str
+
+    @classmethod
+    def from_environment(cls, bucket_variable: str) -> "R2Config":
+        names = (
+            "R2_ACCOUNT_ID",
+            bucket_variable,
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+        )
+        missing = [name for name in names if not os.environ.get(name)]
+        if missing:
+            raise ValueError(f"Missing R2 settings: {', '.join(missing)}")
+        return cls(*(os.environ[name] for name in names))
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.account_id}.r2.cloudflarestorage.com"
+
+
+class R2Store:
+    def __init__(self, config: R2Config, client=None):
+        self.config = config
+        self.client = client or boto3.client(
+            "s3",
+            endpoint_url=f"https://{config.endpoint}",
+            aws_access_key_id=config.access_key_id,
+            aws_secret_access_key=config.secret_access_key,
+            region_name="auto",
+        )
+
+    @classmethod
+    def from_environment(cls, bucket_variable: str) -> "R2Store":
+        return cls(R2Config.from_environment(bucket_variable))
+
+    def uri(self, key: str) -> str:
+        return f"s3://{self.config.bucket}/{key.lstrip('/')}"
+
+    def exists(self, key: str) -> bool:
+        try:
+            self.client.head_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
+                return False
+            raise
+        return True
+
+    def get_bytes(self, key: str) -> bytes:
+        try:
+            response = self.client.get_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
+                raise FileNotFoundError(key) from None
+            raise
+        return response["Body"].read()
+
+    def get_json(self, key: str, default=None):
+        try:
+            return json.loads(self.get_bytes(key))
+        except FileNotFoundError:
+            return default
+
+    def put_bytes(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        immutable: bool = False,
+        content_type: str | None = None,
+    ) -> None:
+        digest = sha256_bytes(payload)
+        if immutable:
+            try:
+                existing = self.client.head_object(Bucket=self.config.bucket, Key=key)
+            except ClientError as error:
+                if error.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey"}:
+                    raise
+            else:
+                old_digest = existing.get("Metadata", {}).get("sha256")
+                if old_digest == digest or self.get_bytes(key) == payload:
+                    return
+                raise ValueError(f"Refusing to overwrite immutable R2 object: {key}")
+        arguments = {
+            "Bucket": self.config.bucket,
+            "Key": key,
+            "Body": payload,
+            "Metadata": {"sha256": digest},
+        }
+        if content_type:
+            arguments["ContentType"] = content_type
+        self.client.put_object(**arguments)
+
+    def put_json(self, key: str, value, *, immutable: bool = False) -> None:
+        self.put_bytes(key, json_bytes(value), immutable=immutable, content_type="application/json")
+
+    def download(self, key: str, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.get_bytes(key))
+
+    def upload(self, source: Path, key: str, *, immutable: bool = False) -> None:
+        content_types = {
+            ".csv": "text/csv",
+            ".json": "application/json",
+            ".parquet": "application/vnd.apache.parquet",
+        }
+        self.put_bytes(
+            key,
+            source.read_bytes(),
+            immutable=immutable,
+            content_type=content_types.get(source.suffix.lower()),
+        )
+
+    def keys(self, prefix: str = "") -> Iterator[str]:
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.config.bucket, Prefix=prefix):
+            for row in page.get("Contents", []):
+                yield row["Key"]
+
+    def configure_duckdb(self, connection, name: str = "page324_r2") -> None:
+        def quote(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        connection.execute("INSTALL httpfs")
+        connection.execute("LOAD httpfs")
+        connection.execute(
+            f"CREATE OR REPLACE SECRET {name} ("
+            "TYPE s3, "
+            f"KEY_ID {quote(self.config.access_key_id)}, "
+            f"SECRET {quote(self.config.secret_access_key)}, "
+            "REGION 'auto', "
+            f"ENDPOINT {quote(self.config.endpoint)}, "
+            "URL_STYLE 'path', USE_SSL true, "
+            f"SCOPE {quote(f's3://{self.config.bucket}')})"
+        )
+
+
+def r2_store_if_configured(bucket_variable: str) -> R2Store | None:
+    names = (
+        "R2_ACCOUNT_ID",
+        bucket_variable,
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+    )
+    return (
+        R2Store.from_environment(bucket_variable) if all(os.environ.get(n) for n in names) else None
+    )

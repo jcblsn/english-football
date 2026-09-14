@@ -8,7 +8,13 @@ from pathlib import Path
 import duckdb
 
 from epl_forecast.schema import Fixture, Match
-from epl_forecast.storage import file_hash, json_bytes, sha256_bytes, write_immutable
+from epl_forecast.storage import (
+    file_hash,
+    json_bytes,
+    r2_store_if_configured,
+    sha256_bytes,
+    write_immutable,
+)
 
 COMMON = (
     "provider VARCHAR, retrieved_at TIMESTAMPTZ, evidence_basis VARCHAR, source_sha256 VARCHAR, "
@@ -187,16 +193,18 @@ def publish(root, request, tables):
 
 
 class Dataset:
-    def __init__(self, root=Path("data"), cutoff=None, manifests=None):
+    def __init__(self, root=Path("data"), cutoff=None, manifests=None, store=None):
         self.root = Path(root)
+        self.store = store if store is not None else r2_store_if_configured("R2_DATA_BUCKET")
         self.cutoff = timestamp(cutoff) if cutoff is not None else None
-        self.manifests = (
-            manifests
-            if manifests is not None
-            else [
+        if manifests is None:
+            local = [
                 json.loads(p.read_text()) for p in sorted((self.root / "manifests").glob("*.json"))
             ]
-        )
+            catalog = self.store.get_json("state/manifests.json", {}) if self.store else {}
+            remote = catalog.get("manifests", [])
+            manifests = list({m["batch_id"]: m for m in [*remote, *local]}.values())
+        self.manifests = manifests
         self.manifests = [
             m
             for m in self.manifests
@@ -204,13 +212,21 @@ class Dataset:
         ]
         self.con = duckdb.connect()
         self.con.execute(SESSION_TIME_ZONE)
+        if self.store:
+            self.store.configure_duckdb(self.con)
         for table, schema in SCHEMAS.items():
-            paths = [
-                str(self.root / f["path"])
-                for m in self.manifests
-                for f in m["files"]
-                if f["table"] == table
-            ]
+            paths = []
+            for manifest in self.manifests:
+                for file in manifest["files"]:
+                    if file["table"] != table:
+                        continue
+                    local_path = self.root / file["path"]
+                    if local_path.exists():
+                        paths.append(str(local_path))
+                    elif self.store:
+                        paths.append(self.store.uri(file["path"]))
+                    else:
+                        paths.append(str(local_path))
             if paths:
                 self.con.execute(f"CREATE TABLE {table}_empty ({schema}, {COMMON})")
                 self.con.read_parquet(
@@ -266,7 +282,15 @@ class Dataset:
     def verify(self):
         for m in self.manifests:
             for f in m["files"]:
-                if file_hash(self.root / f["path"]) != f["sha256"]:
+                local = self.root / f["path"]
+                digest = (
+                    file_hash(local)
+                    if local.exists()
+                    else sha256_bytes(self.store.get_bytes(f["path"]))
+                    if self.store
+                    else None
+                )
+                if digest != f["sha256"]:
                     raise ValueError(f"Parquet checksum mismatch: {f['path']}")
 
     def fixtures(self):
