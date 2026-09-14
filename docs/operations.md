@@ -106,6 +106,18 @@ It shows each division's table, the position matrix, club distributions, upcomin
 
 GitHub Actions runs the checks on every push and pull request. The Pages workflow in `.github/workflows/pages.yml` runs only by hand. It publishes `site/` as committed, after the boundary check. To make the site public, enable Pages for the repository and add a push trigger. Forecasts are not made in CI, because they need the private data archive.
 
+## Datawrapper proof of concept
+
+This temporary smoke test checks the Datawrapper connection and API syntax. It publishes one ranked chart from the latest Premier League title forecast. It is not the chart contract or a production publication pipeline. The committed forecast JSON remains the source of truth.
+
+Put `DATAWRAPPER_API_KEY` in the ignored `.env` file, then run:
+
+```sh
+uv run epl-forecast datawrapper-poc
+```
+
+The first run creates a disposable proof-of-concept chart and saves its public chart ID in `configs/datawrapper_poc.toml`. This ID only prevents duplicate test charts. It does not identify a required chart for a future product. Later runs update and publish the same test chart. The command prints the chart ID, the published URL and the source snapshot ID. It stops with an error if the credential or an API step fails.
+
 ## Development
 
 ```sh

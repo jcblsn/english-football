@@ -222,6 +222,12 @@ def verify_command(args) -> None:
         raise SystemExit(f"{report['failures']} product checks failed")
 
 
+def datawrapper_poc_command(args) -> None:
+    from epl_forecast.datawrapper import publish
+
+    print(json.dumps(publish(args.site, args.config, args.env), indent=2))
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         description="Probabilistic forecasts and season simulation for England's four league divisions"
@@ -262,6 +268,13 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--data", type=Path, default=Path("data"))
     verify.add_argument("--output", type=Path, required=True)
     verify.set_defaults(func=verify_command)
+    datawrapper = commands.add_parser(
+        "datawrapper-poc", help="Run the temporary Page 324 Datawrapper smoke test"
+    )
+    datawrapper.add_argument("--site", type=Path, default=Path("site"))
+    datawrapper.add_argument("--config", type=Path, default=Path("configs/datawrapper_poc.toml"))
+    datawrapper.add_argument("--env", type=Path, default=Path(".env"))
+    datawrapper.set_defaults(func=datawrapper_poc_command)
     evaluate = commands.add_parser(
         "evaluate", help="Score rolling historical match forecasts for M7 and M2"
     )
