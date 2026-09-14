@@ -1,6 +1,9 @@
 :root { color-scheme: light dark; }
 body { margin: 0; font: 13px/1.4 system-ui, sans-serif; }
 header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid #8884; position: sticky; top: 0; background: Canvas; }
+.site-title { color: inherit; font-size: 15px; font-weight: 700; text-decoration: none; }
+.site-pages a { color: inherit; }
+.site-pages a[aria-current="page"] { font-weight: 600; text-decoration: underline; }
 nav button { font: inherit; padding: 3px 8px; }
 nav button[aria-current="true"] { font-weight: 600; text-decoration: underline; }
 #meta { flex: 1 1 320px; text-align: right; opacity: 0.7; }
@@ -19,3 +22,6 @@ select, button { font: inherit; }
 .card { border: 1px solid #8884; padding: 8px; }
 .error { color: #c33; }
 .note { margin: 0 0 10px; padding: 6px 8px; max-width: 900px; border-left: 3px solid #d9a400; background: #d9a4001a; }
+.about { max-width: 680px; margin: 48px auto; overflow-x: visible; font-size: 16px; line-height: 1.6; }
+.about h1 { margin: 0 0 24px; font-size: 24px; line-height: 1.2; }
+.about p { margin: 0 0 18px; }
