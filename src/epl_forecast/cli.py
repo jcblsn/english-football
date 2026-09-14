@@ -191,11 +191,9 @@ def operate_command(args) -> None:
                 str(args.runs.resolve()),
                 "--simulations",
                 str(args.simulations),
-                "--interval-hours",
-                str(args.interval_hours),
             ],
             args.runs,
-            args.interval_hours * 3600,
+            3600,
             logs="operate",
         )
         print(f"Installed the product pipeline agent: {path}")
@@ -205,7 +203,7 @@ def operate_command(args) -> None:
         args.site,
         args.runs,
         args.simulations,
-        args.interval_hours,
+        None,
         args.force,
         not args.no_collect,
     )
@@ -226,6 +224,14 @@ def datawrapper_poc_command(args) -> None:
     from epl_forecast.datawrapper import publish
 
     print(json.dumps(publish(args.site, args.config, args.env), indent=2))
+
+
+def materialize_command(args) -> None:
+    from epl_forecast.publication import materialize_publication
+    from epl_forecast.storage import R2Store
+
+    result = materialize_publication(R2Store.from_environment("R2_PUBLISH_BUCKET"), args.site)
+    print(json.dumps(result, indent=2))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -256,7 +262,6 @@ def parser() -> argparse.ArgumentParser:
     operate.add_argument("--site", type=Path, default=Path("site"))
     operate.add_argument("--runs", type=Path, default=Path("runs/product"))
     operate.add_argument("--simulations", type=int, default=10000)
-    operate.add_argument("--interval-hours", type=float, default=12)
     operate.add_argument("--force", action="store_true")
     operate.add_argument("--no-collect", action="store_true")
     operate.add_argument("--install-launch-agent", action="store_true")
@@ -275,6 +280,11 @@ def parser() -> argparse.ArgumentParser:
     datawrapper.add_argument("--config", type=Path, default=Path("configs/datawrapper_poc.toml"))
     datawrapper.add_argument("--env", type=Path, default=Path(".env"))
     datawrapper.set_defaults(func=datawrapper_poc_command)
+    materialize = commands.add_parser(
+        "materialize", help="Build the static publication data from R2"
+    )
+    materialize.add_argument("--site", type=Path, default=Path("site"))
+    materialize.set_defaults(func=materialize_command)
     evaluate = commands.add_parser(
         "evaluate", help="Score rolling historical match forecasts for M7 and M2"
     )
@@ -289,6 +299,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from epl_forecast.storage import load_environment
+
+    load_environment()
     if len(sys.argv) > 1 and sys.argv[1] == "data":
         from epl_forecast.data.collect import main as data_main
 

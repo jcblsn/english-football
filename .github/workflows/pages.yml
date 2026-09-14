@@ -1,10 +1,6 @@
 name: pages
 
-# Deployment is deliberately off: this workflow only runs when started by hand,
-# and it publishes `site/` exactly as committed. Forecast generation stays local
-# because it needs the private data archive, so there is nothing to build here.
-# To enable a public site later, turn on Pages for the repository and add the
-# push trigger back.
+# This workflow materializes the sanitized publication bucket into the Pages artifact.
 on:
   workflow_dispatch:
 
@@ -23,12 +19,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    env:
+      R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+      R2_PUBLISH_BUCKET: ${{ vars.R2_PUBLISH_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv sync --locked
+      - run: uv run epl-forecast materialize --site site
       - run: uv run python scripts/check_publishable.py --site site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

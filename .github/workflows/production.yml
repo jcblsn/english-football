@@ -1,0 +1,45 @@
+name: production
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Publish even when the effective forecast inputs did not change
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+      R2_DATA_BUCKET: ${{ vars.R2_DATA_BUCKET }}
+      R2_PUBLISH_BUCKET: ${{ vars.R2_PUBLISH_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Collect, forecast and publish
+        run: >-
+          uv run epl-forecast operate
+          --data "${RUNNER_TEMP}/data"
+          --runs "${RUNNER_TEMP}/runs"
+          --site "${RUNNER_TEMP}/site"
+          ${{ inputs.force && '--force' || '' }}

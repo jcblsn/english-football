@@ -1,11 +1,4 @@
-"""One command from collected data to a verified, published forecast.
-
-The pipeline reuses the existing collector, forecast export, product verifier and
-immutable archive. It runs the frozen product model for every league division,
-refuses to publish unless every archive passes verification, then derives the
-compact public documents, refreshes the snapshot index and rebuilds the prospective
-ledger. Provider data never leaves `data/`; only `site/data/` is publishable.
-"""
+"""Run collection, verified forecasts and publication from an ephemeral workspace."""
 
 import json
 import subprocess
@@ -13,19 +6,29 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from epl_forecast.cloud import sync_data, sync_tree
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError, writer_lock
 from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
-from epl_forecast.ledger import build_ledger, realized_outcomes
+from epl_forecast.ledger import build_ledger, build_record, realized_outcomes
 from epl_forecast.publication import (
     carry_forward_impacts,
     derive_forecast,
     load_policy,
+    materialize_publication,
     publish_document,
+    publish_documents_to_store,
     rebuild_index,
 )
-from epl_forecast.storage import json_bytes, sha256_bytes, write_immutable, write_json
+from epl_forecast.storage import (
+    file_hash,
+    json_bytes,
+    r2_store_if_configured,
+    sha256_bytes,
+    write_immutable,
+    write_json,
+)
 
 PRODUCT_MODEL = "M7-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
@@ -90,7 +93,7 @@ def information_fingerprint(data):
         "memberships": "player_id, team_id, season_id, basis",
         "availability": "player_id, fpl_code, scope, status, reason, chance_next_round",
         "team_process": "match_id, team_id, xg",
-        "odds": "match_id, family, home_odds, draw_odds, away_odds, retrieved_at",
+        "odds": "match_id, family, home_odds, draw_odds, away_odds",
     }
     records = {
         table: data.rows(f"SELECT DISTINCT {columns} FROM {table} ORDER BY ALL")
@@ -127,13 +130,31 @@ def install_launch_agent(label, arguments, root, interval_seconds, logs=None):
     return path
 
 
-def due(state: dict, fingerprint: str, now: datetime, interval_hours: float) -> bool:
-    if state.get("fingerprint") != fingerprint:
-        return True
-    last = state.get("published_at")
-    if not last:
-        return True
-    return (now - datetime.fromisoformat(last)).total_seconds() >= interval_hours * 3600
+FORECAST_CODE = (
+    Path("src/epl_forecast/models"),
+    Path("src/epl_forecast/competitions.py"),
+    Path("src/epl_forecast/live.py"),
+    Path("src/epl_forecast/live_forecast.py"),
+    Path("src/epl_forecast/market.py"),
+    Path("src/epl_forecast/postseason.py"),
+    Path("src/epl_forecast/sanctions.py"),
+    Path("src/epl_forecast/simulation.py"),
+    Path("src/epl_forecast/training.py"),
+    Path("configs/product.toml"),
+    Path("configs/market_pool.json"),
+)
+
+
+def production_fingerprint(data_fingerprint: str) -> str:
+    paths = []
+    for path in FORECAST_CODE:
+        paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
+    code = {str(path): file_hash(path) for path in paths}
+    return sha256_bytes(json_bytes({"data": data_fingerprint, "forecast_code": code}))
+
+
+def due(state: dict, fingerprint: str, competition: str) -> bool:
+    return state.get("competitions", {}).get(competition, {}).get("fingerprint") != fingerprint
 
 
 def operate(
@@ -141,36 +162,60 @@ def operate(
     site: Path = Path("site"),
     runs: Path = Path("runs/product"),
     simulations: int = 10000,
-    interval_hours: float = 12,
+    interval_hours: float | None = None,
     force: bool = False,
     collect_first: bool = True,
+    data_store=None,
+    publish_store=None,
 ) -> dict:
     data, site, runs = Path(data), Path(site), Path(runs)
+    data_store = data_store if data_store is not None else r2_store_if_configured("R2_DATA_BUCKET")
+    publish_store = (
+        publish_store if publish_store is not None else r2_store_if_configured("R2_PUBLISH_BUCKET")
+    )
+    if (data_store is None) != (publish_store is None):
+        raise ValueError("Configure both R2 buckets or neither bucket")
     policy = load_policy()
     result = {"status": "ok", "published": [], "collection": None}
     if collect_first:
         try:
             with writer_lock(data):
-                result["collection"] = collect(data)
+                result["collection"] = collect(data, store=data_store)
+                if data_store:
+                    result["data_sync"] = sync_data(data, data_store)
         except SourceAccessError as error:
             return {"status": "skipped", "reason": str(error)}
     now = datetime.now(UTC)
-    dataset = Dataset(data, now)
+    dataset = Dataset(data, now, store=data_store)
     try:
-        fingerprint = information_fingerprint(dataset)
+        fingerprint = production_fingerprint(information_fingerprint(dataset))
         outcomes = realized_outcomes(dataset.fixtures())
     finally:
         dataset.close()
     state_path = runs / "state.json"
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    if not force and not due(state, fingerprint, now, interval_hours):
+    state = (
+        data_store.get_json("state/forecast.json", {})
+        if data_store
+        else json.loads(state_path.read_text())
+        if state_path.exists()
+        else {}
+    )
+    pending = [league for league in LEAGUES if force or due(state, fingerprint, league)]
+    if not pending:
         result.update(status="unchanged", reason="No new information since the last publication")
-        build_ledger(site, outcomes, policy)
+        if publish_store:
+            materialize_publication(publish_store, site)
+            record = build_record(site, outcomes, policy)
+            publish_store.put_json("record.json", record)
+        else:
+            build_ledger(site, outcomes, policy)
         return result
+    if publish_store:
+        materialize_publication(publish_store, site)
     snapshot = snapshot_id(now)
     attempt = runs / snapshot
     documents, failures = [], []
-    for league in LEAGUES:
+    for league in pending:
         archive = attempt / league
         forecast = run_forecast(data, league, now, archive, simulations)
         write_immutable(
@@ -200,6 +245,7 @@ def operate(
                     json.loads((archive / "run.json").read_text()),
                     snapshot,
                     report["archives"][str(archive)],
+                    public_model_version=policy["product"]["model_version"],
                 ),
             )
         )
@@ -207,22 +253,41 @@ def operate(
     if not documents:
         result.update(status="failed", failures=failures, attempt=str(attempt))
         write_immutable(attempt / "pipeline.json", json_bytes(result))
+        if data_store:
+            sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
         return result
+    if publish_store:
+        result["private_sync"] = sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
+        index = publish_documents_to_store(publish_store, documents, policy)
+        materialize_publication(publish_store, site)
+        record = build_record(site, outcomes, policy)
+        publish_store.put_json("record.json", record)
+    else:
+        for document in documents:
+            publish_document(site, document, policy)
+        index = rebuild_index(site, policy)
+        record = build_ledger(site, outcomes, policy)
     for document in documents:
-        publish_document(site, document, policy)
         result["published"].append(f"{snapshot}/{document['competition_id']}")
-    index = rebuild_index(site, policy)
-    ledger = build_ledger(site, outcomes, policy)
     result.update(
         status="partial" if failures else "ok",
         failures=failures,
         attempt=str(attempt),
         snapshot_id=snapshot,
         snapshots=len(index["snapshots"]),
-        scored_matches=ledger["summary"].get("overall", {}).get("scored", 0),
+        scored_matches=record["summary"].get("overall", {}).get("scored", 0),
     )
     write_immutable(attempt / "pipeline.json", json_bytes(result))
-    # A partial snapshot leaves the state alone, so the next run retries the division that failed.
-    if not failures:
-        write_json(state_path, {"fingerprint": fingerprint, "published_at": now.isoformat()})
+    competition_state = state.setdefault("competitions", {})
+    for document in documents:
+        competition_state[document["competition_id"]] = {
+            "fingerprint": fingerprint,
+            "published_at": now.isoformat(),
+            "snapshot_id": snapshot,
+        }
+    if data_store:
+        data_store.put_json("state/forecast.json", state)
+        sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
+    else:
+        write_json(state_path, state)
     return result

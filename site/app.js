@@ -1,4 +1,4 @@
-const state = { index: null, document: null, ledger: null, view: "table", team: null, event: null };
+const state = { index: null, document: null, record: null, view: "table", team: null, event: null };
 const panel = document.getElementById("panel");
 const VIEWS = [
   ["table", "Table"],
@@ -6,7 +6,7 @@ const VIEWS = [
   ["teams", "Distributions"],
   ["fixtures", "Fixtures"],
   ["impact", "Impact"],
-  ["ledger", "Ledger"],
+  ["record", "Record"],
 ];
 const EVENT_ORDER = [
   "title_probability",
@@ -74,6 +74,7 @@ async function load(href) {
 }
 
 function competitionsOf(snapshot) {
+  if (snapshot === "latest") return Object.values(state.index.latest_by_competition ?? {});
   return state.index.snapshots.find((row) => row.snapshot_id === snapshot)?.competitions ?? [];
 }
 
@@ -86,7 +87,7 @@ async function refresh() {
   if (!entry) return;
   state.document = await load(`data/${entry.href}`);
   document.getElementById("meta").textContent =
-    `${state.document.model.model_id} · cutoff ${state.document.model_results_cutoff} · ` +
+    `${state.document.model.version} · cutoff ${state.document.model_results_cutoff} · ` +
     `${state.document.simulations.toLocaleString()} paths · generated ${when(state.document.generated_at)}`;
   render();
 }
@@ -96,8 +97,8 @@ function render() {
     button.setAttribute("aria-current", String(button.dataset.view === state.view));
   });
   panel.replaceChildren();
-  if (state.view !== "ledger") panel.append(...unscheduledNote(), ...unsettledNote());
-  const views = { table: tableView, positions: positionsView, teams: teamsView, fixtures: fixturesView, impact: impactView, ledger: ledgerView };
+  if (state.view !== "record") panel.append(...unscheduledNote(), ...unsettledNote());
+  const views = { table: tableView, positions: positionsView, teams: teamsView, fixtures: fixturesView, impact: impactView, record: recordView };
   views[state.view]();
 }
 
@@ -447,14 +448,14 @@ function eventPeak(slate, event) {
   return Math.max(0, ...slate.flatMap(({ rows }) => rows.filter((row) => row.event === event).map((row) => row.rms)));
 }
 
-function ledgerView() {
-  if (!state.ledger) {
-    panel.append(element("p", { className: "muted", textContent: "No ledger published yet." }));
+function recordView() {
+  if (!state.record) {
+    panel.append(element("p", { className: "muted", textContent: "No forecast record is published yet." }));
     return;
   }
-  const summary = state.ledger.summary;
+  const summary = state.record.summary;
   panel.append(
-    element("h2", { textContent: `Settled H/D/A forecasts — ${state.ledger.settled.length} scored, ${state.ledger.unsettled} awaiting results` }),
+    element("h2", { textContent: `Settled H/D/A forecasts — ${state.record.settled.length} scored, ${state.record.unsettled} awaiting results` }),
     table(
       ["Scope", "Matches", "Log loss", "Brier", "Classwise ECE"],
       Object.entries(summary).map(([scope, row]) =>
@@ -470,7 +471,7 @@ function ledgerView() {
     element("h2", { textContent: "Scored matches" }),
     table(
       ["Kickoff (UTC)", "Match", "Outcome", "H", "D", "A", "Snapshot"],
-      [...state.ledger.settled].reverse().map((row) =>
+      [...state.record.settled].reverse().map((row) =>
         element("tr", {}, [
           cell(when(row.kickoff_time)),
           element("td", { className: "name", textContent: row.match_id.split(":").slice(2).join(" v ") }),
@@ -492,12 +493,15 @@ async function start() {
     panel.append(element("p", { className: "error", textContent: `No published forecasts found (${error.message}). Run: uv run epl-forecast operate` }));
     return;
   }
-  state.ledger = await load("data/ledger.json").catch(() => null);
+  state.record = await load("data/record.json").catch(() => null);
   const snapshots = document.getElementById("snapshot");
-  snapshots.append(...state.index.snapshots.map((row) => element("option", { value: row.snapshot_id, textContent: row.snapshot_id })));
+  snapshots.append(
+    element("option", { value: "latest", textContent: "Latest by division" }),
+    ...state.index.snapshots.map((row) => element("option", { value: row.snapshot_id, textContent: row.snapshot_id }))
+  );
   const competitions = document.getElementById("competition");
   competitions.append(
-    ...competitionsOf(state.index.latest).map((row) => element("option", { value: row.competition_id, textContent: row.competition_name }))
+    ...competitionsOf("latest").map((row) => element("option", { value: row.competition_id, textContent: row.competition_name }))
   );
   document.getElementById("views").append(
     ...VIEWS.map(([view, text]) =>

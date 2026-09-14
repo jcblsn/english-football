@@ -7,6 +7,7 @@ from epl_forecast.datawrapper import (
     DatawrapperError,
     chart_data,
     chart_properties,
+    latest_forecast,
     load_api_key,
     publish,
 )
@@ -111,3 +112,20 @@ def test_publish_creates_once_then_updates_the_same_chart(tmp_path):
         "upload",
         "publish",
     ]
+
+
+def test_latest_forecast_reads_the_publication_index_from_r2(tmp_path):
+    expected = forecast()
+
+    class Store:
+        def get_json(self, key):
+            return {
+                "forecasts/index.json": {
+                    "latest_by_competition": {
+                        "eng-premier-league": {"href": "forecasts/run/premier.json"}
+                    }
+                },
+                "forecasts/run/premier.json": expected,
+            }[key]
+
+    assert latest_forecast(tmp_path, Store()) == expected

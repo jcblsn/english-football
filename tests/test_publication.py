@@ -5,8 +5,11 @@ import pytest
 from epl_forecast.publication import (
     check_publishable,
     derive_forecast,
+    empty_index,
     load_policy,
+    materialize_publication,
     publish_document,
+    publish_documents_to_store,
     rebuild_index,
 )
 
@@ -150,7 +153,10 @@ def test_derived_forecast_drops_provider_evidence():
         "p_draw": 0.26,
         "p_away": 0.26,
     }
-    assert document["model"]["commit"] == "c" * 40
+    assert document["model"] == {"version": "v0.0"}
+    assert "M7" not in text
+    assert "code_sha256" not in text
+    assert "verification" not in text
 
 
 def test_derived_forecast_keeps_the_distributional_surface():
@@ -256,3 +262,47 @@ def test_the_index_lists_divisions_in_pyramid_order(tmp_path):
         "eng-championship",
         "eng-league-two",
     ]
+
+
+class Store:
+    def __init__(self):
+        self.objects = {}
+
+    def get_json(self, key, default=None):
+        return self.objects.get(key, default)
+
+    def put_json(self, key, value, immutable=False):
+        if immutable and key in self.objects and self.objects[key] != value:
+            raise ValueError(key)
+        self.objects[key] = value
+
+    def exists(self, key):
+        return key in self.objects
+
+
+def test_r2_index_advances_each_division_independently_and_materializes(tmp_path):
+    store = Store()
+    policy = load_policy()
+    premier = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    championship_forecast = sample_forecast("eng-championship", "2026-09-11T12:00:00+00:00")
+    championship = derive_forecast(championship_forecast, sample_run(), "2026-09-11T120000Z")
+    later_premier = derive_forecast(
+        sample_forecast(generated="2026-09-12T12:00:00+00:00"),
+        sample_run(),
+        "2026-09-12T120000Z",
+    )
+    publish_documents_to_store(store, [premier, championship], policy)
+    index = publish_documents_to_store(store, [later_premier], policy)
+    assert index["latest_by_competition"]["eng-premier-league"]["snapshot_id"] == (
+        "2026-09-12T120000Z"
+    )
+    assert index["latest_by_competition"]["eng-championship"]["snapshot_id"] == (
+        "2026-09-11T120000Z"
+    )
+    assert store.objects["hindcasts/index.json"]["namespace"] == "hindcasts"
+    result = materialize_publication(store, tmp_path)
+    assert result == {"documents": 3, "record": False}
+    assert json.loads((tmp_path / "data/index.json").read_text()) == index
+    assert json.loads((tmp_path / "data/hindcasts/index.json").read_text()) == empty_index(
+        "hindcasts", store.objects["hindcasts/index.json"]["updated_at"]
+    )

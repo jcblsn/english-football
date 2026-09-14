@@ -67,6 +67,10 @@ def _summary(rows: list[dict]) -> dict:
 
 
 def build_ledger(site: Path, outcomes: dict, policy: dict) -> dict:
+    return build_record(site, outcomes, policy, "ledger.json")
+
+
+def build_record(site: Path, outcomes: dict, policy: dict, filename: str = "record.json") -> dict:
     forecasts = pre_kickoff_forecasts(site)
     settled, unsettled = [], 0
     for match_id, row in sorted(forecasts.items()):
@@ -86,7 +90,7 @@ def build_ledger(site: Path, outcomes: dict, policy: dict) -> dict:
             for document in published_documents(site)
         }
     )
-    ledger = {
+    record = {
         "schema_version": 1,
         "archived_at": datetime.now(UTC).isoformat(),
         "unsettled": unsettled,
@@ -97,8 +101,8 @@ def build_ledger(site: Path, outcomes: dict, policy: dict) -> dict:
             for competition, season, snapshot in pending
         ],
     }
-    check_publishable(ledger, policy)
-    return write_derived(Path(site) / "data" / "ledger.json", ledger)
+    check_publishable(record, policy)
+    return write_derived(Path(site) / "data" / filename, record)
 
 
 def read_ledger(site: Path) -> dict:

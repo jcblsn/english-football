@@ -100,6 +100,7 @@ def _is_open_map(trail: str) -> bool:
             ".summary",
             ".points_intervals",
             ".position_intervals",
+            ".latest_by_competition",
         )
     )
 
@@ -306,6 +307,7 @@ def derive_forecast(
     snapshot_id: str,
     verification: dict | None = None,
     horizon_days: int = 21,
+    public_model_version: str = "v0.0",
 ) -> dict:
     simulation = forecast["simulation"]
     if simulation is None:
@@ -390,13 +392,7 @@ def derive_forecast(
         "state_uncertainty": forecast["state_uncertainty"],
         "simulations": simulation["simulations"],
         "match_horizon_days": horizon_days,
-        "model": {
-            "model_id": forecast["model"]["id"],
-            "model_kind": forecast["model"]["kind"],
-            "package_version": run.get("package_version"),
-            "code_sha256": run.get("code_sha256"),
-            "commit": run.get("execution", {}).get("commit"),
-        },
+        "model": {"version": public_model_version},
         "teams": teams,
         "matches": matches,
         "unscheduled_fixtures": unscheduled,
@@ -421,15 +417,6 @@ def derive_forecast(
             {row["match_id"]: row["kickoff_time"] for row in matches},
             forecast.get("impact_window"),
         ),
-        "verification": None
-        if verification is None
-        else {
-            "checks": len(verification["checks"]),
-            "failures": verification["failures"],
-        },
-    }
-    document["model"] = {
-        key: value for key, value in document["model"].items() if value is not None
     }
     return document
 
@@ -472,7 +459,9 @@ def rebuild_index(site: Path, policy: dict) -> dict:
                     "competition_id": document["competition_id"],
                     "competition_name": document["competition_name"],
                     "season_id": document["season_id"],
-                    "model_id": document["model"]["model_id"],
+                    "model_version": document["model"].get(
+                        "version", policy["product"]["model_version"]
+                    ),
                     "matches": len(document["matches"]),
                     "href": path.relative_to(site / "data").as_posix(),
                 }
@@ -509,3 +498,104 @@ def rebuild_index(site: Path, policy: dict) -> dict:
 def published_documents(site: Path):
     for path in sorted((Path(site) / "data" / "forecasts").glob("*/*.json")):
         yield json.loads(path.read_text())
+
+
+def empty_index(namespace: str, updated_at: str | None = None) -> dict:
+    return {
+        "schema_version": 2,
+        "updated_at": updated_at or datetime.now(UTC).isoformat(),
+        "namespace": namespace,
+        "latest_by_competition": {},
+        "snapshots": [],
+    }
+
+
+def publish_documents_to_store(store, documents: list[dict], policy: dict) -> dict:
+    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
+    snapshots = {row["snapshot_id"]: row for row in index.get("snapshots", [])}
+    for document in documents:
+        check_publishable(document, policy)
+        key = f"forecasts/{document['snapshot_id']}/{document['competition_id']}.json"
+        store.put_json(key, document, immutable=True)
+        snapshot = snapshots.setdefault(
+            document["snapshot_id"],
+            {
+                "snapshot_id": document["snapshot_id"],
+                "generated_at": document["generated_at"],
+                "competitions": [],
+            },
+        )
+        entry = {
+            "competition_id": document["competition_id"],
+            "competition_name": document["competition_name"],
+            "season_id": document["season_id"],
+            "model_version": document["model"]["version"],
+            "matches": len(document["matches"]),
+            "href": key,
+        }
+        snapshot["competitions"] = [
+            row
+            for row in snapshot["competitions"]
+            if row["competition_id"] != document["competition_id"]
+        ]
+        snapshot["competitions"].append(entry)
+    rows = sorted(snapshots.values(), key=lambda row: row["snapshot_id"], reverse=True)
+    latest = {}
+    for snapshot in rows:
+        snapshot["competitions"].sort(
+            key=lambda row: (
+                COMPETITION_IDS.index(row["competition_id"])
+                if row["competition_id"] in COMPETITION_IDS
+                else len(COMPETITION_IDS),
+                row["competition_id"],
+            )
+        )
+        for entry in snapshot["competitions"]:
+            latest.setdefault(
+                entry["competition_id"],
+                {"snapshot_id": snapshot["snapshot_id"], **entry},
+            )
+    result = {
+        "schema_version": 2,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "namespace": "forecasts",
+        "latest_by_competition": latest,
+        "snapshots": rows,
+    }
+    check_publishable(result, policy)
+    store.put_json("forecasts/index.json", result)
+    if not store.exists("hindcasts/index.json"):
+        hindcasts = empty_index("hindcasts")
+        check_publishable(hindcasts, policy)
+        store.put_json("hindcasts/index.json", hindcasts)
+    return result
+
+
+def stored_documents(store):
+    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
+    for snapshot in reversed(index["snapshots"]):
+        for entry in snapshot["competitions"]:
+            yield store.get_json(entry["href"])
+
+
+def materialize_publication(store, site: Path) -> dict:
+    site = Path(site)
+    data = site / "data"
+    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
+    check_publishable(index, load_policy())
+    write_json(data / "index.json", index)
+    documents = 0
+    for snapshot in index["snapshots"]:
+        for entry in snapshot["competitions"]:
+            document = store.get_json(entry["href"])
+            check_publishable(document, load_policy())
+            write_json(data / entry["href"], document)
+            documents += 1
+    record = store.get_json("record.json")
+    if record is not None:
+        check_publishable(record, load_policy())
+        write_json(data / "record.json", record)
+    hindcasts = store.get_json("hindcasts/index.json", empty_index("hindcasts"))
+    check_publishable(hindcasts, load_policy())
+    write_json(data / "hindcasts" / "index.json", hindcasts)
+    return {"documents": documents, "record": record is not None}

@@ -10,6 +10,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from epl_forecast.storage import r2_store_if_configured
+
 API_ROOT = "https://api.datawrapper.de/v3"
 CHART_ID = re.compile(r"^[A-Za-z0-9]{5}$")
 
@@ -125,7 +127,15 @@ def save_chart_id(config_path: Path, chart_id: str) -> None:
     temporary.replace(config_path)
 
 
-def latest_forecast(site: Path) -> dict:
+def latest_forecast(site: Path, store=None) -> dict:
+    if store:
+        index = store.get_json("forecasts/index.json")
+        if not index:
+            raise DatawrapperError("The publication bucket has no forecast index")
+        entry = index["latest_by_competition"].get("eng-premier-league")
+        if entry:
+            return store.get_json(entry["href"])
+        raise DatawrapperError("The publication index has no Premier League forecast")
     data_root = site / "data"
     index = json.loads((data_root / "index.json").read_text())
     for snapshot in index["snapshots"]:
@@ -163,7 +173,7 @@ def chart_properties(forecast: dict) -> dict:
             "axes": {"bars": "Chance"},
             "data": {"horizontal-header": True, "vertical-header": True},
             "describe": {
-                "intro": f"The M7 model estimates each club's chance of winning the {season} Premier League.",
+                "intro": f"The Page 324 model estimates each club's chance of winning the {season} Premier League.",
                 "byline": "Page 324",
                 "source-name": "Page 324 forecast",
                 "source-url": "",
@@ -205,9 +215,11 @@ def publish(
     config_path: Path = Path("configs/datawrapper_poc.toml"),
     env_path: Path = Path(".env"),
     client: DatawrapperClient | None = None,
+    store=None,
 ) -> dict:
     client = client or DatawrapperClient(load_api_key(env_path))
-    forecast = latest_forecast(site)
+    store = store if store is not None else r2_store_if_configured("R2_PUBLISH_BUCKET")
+    forecast = latest_forecast(site, store)
     chart_id = load_chart_id(config_path)
     action = "updated"
     if not chart_id:
