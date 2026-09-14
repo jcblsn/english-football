@@ -17,7 +17,7 @@ The tag marks the last commit before the product consolidation of 11 September 2
 - The pinned 2026/27 season projections of 10 September 2026, with their uncertainty sensitivity.
 - The design notes and work plans: the north star, the architecture plan and the data migration plan.
 
-Browse it online at [research-anchor](https://github.com/jcblsn/epl-forecast/tree/research-anchor), or get it locally:
+Browse it online at [research-anchor](https://github.com/jcblsn/english-football/tree/research-anchor), or get it locally:
 
 ```sh
 git fetch origin research --tags

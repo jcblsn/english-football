@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from epl_forecast.cloud import sync_data, sync_tree
+from epl_forecast.cloud import compact_canonical, sync_data, sync_tree
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError, writer_lock
 from epl_forecast.data.collect import collect
@@ -132,16 +132,28 @@ def install_launch_agent(label, arguments, root, interval_seconds, logs=None):
 
 FORECAST_CODE = (
     Path("src/epl_forecast/models"),
+    Path("src/epl_forecast/artifacts.py"),
+    Path("src/epl_forecast/cli.py"),
     Path("src/epl_forecast/competitions.py"),
+    Path("src/epl_forecast/data/efl_adjustments.json"),
+    Path("src/epl_forecast/data/pl_adjustments.json"),
+    Path("src/epl_forecast/data/rules.py"),
+    Path("src/epl_forecast/data/teams.csv"),
+    Path("src/epl_forecast/datasets.py"),
     Path("src/epl_forecast/live.py"),
     Path("src/epl_forecast/live_forecast.py"),
     Path("src/epl_forecast/market.py"),
+    Path("src/epl_forecast/pipeline.py"),
     Path("src/epl_forecast/postseason.py"),
+    Path("src/epl_forecast/publication.py"),
     Path("src/epl_forecast/sanctions.py"),
+    Path("src/epl_forecast/schema.py"),
     Path("src/epl_forecast/simulation.py"),
     Path("src/epl_forecast/training.py"),
+    Path("src/epl_forecast/verification.py"),
     Path("configs/product.toml"),
     Path("configs/market_pool.json"),
+    Path("configs/publication.toml"),
 )
 
 
@@ -183,6 +195,8 @@ def operate(
                 result["collection"] = collect(data, store=data_store)
                 if data_store:
                     result["data_sync"] = sync_data(data, data_store)
+                    if result["data_sync"]["uploaded"]:
+                        result["compaction"] = compact_canonical(data, data_store)
         except SourceAccessError as error:
             return {"status": "skipped", "reason": str(error)}
     now = datetime.now(UTC)

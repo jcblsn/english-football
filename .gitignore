@@ -18,3 +18,4 @@ data/requests/
 data/audits/
 data/*.lock
 data/.normalize-*/
+site/data/

@@ -1,6 +1,6 @@
 # Data and provenance
 
-The product uses provider data that stays on the local machine. Git does not contain provider data. Provider terms control its use and redistribution.
+The product uses provider data that stays in the private `page324-data` R2 bucket. Git does not contain provider data. Provider terms control its use and redistribution.
 
 ## Providers
 
@@ -15,21 +15,25 @@ The collector also captures squads, players, lineups, transfers, injuries and ma
 
 ## Credentials and quota
 
-Set `API_FOOTBALL_KEY` in the environment or in an ignored `.env` file. Do not put a key in a committed file. The Pro plan gives 7,500 requests each day. A backfill keeps 1,000 requests free for current collection.
+Set `API_FOOTBALL_KEY` and the R2 settings in the environment or in an ignored `.env` file. Do not put a key in a committed file. The Pro plan gives 7,500 requests each day. A backfill keeps 1,000 requests free for current collection.
 
 ## Storage
 
-All provider data is under `data/`, which Git ignores.
+R2 is the durable store. A run uses `data/` only as an ephemeral workspace.
 
-| Path | Content |
+| R2 key | Content |
 | --- | --- |
-| `data/raw/<provider>/<hash>` | Raw responses. They are immutable and identified by content hash. |
-| `data/requests/` | One record for each successful request: URL, retrieval time, hash and context. |
-| `data/parquet/<table>/` | Canonical tables, partitioned by competition and season. |
-| `data/manifests/` | Publication manifests. A Parquet file is visible only after its manifest exists. |
-| `data/audits/` | Collection status and coverage audits. |
+| `raw/<provider>/<hash>` | Raw responses. They are immutable and identified by content hash. |
+| `requests/` | One record for each successful request: URL, retrieval time, hash and context. |
+| `parquet/<table>/` | Canonical tables, partitioned by competition and season. |
+| `manifests/` | Canonical manifests. A Parquet file is visible only after its manifest enters the compact state. |
+| `audits/` | Collection status and coverage audits. |
+| `state/collection.json` | The latest request for each URL. Routine collection reads this compact state instead of the full request archive. |
+| `state/manifests.json` | The canonical manifest catalog. |
+| `state/forecast.json` | The last published effective-input fingerprint for each division. |
+| `runs/forecasts/` | Private forecast archives, logs and verification reports. |
 
-DuckDB queries the Parquet files in process. There is no database server. One writer lock stops two processes from writing at the same time.
+DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping. The local writer lock also protects one workspace.
 
 ## Canonical tables
 
@@ -65,10 +69,15 @@ uv run epl-forecast data normalize    # rebuild the canonical store from raw cap
 uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM fixtures GROUP BY 1'
 ```
 
-`data normalize` replays every raw capture into a new store. It replaces the old store only after the new one passes its checks. Stop scheduled runs first.
+`data normalize` replays every raw capture into a new local workspace. It replaces the local canonical files only after the new files pass their checks. Stop scheduled runs first.
 
 A backfill of history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
 
-## Back up
+## Initial migration
 
-Back up `data/`, `runs/` and `snapshots/`. Git cannot restore them.
+```sh
+uv run python scripts/migrate_r2.py
+uv run python scripts/migrate_r2.py --include-private-runs
+```
+
+The first command copies provider data and publishes the compact state only after the immutable objects exist. The second command also copies retained private forecast runs and snapshots. Both commands are resumable.

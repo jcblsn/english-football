@@ -80,3 +80,44 @@ def test_market_snapshot_changes_forecast_fingerprint(tmp_path):
     finally:
         after.close()
     assert first != second
+
+
+def test_retrieval_time_alone_does_not_change_the_forecast_fingerprint(tmp_path):
+    from epl_forecast.datasets import Dataset
+
+    odds = {
+        "match_id": "match",
+        "competition_id": "eng-premier-league",
+        "season_id": "2026-2027",
+        "family": "market_average_preclosing",
+        "home_odds": 2,
+        "draw_odds": 3,
+        "away_odds": 4,
+    }
+    request = {
+        "provider": "football_data",
+        "retrieved_at": "2026-09-09T12:00:00+00:00",
+        "evidence_basis": "prospective",
+        "source_sha256": "a" * 64,
+        "context": {},
+    }
+    publish(tmp_path, request, {"odds": [odds]})
+    before = Dataset(tmp_path)
+    try:
+        first = information_fingerprint(before)
+    finally:
+        before.close()
+    publish(
+        tmp_path,
+        {
+            **request,
+            "retrieved_at": "2026-09-10T12:00:00+00:00",
+            "source_sha256": "b" * 64,
+        },
+        {"odds": [odds]},
+    )
+    after = Dataset(tmp_path)
+    try:
+        assert information_fingerprint(after) == first
+    finally:
+        after.close()

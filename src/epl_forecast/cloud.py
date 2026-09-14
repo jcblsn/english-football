@@ -1,10 +1,12 @@
 """Move durable pipeline files between an ephemeral workspace and R2."""
 
 import json
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from epl_forecast.storage import R2Store
+from epl_forecast.datasets import KEYS, SCHEMAS, Dataset
+from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
 
 IMMUTABLE_DATA_DIRECTORIES = ("raw", "requests", "parquet", "manifests")
 
@@ -91,3 +93,68 @@ def sync_tree(root: Path, store: R2Store, prefix: str) -> dict:
     with ThreadPoolExecutor(max_workers=16) as pool:
         list(pool.map(upload, pending))
     return {"uploaded": len(pending), "files": len(paths), "prefix": prefix}
+
+
+def compact_canonical(root: Path, store: R2Store) -> dict:
+    root = Path(root)
+    remote = store.get_json("state/manifests.json", {}).get("manifests", [])
+    source = list(
+        {manifest["batch_id"]: manifest for manifest in [*remote, *read_manifests(root)]}.values()
+    )
+    batch_id = sha256_bytes(
+        json_bytes(
+            {
+                "format": "canonical-compaction-v1",
+                "source_batches": sorted(manifest["batch_id"] for manifest in source),
+            }
+        )
+    )
+    with tempfile.TemporaryDirectory(prefix="page324-compact-") as temporary:
+        staging = Path(temporary)
+        data = Dataset(root, store=store)
+        files = []
+        rows = {}
+        try:
+            for table in SCHEMAS:
+                records = f"SELECT DISTINCT * FROM {table}_observations"
+                count = data.rows(f"SELECT count(*) AS n FROM ({records})")[0]["n"]
+                rows[table] = count
+                if not count:
+                    continue
+                path = staging / "parquet" / "compacted" / batch_id / f"{table}.parquet"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                keys = ",".join([*KEYS[table], "provider", "retrieved_at", "source_sha256"])
+                data.con.execute(
+                    f"COPY (SELECT * FROM ({records}) ORDER BY {keys}) "
+                    "TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
+                    [str(path)],
+                )
+                files.append(
+                    {
+                        "table": table,
+                        "path": path.relative_to(staging).as_posix(),
+                        "sha256": file_hash(path),
+                    }
+                )
+        finally:
+            data.close()
+        manifest = {
+            "batch_id": batch_id,
+            "covers_history": True,
+            "request": {
+                "provider": "canonical_compaction",
+                "retrieved_at": max(manifest["request"]["retrieved_at"] for manifest in source),
+                "evidence_basis": "retained",
+                "source_sha256": sha256_bytes(
+                    json_bytes(sorted(manifest["batch_id"] for manifest in source))
+                ),
+                "context": {"kind": "canonical_compaction"},
+            },
+            "files": files,
+            "rows": rows,
+        }
+        for file in files:
+            store.upload(staging / file["path"], file["path"], immutable=True)
+        store.put_json(f"manifests/{batch_id}.json", manifest, immutable=True)
+        store.put_json("state/manifests.json", manifest_state([manifest]))
+    return {"batch_id": batch_id, "files": len(files), "rows": rows}

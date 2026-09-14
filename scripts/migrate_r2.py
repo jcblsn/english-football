@@ -14,11 +14,14 @@ def main() -> None:
     parser.add_argument("--runs", type=Path, default=Path("runs/product"))
     parser.add_argument("--snapshots", type=Path, default=Path("snapshots"))
     parser.add_argument("--env", type=Path, default=Path(".env"))
+    parser.add_argument("--skip-data", action="store_true")
     parser.add_argument("--include-private-runs", action="store_true")
     args = parser.parse_args()
     load_environment(args.env)
     store = R2Store.from_environment("R2_DATA_BUCKET")
-    result = {"data": sync_data(args.data, store)}
+    result = {}
+    if not args.skip_data:
+        result["data"] = sync_data(args.data, store)
     if args.include_private_runs:
         result["runs"] = sync_tree(args.runs, store, "runs/forecasts")
         result["snapshots"] = sync_tree(args.snapshots, store, "runs/snapshots")

@@ -6,14 +6,14 @@ Read the forecasts with these limits in mind.
 
 - The historical evaluation is retrospective. It assumes that a result and its xG are available on the day after the match. Historical odds have no quote times.
 - Each season panel has only nine to eleven seasons. Its intervals are wide. See [validation](validation.md).
-- The prospective ledger started in September 2026. It has few settled matches.
+- The prospective record starts fresh before launch. It will have few settled matches at first.
 - The only comparison is with M2 and with the betting market. There is no comparison with public forecast models yet.
 
 ## Inputs
 
 - Only the Premier League has xG. The other three divisions use goals only.
 - M7 does not use lineups, injuries, suspensions or transfers.
-- The collector runs every twelve hours. It can miss late team news.
+- The production workflow wakes each hour. Fixture lists are eligible each hour, and match details are eligible every 15 minutes around kickoff. An hourly wake can still miss very late team news.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.
 
 ## Model
@@ -34,6 +34,6 @@ Read the forecasts with these limits in mind.
 
 ## Operation
 
-- Forecasts run on one local machine because they need the private data archive.
-- The scheduler is a macOS launch agent.
+- GitHub Actions runs production against the two private R2 buckets.
+- The publication bucket stays private. GitHub Pages must materialize its sanitized objects during deployment.
 - A checkout of this repository contains no provider data.

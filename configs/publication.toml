@@ -1,7 +1,5 @@
-# The boundary between the private local archive and the publishable forecast
-# surface. `epl_forecast.publication` builds every published document from the
-# allowlist below and then re-checks the result against it, so a key that is not
-# named here cannot reach the site.
+# The boundary between the private operational archive and the public forecast surface.
+# `epl_forecast.publication` builds and checks each document against this allowlist.
 schema_version = 1
 
 [product]
@@ -17,10 +15,7 @@ allowed_keys = [
   "basis",
   "brier",
   "carried_from",
-  "checks",
   "classwise_ece",
-  "code_sha256",
-  "commit",
   "competition_id",
   "competition_name",
   "competitions",
@@ -30,7 +25,6 @@ allowed_keys = [
   "draw",
   "event",
   "events",
-  "failures",
   "fixtures",
   "generated_at",
   "grid_home_rows_away_columns",
@@ -58,8 +52,6 @@ allowed_keys = [
   "median_position",
   "minimum_conditional_samples",
   "model",
-  "model_id",
-  "model_kind",
   "model_version",
   "model_results_cutoff",
   "movement_floor",
@@ -71,7 +63,6 @@ allowed_keys = [
   "p_away",
   "p_draw",
   "p_home",
-  "package_version",
   "pending_season_snapshots",
   "played",
   "points_distribution",
@@ -107,7 +98,6 @@ allowed_keys = [
   "unsettled",
   "unsettled_assumption",
   "unsettled_fixtures",
-  "verification",
   "version",
   "window_end",
   "window_start",
@@ -116,7 +106,7 @@ allowed_keys = [
 
 # Only these keys may carry a long hexadecimal digest; anywhere else a digest is
 # assumed to identify a provider file and is refused.
-digest_keys = ["code_sha256", "commit"]
+digest_keys = []
 
 [boundary]
 # Substrings that may never appear in a published key, checked against the
@@ -126,13 +116,18 @@ forbidden_key_substrings = [
   "argv",
   "availability",
   "dependenc",
+  "code_sha",
+  "commit",
   "file",
   "fixture_source",
   "lineup",
   "manifest",
+  "model_id",
+  "model_kind",
   "odds",
   "parquet",
   "path",
+  "package_version",
   "player",
   "provenance",
   "quote",
@@ -144,6 +139,7 @@ forbidden_key_substrings = [
   "squad",
   "token",
   "url",
+  "verification",
 ]
 
 # Values that identify a provider, a local file or a captured payload.
@@ -159,4 +155,5 @@ forbidden_value_patterns = [
   "(?i)premierleague\\.com",
   "(?i)bookmaker",
   "(?i)\\bodds\\b",
+  "(?i)\\bM[0-9]+(?:[-_][A-Za-z0-9]+)*\\b",
 ]

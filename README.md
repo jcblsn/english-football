@@ -1,6 +1,6 @@
 # English league forecasts
 
-Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. It updates every twelve hours.
+Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. An hourly production job checks for new effective inputs and publishes only when they change.
 
 ## What it forecasts
 
@@ -27,7 +27,7 @@ See the [methodology](docs/methodology.md) and the [season simulation rules](doc
 
 ## Public forecasts
 
-Each published snapshot is in `site/data/forecasts/<snapshot>/<division>.json`. `site/data/index.json` lists all snapshots and `site/data/ledger.json` scores the settled matches. A snapshot is never changed after it is published.
+Forecast documents are immutable objects in the private `page324-publish` R2 bucket. The forecast index identifies the latest successful document for each division. A separate `record.json` scores settled forecasts. The Pages workflow materializes this sanitized surface into its deployment artifact. Generated forecasts are not committed to Git.
 
 To view the forecasts on your computer:
 
@@ -35,27 +35,26 @@ To view the forecasts on your computer:
 uv run python -m http.server -d site 8000
 ```
 
-Then open <http://localhost:8000>. The GitHub Pages workflow publishes the same `site/` directory. It runs only when started by hand.
+Then open <http://localhost:8000>. Run `uv run epl-forecast materialize` first to load the current publication data from R2. The GitHub Pages workflow does the same step before deployment.
 
 ## Run it
 
-You need [uv](https://docs.astral.sh/uv/), an API-Football key and a local data archive. Provider data is not in this repository.
+You need [uv](https://docs.astral.sh/uv/), an API-Football key and credentials for the two private R2 buckets. Provider data is not in this repository.
 
 ```sh
 uv sync --locked
 export API_FOOTBALL_KEY=...                # or put it in an ignored .env file
-uv run epl-forecast data backfill --start 2010 --max-requests 200   # first time only
 uv run epl-forecast operate
 ```
 
-`operate` collects new data, forecasts all four divisions, verifies each forecast and publishes the verified snapshot to `site/`. See [operations](docs/operations.md).
+`operate` collects new data, writes canonical data and private runs to R2, verifies due forecasts, and publishes the sanitized documents to R2. See [operations](docs/operations.md).
 
 ## Validation
 
 - Every forecast archive passes the checks in the [product contract](docs/mvp.md) before publication. For example, event probabilities must sum to the places that the rules award.
 - Historical season panels compare M7 with M2 in every division: rank, points and event scores at five points in each season.
 - A match scoreboard compares M7 with M2 and with the betting market.
-- The prospective ledger scores each published forecast after the match.
+- The prospective record scores each published forecast after the match.
 
 The [validation summary](docs/validation.md) gives the results and the commands to reproduce them.
 
@@ -76,7 +75,7 @@ See all [limitations](docs/limitations.md).
 | [Methodology](docs/methodology.md) | The M7 model and the M2 benchmark |
 | [Season simulation](docs/simulation.md) | Division rules, playoffs, sanctions and fixture dates |
 | [Data and provenance](docs/data.md) | Providers, storage, identity and data commands |
-| [Operations](docs/operations.md) | Running, scheduling, publishing and the ledger |
+| [Operations](docs/operations.md) | Running, scheduling, publishing and the forecast record |
 | [Validation](docs/validation.md) | Evidence for M7 and how to reproduce it |
 | [Limitations](docs/limitations.md) | What the forecasts do not cover |
 | [Research history](docs/research.md) | Where the experiments and older models are kept |

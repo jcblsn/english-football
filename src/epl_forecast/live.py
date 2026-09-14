@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from epl_forecast import competitions
 from epl_forecast.datasets import Dataset, timestamp
 from epl_forecast.schema import Fixture
 
@@ -41,12 +40,13 @@ def load_live_season(root=Path("data"), cutoff=None, competition="eng-premier-le
         if not records:
             raise ValueError("No captured fixtures for the selected league and season")
         inventory_times = [
-            timestamp(m["request"]["retrieved_at"])
-            for m in data.manifests
-            if m["request"]["context"].get("endpoint") == "fixtures"
-            and m["request"]["context"].get("league")
-            == competitions.competition(competition).api_football_league
-            and m["request"]["context"].get("season") == int(season[:4])
+            row["retrieved_at"]
+            for row in data.rows(
+                "SELECT max(retrieved_at) AS retrieved_at FROM fixtures_observations "
+                "WHERE provider='api_football' AND competition_id=? AND season_id=?",
+                [competition, season],
+            )
+            if row["retrieved_at"] is not None
         ]
         latest = (
             max(inventory_times) if inventory_times else min(r["retrieved_at"] for r in records)

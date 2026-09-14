@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast import pipeline
-from epl_forecast.pipeline import due, snapshot_id
+from epl_forecast.pipeline import due, production_fingerprint, snapshot_id
 
 NOW = datetime(2026, 9, 10, 22, 43, 3, tzinfo=UTC)
 
@@ -104,6 +104,17 @@ def test_only_an_effective_change_makes_a_division_due():
     assert due(state, "def", "eng-premier-league")
     assert due(state, "abc", "eng-championship")
     assert due({}, "abc", "eng-premier-league")
+
+
+def test_forecast_code_and_configuration_are_part_of_the_fingerprint(tmp_path, monkeypatch):
+    source = tmp_path / "forecast.py"
+    config = tmp_path / "product.toml"
+    source.write_text("VERSION = 1\n")
+    config.write_text('model = "v0.0"\n')
+    monkeypatch.setattr(pipeline, "FORECAST_CODE", (source, config))
+    first = production_fingerprint("data")
+    config.write_text('model = "v0.1"\n')
+    assert production_fingerprint("data") != first
 
 
 def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypatch):

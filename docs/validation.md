@@ -5,7 +5,7 @@ Four kinds of evidence support M7. This page gives the results and the commands 
 1. Product checks on every forecast archive.
 2. Historical season panels in all four divisions.
 3. A match scoreboard in the Premier League.
-4. The prospective ledger.
+4. The prospective forecast record.
 
 All historical forecasts on this page were made by code commit `fc94353` with the product configuration. The compact results are in [`evidence/`](../evidence/README.md).
 
@@ -93,9 +93,9 @@ The calibration error of M7 is higher than that of M2. Both models are worse tha
 
 Match scores are only a part of the case for M7. The difference between the models is larger in the season panels, because the state uncertainty of M7 matters most for season distributions.
 
-## Prospective ledger
+## Prospective record
 
-`site/data/ledger.json` scores each published match forecast after the result. It uses the last snapshot made before the kickoff. The ledger started on 10 September 2026. It has too few matches for a conclusion. It will become the main test of the product.
+`record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.
 
 ## Method
 

@@ -1,11 +1,14 @@
 import json
+from datetime import UTC, datetime
 
-from epl_forecast.cloud import collection_state, manifest_state, sync_data
+from epl_forecast.cloud import collection_state, compact_canonical, manifest_state, sync_data
+from epl_forecast.datasets import Dataset, publish
 
 
 class Store:
-    def __init__(self):
+    def __init__(self, directory=None):
         self.objects = {}
+        self.directory = directory
 
     def keys(self, prefix=""):
         return (key for key in self.objects if key.startswith(prefix))
@@ -15,12 +18,22 @@ class Store:
         if immutable and key in self.objects and self.objects[key] != payload:
             raise ValueError(key)
         self.objects[key] = payload
+        if self.directory:
+            path = self.directory / key
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
 
     def get_json(self, key, default=None):
         return json.loads(self.objects[key]) if key in self.objects else default
 
     def put_json(self, key, value, immutable=False):
         self.objects[key] = json.dumps(value).encode()
+
+    def uri(self, key):
+        return str(self.directory / key)
+
+    def configure_duckdb(self, connection):
+        pass
 
 
 def request(url, retrieved_at, source="a"):
@@ -75,3 +88,56 @@ def test_data_sync_writes_objects_before_mutable_state(tmp_path):
         "state/manifests.json",
         "state/collection.json",
     }
+
+
+def test_compaction_preserves_row_level_cutoffs(tmp_path):
+    root = tmp_path / "source"
+    common = {
+        "provider": "test",
+        "evidence_basis": "captured",
+        "source_sha256": "a" * 64,
+        "context": {},
+    }
+    odds = {
+        "match_id": "match",
+        "competition_id": "eng-premier-league",
+        "season_id": "2026-2027",
+        "family": "market_average_preclosing",
+        "home_odds": 2,
+        "draw_odds": 3,
+        "away_odds": 4,
+    }
+    publish(
+        root,
+        {**common, "retrieved_at": "2026-09-13T12:00:00+00:00"},
+        {"odds": [odds]},
+    )
+    publish(
+        root,
+        {
+            **common,
+            "retrieved_at": "2026-09-14T12:00:00+00:00",
+            "source_sha256": "b" * 64,
+        },
+        {"odds": [{**odds, "home_odds": 2.5}]},
+    )
+    store = Store(tmp_path / "remote")
+    result = compact_canonical(root, store)
+    manifest = json.loads(store.objects[f"manifests/{result['batch_id']}.json"])
+    compacted = tmp_path / "compacted"
+    for file in manifest["files"]:
+        path = compacted / file["path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(store.objects[file["path"]])
+    data = Dataset(
+        compacted,
+        datetime(2026, 9, 13, 18, tzinfo=UTC),
+        manifests=[manifest],
+        store=None,
+    )
+    try:
+        assert data.rows("SELECT home_odds FROM odds") == [{"home_odds": 2.0}]
+    finally:
+        data.close()
+    repeated = compact_canonical(root, store)
+    assert repeated["rows"] == result["rows"]

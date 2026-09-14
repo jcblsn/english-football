@@ -208,7 +208,9 @@ class Dataset:
         self.manifests = [
             m
             for m in self.manifests
-            if self.cutoff is None or timestamp(m["request"]["retrieved_at"]) <= self.cutoff
+            if self.cutoff is None
+            or m.get("covers_history")
+            or timestamp(m["request"]["retrieved_at"]) <= self.cutoff
         ]
         self.con = duckdb.connect()
         self.con.execute(SESSION_TIME_ZONE)
@@ -232,8 +234,14 @@ class Dataset:
                 self.con.read_parquet(
                     paths, hive_partitioning=False, union_by_name=True
                 ).create_view(f"{table}_retained")
+                retained = (
+                    f"SELECT * FROM {table}_retained"
+                    if self.cutoff is None
+                    else f"SELECT * FROM {table}_retained WHERE retrieved_at <= "
+                    f"TIMESTAMPTZ '{self.cutoff.isoformat()}'"
+                )
                 self.con.execute(
-                    f"CREATE VIEW {table}_observations AS SELECT * FROM {table}_retained "
+                    f"CREATE VIEW {table}_observations AS {retained} "
                     f"UNION ALL BY NAME SELECT * FROM {table}_empty"
                 )
             else:
