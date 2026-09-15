@@ -24,9 +24,11 @@ FIXTURE_REFRESH_SECONDS = 3600
 FIXTURE_DETAIL_REFRESH_SECONDS = 15 * 60
 
 
-def normalized_request(fetcher, endpoint, params=None, **kwargs):
+def normalized_request(fetcher, endpoint, params=None, *, retained=True, **kwargs):
+    """Return the response body; with retained=False, normalize only a new response."""
     record, body = api.request(fetcher, endpoint, params, **kwargs)
-    api.normalize(record, body, fetcher.root)
+    if retained or fetcher.is_new(record):
+        api.normalize(record, body, fetcher.root)
     return body
 
 
@@ -420,6 +422,21 @@ def collect(root=Path("data"), season=None, store=None):
             errors.append(str(error))
             return None
 
+    # A retained response inside its refresh interval was normalized when it was captured.
+    def refresh(provider, url, ingest, *, max_age, context):
+        if fetcher.reusable(url, max_age):
+            return
+        response = attempt(fetcher.get, provider, url, context=context, max_age=max_age)
+        if response:
+            attempt(ingest, root, *response)
+
+    def refresh_api(endpoint, params, *, max_age, context=None):
+        if fetcher.reusable(api.url(endpoint, params), max_age):
+            return
+        response = attempt(api.request, fetcher, endpoint, params, context=context, max_age=max_age)
+        if response:
+            attempt(api.normalize, *response, root)
+
     for league, comp in api.LEAGUES.items():
         body = attempt(
             normalized_request,
@@ -427,39 +444,35 @@ def collect(root=Path("data"), season=None, store=None):
             "fixtures",
             {"league": league, "season": year},
             max_age=FIXTURE_REFRESH_SECONDS,
+            retained=False,
         )
         if body is None:
             continue
         fixtures = body["response"]
         teams = {r["teams"][side]["id"] for r in fixtures for side in ("home", "away")}
         for team in sorted(teams):
-            record_body = attempt(
-                api.request,
-                fetcher,
+            refresh_api(
                 "players/squads",
                 {"team": team},
                 max_age=86400,
                 context={"competition_id": comp, "season_id": season_name(year)},
             )
-            if record_body:
-                record, squad = record_body
-                record = {
-                    **record,
-                    "context": {
-                        **record["context"],
-                        "competition_id": comp,
-                        "season_id": season_name(year),
-                    },
-                }
-                attempt(api.normalize, record, squad, root)
         page = 1
         while True:
+            params = {"league": league, "season": year, "page": page}
+            following = api.url("players", {**params, "page": page + 1})
+            if fetcher.reusable(api.url("players", params), 7 * 86400) and fetcher.reusable(
+                following, 7 * 86400
+            ):
+                page += 1
+                continue
             players = attempt(
                 normalized_request,
                 fetcher,
                 "players",
-                {"league": league, "season": year, "page": page},
+                params,
                 max_age=7 * 86400,
+                retained=False,
             )
             if players is None:
                 break
@@ -470,41 +483,21 @@ def collect(root=Path("data"), season=None, store=None):
                 break
             page += 1
         for team in sorted(teams):
-            attempt(
-                normalized_request,
-                fetcher,
+            refresh_api(
                 "transfers",
                 {"team": team},
                 max_age=86400 if now.month in (1, 6, 7, 8, 9) else 7 * 86400,
             )
-        attempt(
-            normalized_request,
-            fetcher,
-            "injuries",
-            {"league": league, "season": year},
-            max_age=14400,
-        )
-        attempt(
-            normalized_request,
-            fetcher,
-            "standings",
-            {"league": league, "season": year},
-            max_age=14400,
-        )
+        refresh_api("injuries", {"league": league, "season": year}, max_age=14400)
+        refresh_api("standings", {"league": league, "season": year}, max_age=14400)
         selected = fixture_details_due(fixtures, fetcher.records, now)
         for offset in range(0, len(selected), 20):
-            attempt(
-                normalized_request,
-                fetcher,
+            refresh_api(
                 "fixtures",
                 {"ids": "-".join(map(str, selected[offset : offset + 20]))},
                 max_age=FIXTURE_DETAIL_REFRESH_SECONDS,
             )
-    record_body = attempt(
-        fetcher.get, "fpl", fpl.URL, context={"season_id": season_name(year)}, max_age=1800
-    )
-    if record_body:
-        attempt(fpl.ingest, root, *record_body)
+    refresh("fpl", fpl.URL, fpl.ingest, max_age=1800, context={"season_id": season_name(year)})
     for division, comp in COMPETITIONS.items():
         context = {
             "season_start": year,
@@ -512,29 +505,27 @@ def collect(root=Path("data"), season=None, store=None):
             "division": division,
             "competition_id": comp["id"],
         }
-        response = attempt(
-            fetcher.get, "football_data", source_url(year, division), context=context, max_age=86400
+        refresh(
+            "football_data",
+            source_url(year, division),
+            football_data.ingest,
+            max_age=86400,
+            context=context,
         )
-        if response:
-            attempt(football_data.ingest, root, *response)
-    response = attempt(
-        fetcher.get,
+    refresh(
         "football_data",
         "https://football-data.co.uk/fixtures.csv",
-        context={"kind": "latest_odds", "season_id": season_name(year)},
+        football_data.ingest,
         max_age=21600,
+        context={"kind": "latest_odds", "season_id": season_name(year)},
     )
-    if response:
-        attempt(football_data.ingest, root, *response)
-    response = attempt(
-        fetcher.get,
+    refresh(
         "understat",
         f"https://understat.com/getLeagueData/EPL/{year}",
-        context={"kind": "league", "season_start": year},
+        understat_ingest.ingest,
         max_age=86400,
+        context={"kind": "league", "season_start": year},
     )
-    if response:
-        attempt(understat_ingest.ingest, root, *response)
     data = Dataset(root, store=store)
     matches = data.rows(
         "SELECT DISTINCT t.match_id, t.source_match_id, f.match_date "
@@ -546,15 +537,13 @@ def collect(root=Path("data"), season=None, store=None):
     )
     data.close()
     for match in matches:
-        response = attempt(
-            fetcher.get,
+        refresh(
             "understat",
             f"https://understat.com/getMatchData/{match['source_match_id']}",
-            context={"kind": "players", "match_id": match["match_id"]},
+            understat_ingest.ingest,
             max_age=86400,
+            context={"kind": "players", "match_id": match["match_id"]},
         )
-        if response:
-            attempt(understat_ingest.ingest, root, *response)
     report = {
         "completed_at": datetime.now(UTC).isoformat(),
         "status": "partial" if errors else "complete",

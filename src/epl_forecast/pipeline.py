@@ -183,12 +183,32 @@ MODEL_CODE = (
 )
 
 
-def production_fingerprint(data_fingerprint: str) -> str:
+def production_fingerprint(data_fingerprint: str, model_version: str) -> str:
+    """A public model version change makes every division due, so no forecast keeps the old label."""
     paths = []
     for path in MODEL_CODE:
         paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
     code = {str(path): file_hash(path) for path in paths}
-    return sha256_bytes(json_bytes({"data": data_fingerprint, "forecast_code": code}))
+    return sha256_bytes(
+        json_bytes(
+            {"data": data_fingerprint, "forecast_code": code, "model_version": model_version}
+        )
+    )
+
+
+def collect_and_sync(data: Path, data_store) -> tuple[dict, dict]:
+    """Collect into the workspace, then upload only the objects that this collection created."""
+    with writer_lock(data):
+        old_manifests = set((data / "manifests").glob("*.json"))
+        old_requests = set((data / "requests").glob("*.json"))
+        collection = collect(data, store=data_store)
+        synced = sync_data(
+            data,
+            data_store,
+            manifest_paths=list(set((data / "manifests").glob("*.json")) - old_manifests),
+            request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
+        )
+    return collection, synced
 
 
 def due(state: dict, fingerprint: str, competition: str) -> bool:
@@ -215,23 +235,17 @@ def operate(
     result = {"status": "ok", "published": [], "collection": None}
     if collect_first:
         try:
-            with writer_lock(data):
-                old_manifests = set((data / "manifests").glob("*.json"))
-                old_requests = set((data / "requests").glob("*.json"))
-                result["collection"] = collect(data, store=data_store)
-                result["data_sync"] = sync_data(
-                    data,
-                    data_store,
-                    manifest_paths=list(set((data / "manifests").glob("*.json")) - old_manifests),
-                    request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
-                )
+            result["collection"], result["data_sync"] = collect_and_sync(data, data_store)
         except SourceAccessError as error:
             return {"status": "skipped", "reason": str(error)}
     now = datetime.now(UTC)
+    model_version = policy["product"]["model_version"]
     dataset = Dataset(data, now, store=data_store)
     try:
         fingerprints = {
-            competition_id: production_fingerprint(information_fingerprint(dataset, competition_id))
+            competition_id: production_fingerprint(
+                information_fingerprint(dataset, competition_id), model_version
+            )
             for competition_id in LEAGUES
         }
         outcomes = realized_outcomes(dataset.fixtures())
@@ -241,8 +255,10 @@ def operate(
     pending = [league for league in LEAGUES if force or due(state, fingerprints[league], league)]
     if not pending:
         result.update(status="unchanged", reason="No new information since the last publication")
-        record = update_record(publish_store.get_json("record.json"), [], outcomes, policy)
-        publish_store.put_json("record.json", record)
+        previous = publish_store.get_json("record.json")
+        record = update_record(previous, [], outcomes, policy)
+        if previous is None or {**previous, "updated_at": None} != {**record, "updated_at": None}:
+            publish_store.put_json("record.json", record)
         result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
         return result
     run_id = forecast_id(now)

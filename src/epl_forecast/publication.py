@@ -143,6 +143,7 @@ RECORD_KEYS = {
     "kickoff_time",
     "log_loss",
     "match_id",
+    "model_version",
     "outcome",
     "overall",
     "p_away",

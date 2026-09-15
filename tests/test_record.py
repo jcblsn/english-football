@@ -34,6 +34,7 @@ def test_the_record_retains_only_the_last_pre_kickoff_forecast():
     assert record["unsettled"] == 1
     assert record["pending"][0]["forecast_id"] == "2026-09-12T060000Z"
     assert record["pending"][0]["p_home"] == 0.6
+    assert record["pending"][0]["model_version"] == "v0.0"
 
 
 def test_the_record_scores_a_result_without_reading_an_archive():

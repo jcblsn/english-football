@@ -89,18 +89,29 @@ class Fetcher:
         self.latest = {}
         for r in sorted(self.records, key=lambda r: r["retrieved_at"]):
             self.latest[r["url"]] = r
+        self.captured = set()
+
+    def reusable(self, url, max_age=None, historical=False):
+        """True when a retained response for this URL can stand in for a new request."""
+        old = self.latest.get(url)
+        if not old:
+            return False
+        age = (datetime.now(UTC) - datetime.fromisoformat(old["retrieved_at"])).total_seconds()
+        return historical or (max_age is not None and age < max_age)
+
+    def is_new(self, record):
+        """True only for a response that this fetcher retrieved, not for retained evidence."""
+        return (record["url"], record["retrieved_at"]) in self.captured
 
     def get(self, provider, url, *, context=None, max_age=None, historical=False):
-        old = self.latest.get(url)
-        if old:
-            age = (datetime.now(UTC) - datetime.fromisoformat(old["retrieved_at"])).total_seconds()
-            if historical or (max_age is not None and age < max_age):
-                path = self.root / old["raw_path"]
-                if not path.exists() and self.store:
-                    self.store.download(old["raw_path"], path)
-                if file_hash(path) != old["source_sha256"]:
-                    raise ValueError(f"Raw checksum mismatch: {path}")
-                return old, path.read_bytes()
+        if self.reusable(url, max_age, historical):
+            old = self.latest[url]
+            path = self.root / old["raw_path"]
+            if not path.exists() and self.store:
+                self.store.download(old["raw_path"], path)
+            if file_hash(path) != old["source_sha256"]:
+                raise ValueError(f"Raw checksum mismatch: {path}")
+            return old, path.read_bytes()
         api = provider == "api_football"
         headers = {"User-Agent": "epl-forecast/0.1 (local research)"}
         if api:
@@ -165,4 +176,5 @@ class Fetcher:
         )
         self.latest[url] = record
         self.records.append(record)
+        self.captured.add((url, record["retrieved_at"]))
         return record, payload

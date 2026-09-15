@@ -160,11 +160,14 @@ def compatible_name(left, right):
     )
 
 
+def url(endpoint, params=None):
+    return BASE + endpoint + ("?" + urlencode(sorted((params or {}).items())) if params else "")
+
+
 def request(fetcher, endpoint, params=None, context=None, **kwargs):
-    url = BASE + endpoint + ("?" + urlencode(sorted((params or {}).items())) if params else "")
     record, payload = fetcher.get(
         "api_football",
-        url,
+        url(endpoint, params),
         context={"endpoint": endpoint, **(params or {}), **(context or {})},
         **kwargs,
     )

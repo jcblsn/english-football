@@ -51,6 +51,13 @@ def _upload_missing(
     return len(pending)
 
 
+def _same_audit(remote: dict | None, path: Path) -> bool:
+    def content(report: dict) -> dict:
+        return {k: v for k, v in report.items() if k not in {"completed_at", "audited_at"}}
+
+    return remote is not None and content(remote) == content(json.loads(path.read_text()))
+
+
 def sync_data(
     root: Path,
     store: R2Store,
@@ -68,7 +75,13 @@ def sync_data(
     paths.extend(root / record["raw_path"] for record in new_requests)
     paths.extend(root / item["path"] for manifest in new_manifests for item in manifest["files"])
     uploaded = _upload_missing(store, root, sorted(set(paths)))
-    audits = sorted(path for path in (root / "audits").glob("*.json") if path.is_file())
+    changed = bool(new_manifests or new_requests)
+    audits = [
+        path
+        for path in sorted((root / "audits").glob("*.json"))
+        if path.is_file()
+        and (changed or not _same_audit(store.get_json(path.relative_to(root).as_posix()), path))
+    ]
     for path in audits:
         store.upload(path, path.relative_to(root).as_posix())
     remote_manifests = store.get_json("state/manifests.json", {}).get("manifests", [])
@@ -77,8 +90,9 @@ def sync_data(
     )
     manifests = manifest_state([*remote_manifests, *new_manifests])
     requests = collection_state([*remote_requests, *new_requests])
-    store.put_json("state/manifests.json", manifests)
-    store.put_json("state/collection.json", requests)
+    if changed:
+        store.put_json("state/manifests.json", manifests)
+        store.put_json("state/collection.json", requests)
     return {
         "uploaded": uploaded,
         "audits": len(audits),

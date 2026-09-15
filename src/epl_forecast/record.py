@@ -66,6 +66,7 @@ def update_record(
                 "kickoff_time": match["kickoff_time"],
                 "forecast_id": document["forecast_id"],
                 "generated_at": document["generated_at"],
+                "model_version": document["model"]["version"],
                 "p_home": match["p_home"],
                 "p_draw": match["p_draw"],
                 "p_away": match["p_away"],

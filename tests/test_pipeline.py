@@ -120,9 +120,13 @@ def test_forecast_code_and_configuration_are_part_of_the_fingerprint(tmp_path, m
     source.write_text("VERSION = 1\n")
     config.write_text('model = "v0.0"\n')
     monkeypatch.setattr(pipeline, "MODEL_CODE", (source, config))
-    first = production_fingerprint("data")
+    first = production_fingerprint("data", "v0.0")
     config.write_text('model = "v0.1"\n')
-    assert production_fingerprint("data") != first
+    assert production_fingerprint("data", "v0.0") != first
+
+
+def test_a_public_model_version_change_makes_every_division_due():
+    assert production_fingerprint("data", "v0.1") != production_fingerprint("data", "v0.0")
 
 
 def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypatch):

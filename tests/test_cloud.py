@@ -1,3 +1,4 @@
+import io
 import json
 from datetime import UTC, datetime
 
@@ -37,6 +38,10 @@ class Store:
 
     def put_json(self, key, value, immutable=False):
         self.objects[key] = json.dumps(value).encode()
+
+    def download(self, key, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.objects[key])
 
     def uri(self, key):
         return str(self.directory / key)
@@ -201,3 +206,45 @@ def test_compaction_preserves_row_level_cutoffs(tmp_path):
         data.close()
     repeated = compact_canonical(root, store)
     assert repeated["rows"] == result["rows"]
+
+
+def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_path, monkeypatch):
+    from epl_forecast.data import capture
+    from epl_forecast.data import collect as collection
+    from epl_forecast.pipeline import collect_and_sync
+
+    class Response(io.BytesIO):
+        headers = {}
+
+    def ingest(root, record, payload):
+        request = {
+            key: record[key]
+            for key in ("provider", "retrieved_at", "evidence_basis", "source_sha256", "context")
+        }
+        publish(root, request, {"teams": [{"team_id": record["provider"], "name": record["url"]}]})
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("A retained response inside its interval must not be requested")
+
+    monkeypatch.setattr(collection.api, "LEAGUES", {})
+    monkeypatch.setattr(collection, "COMPETITIONS", {})
+    for module in (collection.fpl, collection.football_data, collection.understat_ingest):
+        monkeypatch.setattr(module, "ingest", ingest)
+    monkeypatch.setattr(capture, "urlopen", lambda *args, **kwargs: Response(b"{}"))
+    store = Store(tmp_path / "remote")
+
+    collect_and_sync(tmp_path / "incremental", store)
+    assert len(store.get_json("state/manifests.json")["manifests"]) == 3
+    compact_canonical(tmp_path / "maintenance", store)
+    catalog = store.objects["state/manifests.json"]
+    requests = store.objects["state/collection.json"]
+    assert len(json.loads(catalog)["manifests"]) == 1
+
+    monkeypatch.setattr(capture, "urlopen", forbidden)
+    report, synced = collect_and_sync(tmp_path / "unchanged", store)
+
+    assert report["errors"] == []
+    assert synced["uploaded"] == synced["audits"] == 0
+    assert store.objects["state/manifests.json"] == catalog
+    assert store.objects["state/collection.json"] == requests
+    assert not compaction_due(store, 1)
