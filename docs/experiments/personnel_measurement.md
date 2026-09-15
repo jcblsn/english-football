@@ -161,6 +161,36 @@ The matchday-squad representation captures the historical signal better than the
 
 This comparison was chosen after the decomposition on the same seasons. It is retrospective development evidence and it is more exposed to selection than the retained D_xi result.
 
+### Squad-native validation
+
+This checks the frozen D_squad for semantic and data errors. It is not model selection. The run is `personnel_squad_audit.py` on the chronological D_squad forecasts of 2020/21–2025/26.
+
+Candidate minus control by absolute home-away D_squad difference:
+
+| Absolute D_squad difference | Matches | Mean absolute log-rate shift | H/D/A log loss | Brier | Score NLL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| below 0.05 | 1,963 | 0.010 | −0.00012 | −0.00009 | −0.00013 |
+| 0.05–0.10 | 1,487 | 0.029 | −0.00085 | −0.00042 | −0.00050 |
+| 0.10–0.20 | 1,597 | 0.055 | −0.00296 | −0.00195 | −0.00343 |
+| 0.20–0.30 | 334 | 0.094 | −0.01703 | −0.01209 | −0.02256 |
+| at least 0.30 | 69 | 0.139 | −0.03711 | −0.02819 | −0.08538 |
+
+The absolute log-rate shift has median 0.029, 90th percentile 0.073, 99th percentile 0.129 and maximum 0.263. The improvement increases with the imbalance, and no bin is worse than the control.
+
+Data checks:
+
+- All 17,539 Premier League and Championship team-matches with a complete window have a target matchday squad of at least 16 players. 17,458 have at least 18. All 108 club sides in the top 1% of absolute shifts have at least 18. A missing bench therefore does not create the large adjustments.
+- In the top 1% of shifts, departed players give on average 25% of the absent recent weight, against 10% over all team-matches.
+
+Most of the 30 largest adjustments fall into three groups. All are absences in the provider records:
+
+- Summer transitions. For example, Leeds United against West Bromwich Albion on 18 August 2023 after relegation (D_squad 0.68, 0.42 of it departed), and newly promoted Nottingham Forest in August 2022 after the loan players left.
+- Late-season rotation. For example, Blackpool at Peterborough United on 7 May 2022, Luton Town against Hull City on 8 May 2023 before the playoffs, and Watford in May 2022 after relegation. These clubs had full matchday squads without their recent regulars.
+- Injury and suspension clusters. For example, Tottenham Hotspur against Aston Villa on 26 November 2023, Newcastle United against Everton on 2 April 2024 and Southampton against Chelsea on 4 December 2024.
+- The remaining cases, such as Blackburn Rovers twice in January 2026, have many absent regulars and almost no departed weight. The records do not show the reason.
+
+No case shows a semantic failure: no truncated squad, no wrong club and no identity split. Late-season rotation is a genuine absence, but it is a different football situation from an injury crisis. The adjustment improved score NLL in 18 of the 30 cases, and a few large cases decide much of the gain.
+
 ## 3. Data, identity and membership audit
 
 ### The invalid first archive
@@ -223,13 +253,13 @@ The target is one structural forecast that is updated continuously: the persiste
 
 ### Collection decision
 
-Pull request [#2](https://github.com/jcblsn/english-football/pull/2) proposed a 10-minute production schedule so that official starting XIs would be captured before kickoff. It was closed without merge on 15 September 2026.
+Official lineups are outcome labels for the research evaluation, and the existing captures after full time keep the final starting XI and matchday squad. No research arm depends on a capture before kickoff.
 
-- No forecast now depends on an official XI captured before kickoff. The confirmed-XI arm was removed from the archive.
-- Official lineups are outcome labels. The existing captures after full time keep the final starting XI and the whole matchday squad, which is enough for every label in sections 6 and 7.
-- A tighter capture schedule would add collection complexity with no research or product need. It can be reconsidered if a specific diagnostic needs an XI captured before kickoff.
+The official team sheet is still useful evidence when it is known before a forecast. When a capture before the cutoff has 11 starters for a club, the same estimator uses the captured matchday squad as the observed D_squad, with the same κ. This transition needs no separate model or product identity. `tests/test_personnel_semantics.py` covers it: a sheet captured before the cutoff makes the feature observed, and a sheet captured after the cutoff or at kickoff is not used.
 
-The oracle candidate in the evaluation applies the frozen coefficient to the realized label after the match. It separates mechanism error from measurement error at no collection cost, and it is never an operational forecast.
+Pull request [#2](https://github.com/jcblsn/english-football/pull/2) makes this capture operationally reasonable: production wakes every 10 minutes, and match details are due every 9 minutes in the 75 minutes before kickoff. It was closed on 15 September 2026 and reopened the same day, after the decision to capture team sheets before kickoff. It changes collection only and still needs owner review.
+
+The oracle candidate in the evaluation applies the frozen coefficient to the realized label after the match. It separates mechanism error from measurement error and is never an operational forecast.
 
 ### Archive design
 
@@ -447,3 +477,37 @@ Model interpretation:
 - The earliest useful horizon is not established. There is no evidence yet for a horizon gate, and no evidence that 24 hours is necessary.
 - Batch 2 should decide from the prospective archive, using the frozen κ values: the measurement accuracy of D_squad at each horizon on the same fixtures, and the candidate minus control scores at each horizon.
 - Batch 1 makes no production choice.
+
+## 10. Frozen specification and prospective protocol
+
+This section freezes the representation, the coefficient and the prospective evaluation. A later change must be recorded with its commit, and the archive must be made again.
+
+### Representation and mapping
+
+- D_squad = 1 − (recent minutes of players in the target matchday squad) / (all recent minutes). The recent minutes are the minutes, capped at 90, in the eight previous matches of the club before the target date. Each window match needs at least 700 recorded minutes.
+- The temporary shift is κ(D_a − D_h) on the home log rate and −κ(D_a − D_h) on the away log rate, with κ = 0.43161578781583126. It does not change the persistent M7 state.
+- κ was fitted once on all 8,073 realized oracle matches before 2026/27. It is not fitted again on 2026/27 outcomes.
+
+### Estimator at a cutoff
+
+- Only observations retrieved at or before the cutoff are used.
+- Membership, availability and unresolved weight follow section 3. For the matchday squad, API-Football unavailable and FPL i, s, n or u give 0, doubtful and FPL d give 0.3, and FPL a gives 1.
+- A member's probability is its availability × q(m, n) from the `squad_table` of `src/epl_forecast/research/start_propensity.json`.
+- A departed player has probability 0. An unresolved player is left out, and a club with more than 25% unresolved recent weight gets no candidate.
+- An official team sheet captured before the cutoff replaces the estimate with the observed matchday squad.
+- The starting-XI quantities stay in the archive as a recorded baseline. They are not a candidate for production.
+
+### Prospective evaluation
+
+- Population: Premier League and Championship regular-season fixtures in 2026/27 that kick off from 17 September 2026 00:00 UTC.
+- Snapshots: the same estimator at 6 days, 3 days, 24 hours and 90 minutes before kickoff, with the structural M7 control fitted from data retrieved before the London day of each cutoff.
+- Measurement at each horizon: bias, mean absolute error and correlation of club D_squad, and of D_a − D_h, against the final matchday squad; sign agreement when the realized absolute difference is at least 0.10; estimates that change between consecutive horizons.
+- Forecast value at each horizon: candidate minus control in score NLL, H/D/A log loss and Brier on fixtures with a candidate. Also report the oracle minus control, and the results on fixtures that have all four horizons.
+- Uncertainty: resample whole match rounds, and show each round.
+- Label: prospective evidence. It is the only evidence that is not exposed to the selection of D_squad from the historical seasons.
+
+### Hindcast standard
+
+- A retrospective evaluation of this model version uses the history-only hindcast of section 11: preceding matches and minutes, preceding matchday squads, dated departures and the rolling M7 state. It does not use final injury records whose publication time is unknown.
+- Propensity tables and coefficients for a target season come from earlier seasons only.
+- A replay with the current frozen specification is a diagnostic. It is not out-of-sample evidence.
