@@ -39,6 +39,11 @@ def sample_forecast(competition="eng-premier-league", generated="2026-09-10T12:0
                 "p_away": 0.25,
                 "primary_probability_source": "structural",
                 "next_match_for_teams": ["arsenal", "chelsea"],
+                "personnel": {
+                    "home": {"discontinuity": 0.1},
+                    "away": {"discontinuity": 0.3},
+                    "home_log_rate_shift": 0.08632315756316625,
+                },
                 "market_assisted_probabilities": {
                     "p_home": 0.48,
                     "p_draw": 0.26,
@@ -66,6 +71,7 @@ def sample_forecast(competition="eng-premier-league", generated="2026-09-10T12:0
                 "p_away": 0.3,
                 "primary_probability_source": "structural",
                 "next_match_for_teams": [],
+                "personnel": None,
                 "market_assisted_probabilities": None,
                 "score_distribution": {
                     "home_rate": 1.4,
@@ -131,7 +137,7 @@ def sample_run():
 
 
 def test_document_contracts_respect_the_boundary():
-    assert load_policy()["product"]["model_version"] == "v0.1"
+    assert load_policy()["product"]["model_version"] == "v0.2"
 
 
 def test_derived_forecast_drops_provider_evidence():
@@ -147,6 +153,11 @@ def test_derived_forecast_drops_provider_evidence():
         "p_away": 0.26,
     }
     assert document["model"] == {"version": "v0.0"}
+    assert document["matches"][0]["personnel"] == {
+        "home_discontinuity": 0.1,
+        "away_discontinuity": 0.3,
+        "home_log_rate_shift": 0.086323,
+    }
     assert "M7" not in text
     assert "code_sha256" not in text
     assert "verification" not in text

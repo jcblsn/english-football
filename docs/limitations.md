@@ -8,12 +8,15 @@ Read the forecasts with these limits in mind.
 - Each season panel has only nine to eleven seasons. Its intervals are wide. See [validation](validation.md).
 - Hindcasts are retrospective. The model specification was developed with the same history, so hindcasts can look better than live forecasts. They use the fixture dates that each season finally used, and they assume that results and xG were available on the day after each match.
 - The prospective record starts fresh before launch. It will have few settled matches at first.
+- The matchday-squad continuity adjustment of v0.2 was released on retrospective evidence. Its representation and coefficient were chosen with the same seasons, and no prospective fixture was scored before the release. See [validation](validation.md#matchday-squad-continuity).
 - The only comparison is with M2 and with the betting market. There is no comparison with public forecast models yet.
 
 ## Inputs
 
 - API-Football xG starts in January 2023 in the Premier League, August 2023 in the Championship and August 2026 in League One and League Two. The League One and League Two xG has no historical evaluation. A match without xG updates the state on goals only.
-- M7 does not use lineups, injuries, suspensions or transfers.
+- The persistent M7 state does not use lineups, injuries, suspensions or transfers. Only the temporary continuity adjustment uses them, and only for Premier League and Championship fixtures in the next six days. League One and League Two have no adjustment.
+- A club without eight previous matches with complete lineup minutes, for example a club promoted from League One, has no adjustment until it has them.
+- An official team sheet enters the adjustment only when a production run captures it before the forecast cutoff.
 - The production workflow wakes each hour. Fixture lists are eligible each hour, and match details are eligible every 15 minutes around kickoff. An hourly wake can still miss very late team news.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.
 
@@ -22,6 +25,7 @@ Read the forecasts with these limits in mind.
 - The filter is an approximation. It uses a Laplace step each day and a finite set of three noise values.
 - Dynamics parameters are fixed. They are not estimated from the data.
 - Entry priors come from few clubs at some boundaries, for example clubs promoted from a curtailed season. Their intervals can be too wide or too narrow.
+- The continuity adjustment has one linear coefficient for both divisions, fixed availability values and one pooled table for q(m, n). It responds only to the difference between the two clubs, so two clubs with the same discontinuity get no shift.
 - The market-assisted weight is 1.0. Thus the market-assisted probability adds no model information to the market price.
 
 ## Season rules

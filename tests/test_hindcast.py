@@ -177,7 +177,7 @@ def test_an_origin_uses_only_results_available_on_its_day(full_season, monkeypat
         return AttackDefensePoisson().fit(training, as_of), {}, training
 
     monkeypatch.setattr(hindcast, "fitted_model", fitted)
-    hindcast._initialize(full_season, [])
+    hindcast._initialize(full_season, [], {"rows": {}, "histories": {}, "kickoffs": {}})
     task = {
         "model_version": "v0.0",
         "competition_id": "eng-premier-league",

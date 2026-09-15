@@ -156,6 +156,35 @@ At one cutoff on 15 September 2026, the forecast of each division passes every p
 
 The market pool was fitted again on the API-Football xG predictions of the 1,140 Premier League matches. It gives a market weight of 1.0 and reproduces `configs/market_pool.json` exactly, so the market-assisted probability does not change.
 
+## Matchday-squad continuity
+
+Model version v0.2 adds the matchday-squad continuity adjustment of the [methodology](methodology.md#matchday-squad-continuity). The owner decided on 15 September 2026 to release it on retrospective evidence. No prospective fixture was scored before the release. The research work is on the `research-personnel-measurement` branch, in `docs/experiments/personnel_measurement.md` and `docs/experiments/personnel_decision.md`.
+
+### Retrospective match scores
+
+The candidate adds the shift to the structural M7 forecast of the same match. The oracle uses the realized matchday squad after the match, so it measures the mechanism and is not a forecast. The history-only hindcast estimates D before each match day from earlier matchday squads and dated transfers. It uses no injury lists. Both use coefficients and q(m, n) tables from earlier seasons only. The scores cover 5,450 Premier League and Championship matches in 2020/21–2025/26. The values are candidate minus M7, and negative is better.
+
+| Scope | Matches | Oracle score NLL | Hindcast H/D/A log loss | Hindcast Brier | Hindcast score NLL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| All | 5,450 | −0.00365 | −0.00126 | −0.00081 | −0.00152 |
+| Premier League | 2,280 | −0.00497 | −0.00167 | −0.00102 | −0.00145 |
+| Championship | 3,170 | −0.00271 | −0.00097 | −0.00065 | −0.00158 |
+| Opening five matches | 577 | −0.00126 | −0.00048 | −0.00016 | −0.00116 |
+| 2025/26 | 907 | −0.00261 | −0.00078 | −0.00039 | −0.00223 |
+| Realized absolute D difference at least 0.20 | 403 | −0.03332 | −0.01025 | −0.00741 | −0.01677 |
+
+With 12 competition-season clusters, the 95% interval of the hindcast score NLL difference is [−0.00232, −0.00077], and 11 of 12 cluster effects are below zero. The oracle interval is [−0.00509, −0.00244]. The hindcast keeps 42% of the oracle gain. The gain is concentrated: most of it comes from fixtures with a large difference between the clubs.
+
+Both results are exposed to selection. The matchday-squad representation was chosen after a decomposition on the same seasons.
+
+### Measurement at forecast horizons
+
+In the development matches of 9–15 September 2026, before the release, the cutoff-safe estimator tracked the realized D_away − D_home with correlation 0.84 at 3 days (15 fixtures), 0.88 at 24 hours (20) and 0.92 at 90 minutes (23). No 6-day fixture was finished. These samples are too small for a forecast score.
+
+### Prospective evaluation
+
+The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with the structural M7 control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.

@@ -227,7 +227,7 @@ def test_simulation_reuses_one_joint_state_per_path(full_season):
             class States:
                 as_of = cutoff
 
-                def sample_scores(self, fixture, rng):
+                def sample_scores(self, fixture, rng, log_rate_shift=0.0):
                     home, away = np.zeros(size, dtype=int), np.zeros(size, dtype=int)
                     if fixture.home_team_id == teams[0]:
                         home, away = strong.astype(int), (~strong).astype(int)
@@ -315,7 +315,7 @@ class PathStates:
         self.as_of, self.size = as_of, size
         self.champion = [teams[index % len(teams)] for index in range(size)]
 
-    def sample_scores(self, fixture, rng, paths=None):
+    def sample_scores(self, fixture, rng, paths=None, log_rate_shift=0.0):
         chosen = range(self.size) if paths is None else list(paths)
         home = [5 if self.champion[p] == fixture.home_team_id else 0 for p in chosen]
         away = [5 if self.champion[p] == fixture.away_team_id else 0 for p in chosen]

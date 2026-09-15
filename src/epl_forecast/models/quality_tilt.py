@@ -295,7 +295,7 @@ class ForwardQualityTiltStates:
             )
             self.groups.append([positions, snapshot, values, self.as_of, {}])
 
-    def sample_scores(self, fixture, rng, paths=None):
+    def sample_scores(self, fixture, rng, paths=None, log_rate_shift=0.0):
         home, away = np.empty(self.size, dtype=int), np.empty(self.size, dtype=int)
         wanted = selected_mask(self.size, paths)
         for group in self.groups:
@@ -305,7 +305,9 @@ class ForwardQualityTiltStates:
             keep = slice(None) if wanted is None else wanted[positions]
             target = positions if wanted is None else positions[keep]
             home[target], away[target] = model.sample_goal_rates(
-                home_rate[keep], away_rate[keep], rng
+                home_rate[keep] * np.exp(log_rate_shift),
+                away_rate[keep] * np.exp(-log_rate_shift),
+                rng,
             )
         return (home, away) if paths is None else (home[paths], away[paths])
 

@@ -8,6 +8,7 @@ import numpy as np
 from epl_forecast.competitions import COMPETITIONS
 from epl_forecast.data.rules import LeagueRules, league_rules, reviewed_rules_evidence
 from epl_forecast.models.base import ForecastModel
+from epl_forecast.personnel import shift_scores
 from epl_forecast.postseason import simulate_playoffs
 from epl_forecast.schema import Fixture, Match
 
@@ -302,6 +303,7 @@ def simulate_season(
     impact_fixtures: set[str] | None = None,
     impact_horizon_days: int = 7,
     impact_window: tuple[datetime, datetime] | None = None,
+    log_rate_shifts: dict[str, float] | None = None,
 ) -> dict:
     if type(simulations) is not int or simulations < 1:
         raise ValueError("simulations must be a positive integer")
@@ -374,13 +376,16 @@ def simulate_season(
             unknown_teams.update(
                 t for t in (fixture.home_team_id, fixture.away_team_id) if t not in known
             )
+        # A personnel shift is temporary: it moves this fixture's rates, not the sampled states.
+        shift = (log_rate_shifts or {}).get(fixture.match_id, 0.0)
         if states is not None:
-            goals = states.sample_scores(fixture, rng)
+            goals = states.sample_scores(fixture, rng, log_rate_shift=shift)
         else:
             forecast = model.predict_match(fixture)
             if forecast.scores is None:
                 raise ValueError("Season simulation requires a score-generating model")
-            goals = forecast.scores.sample(rng, simulations)
+            scores = shift_scores(forecast.scores, shift) if shift else forecast.scores
+            goals = scores.sample(rng, simulations)
         if any(
             np.shape(g) != (simulations,)
             or not np.issubdtype(np.asarray(g).dtype, np.integer)

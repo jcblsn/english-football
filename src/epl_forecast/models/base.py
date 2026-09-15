@@ -58,8 +58,15 @@ class SampledForecastStates(Protocol):
     size: int
 
     def sample_scores(
-        self, fixture: Fixture, rng: np.random.Generator, paths: np.ndarray | None = None
-    ) -> tuple[np.ndarray, np.ndarray]: ...
+        self,
+        fixture: Fixture,
+        rng: np.random.Generator,
+        paths: np.ndarray | None = None,
+        log_rate_shift: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``log_rate_shift`` adds to the home and subtracts from the away log rate of this
+        fixture only. The sampled states do not change."""
+        ...
 
 
 class ProbabilisticForecastModel(ForecastModel, Protocol):

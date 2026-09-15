@@ -10,9 +10,9 @@ The product uses provider data that stays in the private `page324-data` R2 bucke
 | Football-Data | Results and average pre-closing and closing odds | All four forecast divisions; National League results as entry-prior evidence only |
 | API-Football xG | Team xG for each match, from the first match with xG in each division | All four |
 | Understat | Team xG for each match before API-Football xG starts | Premier League only |
-| FPL | Nothing in M7; captured for research | Premier League |
+| FPL | Player status and club for the matchday-squad continuity adjustment | Premier League |
 
-The collector also captures squads, players, lineups, transfers, injuries and match statistics. M7 does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They support research on the [research branch](research.md).
+The collector also captures squads, players, lineups, transfers, injuries and match statistics. The matchday-squad continuity adjustment uses lineups, squads, transfers and injuries. The persistent M7 state does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They support research on the [research branch](research.md).
 
 The National League is an entry-source competition. The collector retains its historical Football-Data results so that the generic entry-prior model can use a complete source season for a club promoted to League Two. National League matches do not update the League Two filter. The product does not forecast or publish the National League.
 

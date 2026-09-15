@@ -10,6 +10,14 @@ from epl_forecast.cli import fitted_model, load_config
 from epl_forecast.competitions import COMPETITION_IDS, competition
 from epl_forecast.datasets import Dataset
 from epl_forecast.live import LONDON
+from epl_forecast.personnel import COMPETITIONS as PERSONNEL_COMPETITIONS
+from epl_forecast.personnel import (
+    Evidence,
+    club_histories,
+    dated_history,
+    fixture_adjustments,
+    load_evidence,
+)
 from epl_forecast.pipeline import PRODUCT_CONFIG, PRODUCT_MODEL, model_code_hashes
 from epl_forecast.publication import (
     MINIMUM_SIMULATIONS,
@@ -46,7 +54,8 @@ ASSUMPTIONS = (
     "The simulation uses the dates on which the remaining matches were finally played. At the origin time, some of these dates were not known.",
     "A points deduction applies only from its reviewed announcement date.",
     "The division rules, promotion places and playoff format are those of the season.",
-    "The model does not use betting markets, lineups, injuries or transfers.",
+    "In the Premier League and the Championship, a match in the six days after the origin gets the matchday-squad continuity adjustment. The hindcast estimates it from the matchday squads of earlier matches and from dated transfers. It does not use injury lists, squad captures or team sheets, because the data does not show when they were first known.",
+    "The model does not use betting markets.",
 )
 
 
@@ -149,9 +158,25 @@ def claim_edition(data_store, manifest: dict) -> None:
 _WORKER = {}
 
 
-def _initialize(matches, observations) -> None:
+def _initialize(matches, observations, personnel) -> None:
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-    _WORKER.update(matches=matches, observations=observations)
+    _WORKER.update(matches=matches, observations=observations, personnel=personnel)
+
+
+def load_personnel_history(data, seasons) -> dict:
+    """Matchday squads and transfers dated by history, for the divisions with the adjustment."""
+    fixtures = [row for row in data.fixtures() if row["competition_id"] in PERSONNEL_COMPETITIONS]
+    in_scope = {row["match_id"] for row in fixtures}
+    identifiers = sorted(
+        {f"{year - 1}-{year}" for year in seasons} | {f"{y}-{y + 1}" for y in seasons}
+    )
+    rows = load_evidence(data, identifiers)
+    appearances = [row for row in rows["appearances"] if row["match_id"] in in_scope]
+    return {
+        "rows": dated_history(appearances, rows["transfers"]),
+        "histories": dict(club_histories(fixtures)),
+        "kickoffs": {row["match_id"]: row["kickoff_time"] for row in fixtures},
+    }
 
 
 def simulate_origin(task: dict) -> dict:
@@ -163,6 +188,22 @@ def simulate_origin(task: dict) -> dict:
     played = [m for m in season if m.available_on <= as_of]
     remaining = [m.fixture for m in season if m.available_on > as_of]
     teams = sorted({t for m in season for t in (m.fixture.home_team_id, m.fixture.away_team_id)})
+    shifts = {}
+    if task["competition_id"] in PERSONNEL_COMPETITIONS:
+        history = _WORKER["personnel"]
+        origin = datetime.fromisoformat(task["origin_at"])
+        records = fixture_adjustments(
+            Evidence(origin, **history["rows"]),
+            defaultdict(list, history["histories"]),
+            remaining,
+            history["kickoffs"],
+            origin,
+        )
+        shifts = {
+            match_id: record["home_log_rate_shift"]
+            for match_id, record in records.items()
+            if record["home_log_rate_shift"] is not None
+        }
     simulation = simulate_season(
         model,
         played,
@@ -172,13 +213,19 @@ def simulate_origin(task: dict) -> dict:
         task["simulations"],
         task["seed"],
         task["adjustments"],
+        log_rate_shifts=shifts,
     )
     table = table_at(teams, played, task["adjustments"])
     for row in simulation["teams"]:
         row.pop("goal_difference_distribution")
         row.update(table[row["team_id"]])
     simulation.pop("match_frequencies")
-    return {**task, "training_matches": len(training), "simulation": simulation}
+    return {
+        **task,
+        "training_matches": len(training),
+        "personnel_adjusted_fixtures": len(shifts),
+        "simulation": simulation,
+    }
 
 
 def derive_hindcast(record: dict, names: dict) -> dict:
@@ -346,6 +393,7 @@ def run_hindcasts(
         observations = data.xg_observations()
         sanctions = load_registry(data)
         names = {r["team_id"]: r["name"] for r in data.rows("SELECT * FROM teams")}
+        personnel = load_personnel_history(data, seasons)
     finally:
         data.close()
     plans, tasks, recovered = {}, [], []
@@ -398,7 +446,9 @@ def run_hindcasts(
             finish(season_key)
     if tasks:
         with ProcessPoolExecutor(
-            max_workers=workers, initializer=_initialize, initargs=(matches, observations)
+            max_workers=workers,
+            initializer=_initialize,
+            initargs=(matches, observations, personnel),
         ) as pool:
             futures = {pool.submit(simulate_origin, task): task for task in tasks}
             for done, future in enumerate(as_completed(futures), 1):

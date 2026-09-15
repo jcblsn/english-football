@@ -44,6 +44,7 @@ TEAM_FIELDS = (
 
 FORECAST_KEYS = {
     "away",
+    "away_discontinuity",
     "away_rate",
     "away_team_id",
     "baseline",
@@ -62,6 +63,8 @@ FORECAST_KEYS = {
     "generated_at",
     "grid_home_rows_away_columns",
     "home",
+    "home_discontinuity",
+    "home_log_rate_shift",
     "home_rate",
     "home_team_id",
     "horizon_days",
@@ -91,6 +94,7 @@ FORECAST_KEYS = {
     "p_away",
     "p_draw",
     "p_home",
+    "personnel",
     "played",
     "points_distribution",
     "points_intervals",
@@ -474,6 +478,21 @@ def season_team_rows(rows: list[dict], names: dict) -> list[dict]:
     ]
 
 
+def public_personnel(record: dict | None) -> dict | None:
+    """The matchday-squad discontinuity of each club and the home log-rate shift it gives."""
+    if record is None:
+        return None
+
+    def rounded(value):
+        return None if value is None else round(float(value), 6)
+
+    return {
+        "home_discontinuity": rounded(record["home"]["discontinuity"]),
+        "away_discontinuity": rounded(record["away"]["discontinuity"]),
+        "home_log_rate_shift": rounded(record["home_log_rate_shift"]),
+    }
+
+
 def derive_forecast(
     forecast: dict,
     forecast_id: str,
@@ -511,6 +530,7 @@ def derive_forecast(
             "market_assisted": None
             if assisted is None
             else {key: probability(assisted[key]) for key in ("p_home", "p_draw", "p_away")},
+            "personnel": public_personnel(row["personnel"]),
         }
         if row["next_match_for_teams"]:
             scores = row["score_distribution"]

@@ -425,8 +425,11 @@ class SampledTeamStates:
             np.exp(league[:, 1] + away[:, 0] - home[:, 1]),
         )
 
-    def sample_scores(self, fixture: Fixture, rng: np.random.Generator, paths=None):
+    def sample_scores(
+        self, fixture: Fixture, rng: np.random.Generator, paths=None, log_rate_shift=0.0
+    ):
         home, away = self.rates(fixture)
+        home, away = home * np.exp(log_rate_shift), away * np.exp(-log_rate_shift)
         if paths is not None:
             home, away = home[paths], away[paths]
         return rng.poisson(home), rng.poisson(away)
