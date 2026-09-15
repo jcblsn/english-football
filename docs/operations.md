@@ -148,17 +148,9 @@ The production workflow calls the Pages workflow after a run that publishes at l
 | Secret | Scope | Used by |
 | --- | --- | --- |
 | `API_FOOTBALL_KEY` | Repository | Production |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Repository | Production. Object read and write on `page324-data` and `page324-publish`. |
-| `R2_PAGES_ACCESS_KEY_ID`, `R2_PAGES_SECRET_ACCESS_KEY` | `github-pages` environment | Pages. Object read only, on `page324-publish` only. |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Repository | Production and Pages. Object read and write on `page324-data` and `page324-publish`. |
 
-The variables `R2_ACCOUNT_ID`, `R2_DATA_BUCKET` and `R2_PUBLISH_BUCKET` are repository variables. The Pages workflow does not get the production credential, so the site build cannot read `page324-data`.
-
-To make the Pages credential, create an R2 API token in the Cloudflare dashboard with the "Object Read only" permission, applied to the `page324-publish` bucket only. Then store its access key ID and secret access key:
-
-```sh
-gh secret set R2_PAGES_ACCESS_KEY_ID --env github-pages
-gh secret set R2_PAGES_SECRET_ACCESS_KEY --env github-pages
-```
+The variables `R2_ACCOUNT_ID`, `R2_DATA_BUCKET` and `R2_PUBLISH_BUCKET` are repository variables. The Pages workflow uses the same credential as production. It gets only `R2_PUBLISH_BUCKET`, and it reads only `page324-publish`. The credential itself can also read and write `page324-data`, so a change to the Pages workflow needs the same review as a change to production.
 
 ## Datawrapper proof of concept
 

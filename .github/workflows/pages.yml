@@ -24,15 +24,10 @@ jobs:
     env:
       R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
       R2_PUBLISH_BUCKET: ${{ vars.R2_PUBLISH_BUCKET }}
-      # A read-only credential for page324-publish. See docs/operations.md.
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_PAGES_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_PAGES_SECRET_ACCESS_KEY }}
+      # The shared repository credential. The site build reads only page324-publish.
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
-      - name: Require the read-only publication credential
-        if: env.R2_ACCESS_KEY_ID == '' || env.R2_SECRET_ACCESS_KEY == ''
-        run: |
-          echo "::error::Set R2_PAGES_ACCESS_KEY_ID and R2_PAGES_SECRET_ACCESS_KEY in the github-pages environment"
-          exit 1
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
