@@ -131,7 +131,7 @@ def sample_run():
 
 
 def test_document_contracts_respect_the_boundary():
-    assert load_policy()["product"]["model_version"] == "v0.0"
+    assert load_policy()["product"]["model_version"] == "v0.1"
 
 
 def test_derived_forecast_drops_provider_evidence():

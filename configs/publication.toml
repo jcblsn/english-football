@@ -3,7 +3,7 @@
 schema_version = 1
 
 [product]
-model_version = "v0.0"
+model_version = "v0.1"
 
 [boundary]
 # Substrings that may never appear in a published key. The code checks these
