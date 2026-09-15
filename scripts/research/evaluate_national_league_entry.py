@@ -41,8 +41,8 @@ def evaluation_config(data_root: Path) -> dict:
     return config
 
 
-def national_entrants(seasons, season: str) -> dict[str, dict]:
-    games = seasons.get((LEAGUE_TWO, season), ())
+def national_entrants(seasons, season: str, games=()) -> dict[str, dict]:
+    games = games or seasons.get((LEAGUE_TWO, season), ())
     teams = sorted(
         {team for game in games for team in (game.fixture.home_team_id, game.fixture.away_team_id)}
     )
@@ -54,19 +54,19 @@ def national_entrants(seasons, season: str) -> dict[str, dict]:
     }
 
 
-def match_scopes(predictions, seasons, selected_seasons, opening_matches):
+def match_scopes(predictions, seasons, league_games, selected_seasons, opening_matches):
     national = {}
     continuing = set()
     source_quality = {}
     for season in selected_seasons:
-        entrants = national_entrants(seasons, season)
+        games = league_games[season]
+        entrants = national_entrants(seasons, season, games)
         source = seasons.get((NATIONAL_LEAGUE, f"{int(season[:4]) - 1}-{season[:4]}"))
         if source:
             strengths = season_strengths(source)
             for team in entrants:
                 state = strengths.teams[team]
                 source_quality[season, team] = float(np.mean(state.mean))
-        games = seasons[LEAGUE_TWO, season]
         previous = seasons.get((LEAGUE_TWO, f"{int(season[:4]) - 1}-{season[:4]}"), ())
         previous_teams = {
             team
@@ -181,16 +181,23 @@ def summarize_scopes(scopes, bins):
     return summaries, calibration, differences
 
 
-def prior_scores(seasons, selected_seasons, opening_matches):
+def prior_scores(seasons, league_games, selected_seasons, opening_matches):
     rows = []
+    diagnostics = []
     control_seasons = {key: value for key, value in seasons.items() if key[0] != NATIONAL_LEAGUE}
     for season in selected_seasons:
-        games = seasons[LEAGUE_TWO, season]
+        games = league_games[season]
+        if len(games) != 24 * 23:
+            continue
         cutoff = min(game.fixture.match_date for game in games)
-        entrants = national_entrants(seasons, season)
+        entrants = national_entrants(seasons, season, games)
         labels = season_strengths(games)
         control = EntryPriorModel(control_seasons, LEAGUE_TWO, season, cutoff)
         candidate = EntryPriorModel(seasons, LEAGUE_TWO, season, cutoff)
+        diagnostics.extend(
+            {"model_id": model_id, **model.diagnostics()}
+            for model_id, model in ((CONTROL, control), (CANDIDATE, candidate))
+        )
         source_season = seasons[NATIONAL_LEAGUE, f"{int(season[:4]) - 1}-{season[:4]}"]
         source = season_strengths(source_season)
         for team in sorted(entrants):
@@ -241,7 +248,7 @@ def prior_scores(seasons, selected_seasons, opening_matches):
                         "mean": float(np.mean([row[metric] for row in group])),
                     }
                 )
-    return rows, summaries
+    return rows, summaries, diagnostics
 
 
 def main():
@@ -262,8 +269,22 @@ def main():
     finally:
         data.close()
     seasons = completed_seasons(matches, date(2026, 9, 15))
+    grouped = defaultdict(list)
+    for match in matches:
+        if match.fixture.competition_id == LEAGUE_TWO:
+            grouped[match.fixture.season_id].append(match)
+    league_games = {
+        season: tuple(
+            sorted(games, key=lambda match: (match.fixture.match_date, match.fixture.match_id))
+        )
+        for season, games in grouped.items()
+    }
     selected = [f"{year}-{year + 1}" for year in args.seasons]
-    selected = [season for season in selected if national_entrants(seasons, season)]
+    selected = [
+        season
+        for season in selected
+        if national_entrants(seasons, season, league_games.get(season, ()))
+    ]
     config = evaluation_config(args.data)
     predictions = rolling_predictions(
         matches,
@@ -272,15 +293,20 @@ def main():
         date(args.seasons[-1] + 1, 7, 1),
         progress=True,
     )
-    scopes, median_quality = match_scopes(predictions, seasons, selected, args.opening_matches)
+    scopes, median_quality = match_scopes(
+        predictions, seasons, league_games, selected, args.opening_matches
+    )
     summaries, calibration, differences = summarize_scopes(scopes, config["calibration_bins"])
-    priors, prior_summary = prior_scores(seasons, selected, args.opening_matches)
+    priors, prior_summary, diagnostics = prior_scores(
+        seasons, league_games, selected, args.opening_matches
+    )
     save_rows(args.output / "predictions.csv", predictions)
     save_rows(args.output / "match_summary.csv", summaries)
     save_rows(args.output / "match_calibration.csv", calibration)
     save_rows(args.output / "matched_differences.csv", differences)
     save_rows(args.output / "entry_prior_scores.csv", priors)
     save_rows(args.output / "entry_prior_summary.csv", prior_summary)
+    write_json(args.output / "entry_models.json", diagnostics)
     write_json(
         args.output / "manifest.json",
         {
@@ -307,7 +333,13 @@ def main():
             "runner_hash": file_hash(Path(__file__)),
         },
     )
-    print(json.dumps({"selected_seasons": selected, "match_differences": differences}, indent=2))
+    primary = [
+        row
+        for row in differences
+        if row["season_id"] == "all"
+        and row["scope"] in {"national_entrants_first_10", "all_league_two"}
+    ]
+    print(json.dumps({"selected_seasons": selected, "primary_differences": primary}, indent=2))
 
 
 if __name__ == "__main__":
