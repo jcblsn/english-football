@@ -255,7 +255,7 @@ The target is one structural forecast that is updated continuously: the persiste
 
 Official lineups are outcome labels for the research evaluation, and the existing captures after full time keep the final starting XI and matchday squad. No research arm depends on a capture before kickoff.
 
-The official team sheet is still useful evidence when it is known before a forecast. When a capture before the cutoff has 11 starters for a club, the same estimator uses the captured matchday squad as the observed D_squad, with the same κ. This transition needs no separate model or product identity. `tests/test_personnel_semantics.py` covers it: a sheet captured before the cutoff makes the feature observed, and a sheet captured after the cutoff or at kickoff is not used.
+The official team sheet is still useful evidence when it is known before a forecast. When a capture before the cutoff shows the whole matchday squad of a club, the same estimator uses the captured matchday squad as the observed D_squad, with the same κ. Batch 2 corrected the rule for a whole matchday squad: 11 starters and at least 7 substitutes, the smallest bench in the 4,128 final API-Football team sheets of 2024/25–2026/27. Before, 11 starters were sufficient. This transition needs no separate model or product identity. `tests/test_personnel_semantics.py` covers it: a sheet captured before the cutoff makes the feature observed, and a sheet captured after the cutoff or at kickoff is not used.
 
 Pull request [#2](https://github.com/jcblsn/english-football/pull/2) makes this capture operationally reasonable: production wakes every 10 minutes, and match details are due every 9 minutes in the 75 minutes before kickoff. It was closed on 15 September 2026 and reopened the same day, after the decision to capture team sheets before kickoff. It changes collection only and still needs owner review.
 
@@ -430,7 +430,7 @@ Collection and operation:
 
 - The archive is rebuilt from retrieval times after each round. No scheduled research job publishes snapshots at their cutoffs, because a scheduled workflow must be on `main`.
 - GitHub ran only 4 scheduled production runs on 15 September 2026. Injury, squad and FPL evidence at a cutoff can therefore be older than its refresh interval. The snapshots record the retrieval times.
-- Pull request #2 was closed. If a later diagnostic needs official XIs before kickoff, the collection question must be opened again.
+- Pull request #2 is open. It was closed and reopened on 15 September 2026 for official team sheets, and its latest checks passed. It is not merged, so team sheets before kickoff are still captured only when a scheduled run falls in the window.
 - The M7 control uses data retrieved before the London day of the cutoff, not all data retrieved before the personnel cutoff. This is the product match-day convention.
 - No 6-day snapshot is scored yet, and the 3-day sample is 11 fixtures. The horizon questions need several prospective rounds.
 
@@ -506,7 +506,9 @@ This section freezes the representation, the coefficient and the prospective eva
 - Membership, availability and unresolved weight follow section 3. For the matchday squad, API-Football unavailable and FPL i, s, n or u give 0, doubtful and FPL d give 0.3, and FPL a gives 1.
 - A member's probability is its availability × q(m, n) from the `squad_table` of `src/epl_forecast/research/start_propensity.json`.
 - A departed player has probability 0. An unresolved player is left out, and a club with more than 25% unresolved recent weight gets no candidate.
-- An official team sheet captured before the cutoff replaces the estimate with the observed matchday squad.
+- An official team sheet captured before the cutoff with 11 starters and at least 7 substitutes replaces the estimate with the observed matchday squad.
+- The reference matches of an estimate are the eight club matches that kicked off before the cutoff. The realized label uses the eight club matches before the target date.
+- Batch 2 made the last two rules exact before the prospective window. See [the Batch 2 decision report](personnel_decision.md).
 - The starting-XI quantities stay in the archive as a recorded baseline. They are not a candidate for production.
 
 ### Prospective evaluation

@@ -25,6 +25,10 @@ from epl_forecast.research.personnel_mean import (
 )
 
 STARTING_XI = 11
+# The smallest bench in the 4,128 final API-Football team sheets of the Premier League and the
+# Championship in 2024/25–2026/27 (most name 9). A capture with fewer substitutes does not show
+# the whole matchday squad.
+MIN_SUBSTITUTES = 7
 MEMBER = "member"
 DEPARTED = "departed"
 UNKNOWN = "unknown"
@@ -211,12 +215,16 @@ class Evidence:
         return dict(weights)
 
     def team_sheet(self, match_id, team):
-        """The official team sheet of the latest capture before kickoff, or None."""
+        """The latest official team sheet captured before kickoff with the whole matchday squad.
+
+        A capture shows the whole matchday squad when it has 11 starters and at least
+        `MIN_SUBSTITUTES` substitutes. Otherwise the feature stays expected.
+        """
         captures = self.sheets.get((match_id, team), {})
         for retrieved_at in sorted(captures, reverse=True):
             sheet = captures[retrieved_at]
             starters = {player for player, starts in sheet.items() if starts}
-            if len(starters) == STARTING_XI:
+            if len(starters) == STARTING_XI and len(sheet) - len(starters) >= MIN_SUBSTITUTES:
                 return {"xi": starters, "squad": set(sheet)}, retrieved_at
         return None
 
@@ -231,6 +239,20 @@ class Evidence:
                 bool(chosen) and player in chosen[-1],
             )
         return result
+
+
+def reference_matches(history, target_date, cutoff):
+    """Club matches known at the cutoff: kickoff before the cutoff and date before the target.
+
+    `history` holds (kickoff_time, match_date, match_id) for the finished matches of one club.
+    A forecast six days before a Saturday target does not see the Wednesday match between.
+    """
+    ordered = sorted(history, key=lambda item: (item[1], item[2]))
+    return [
+        match_id
+        for kickoff, day, match_id in ordered
+        if day < target_date and kickoff is not None and kickoff < cutoff
+    ]
 
 
 def load_propensity(path=PROPENSITY_FILE):

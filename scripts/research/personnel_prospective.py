@@ -18,6 +18,7 @@ import numpy as np
 
 from epl_forecast.artifacts import execution_provenance, new_run_directory
 from epl_forecast.cli import save_rows
+from epl_forecast.data.api_football import LEAGUES
 from epl_forecast.datasets import Dataset, timestamp
 from epl_forecast.live import LONDON
 from epl_forecast.models import make_model
@@ -33,6 +34,7 @@ from epl_forecast.research.personnel import (
     load_evidence,
     load_propensity,
     realized_discontinuity,
+    reference_matches,
     structural_spec,
     team_expected,
 )
@@ -65,6 +67,11 @@ HORIZONS = {
 MAX_GOALS = 15
 R2_PREFIX = "research/evidence/personnel-measurement"
 METRICS = ("hda_log_loss", "brier", "score_nll")
+BOOTSTRAP_SAMPLES = 2000
+BOOTSTRAP_SEED = 20260917
+# The 90th percentile of the absolute log-rate shift in the chronological D_squad forecasts of
+# 2020/21–2025/26. Snapshots at or above it are audited one by one.
+AUDIT_SHIFT = 0.073
 
 
 def payload(scores):
@@ -87,8 +94,37 @@ def previous_matches(fixtures):
     for row in sorted(fixtures, key=lambda item: (item["match_date"], item["match_id"])):
         if row["stage"] == "regular" and row["status"] == "finished":
             for team in (row["home_team_id"], row["away_team_id"]):
-                by_team[team].append((row["match_date"], row["match_id"]))
+                by_team[team].append((row["kickoff_time"], row["match_date"], row["match_id"]))
     return by_team
+
+
+def label_matches(history, target_date):
+    """The frozen label window: the club matches dated before the target date."""
+    return [match_id for _, day, match_id in history if day < target_date]
+
+
+def match_rounds(store):
+    """API-Football round of each 2026/27 fixture, from the latest retained fixture capture.
+
+    A postponed fixture keeps its original round.
+    """
+    catalog = store.get_json("state/manifests.json", {})["manifests"]
+    rounds = {}
+    for league, competition in LEAGUES.items():
+        if competition not in COMPETITIONS:
+            continue
+        captures = [
+            m["request"]
+            for m in catalog
+            if m["request"].get("context")
+            == {"endpoint": "fixtures", "league": league, "season": 2026}
+        ]
+        latest = max(captures, key=lambda request: request["retrieved_at"])
+        for item in store.get_json(latest["raw_path"])["response"]:
+            label = item["league"]["round"]
+            if label.startswith("Regular Season - "):
+                rounds[item["fixture"]["id"]] = int(label.rsplit(" ", 1)[1])
+    return rounds
 
 
 class Controls:
@@ -150,7 +186,7 @@ def archive_command(args):
             evidence = Evidence(cutoff, **rows)
             sides = {}
             for side, team in teams.items():
-                previous = [m for day, m in history[team] if day < fixture["match_date"]]
+                previous = reference_matches(history[team], fixture["match_date"], cutoff)
                 estimate = team_expected(
                     evidence, team, match_id, competition, previous, propensity
                 )
@@ -183,6 +219,9 @@ def archive_command(args):
                     "squad_retrieved_at": None
                     if team not in evidence.squad_times
                     else evidence.squad_times[team].isoformat(),
+                    "team_sheet_retrieved_at": None
+                    if estimate is None
+                    else estimate["team_sheet_retrieved_at"],
                     **{r: None if estimate is None else estimate[r] for r in REPRESENTATIONS},
                 }
             model, information_cutoff = controls.get(competition, cutoff.astimezone(LONDON).date())
@@ -203,9 +242,14 @@ def archive_command(args):
                     sides["away"][representation],
                     KAPPA[representation],
                 )
+                home, away = sides["home"][representation], sides["away"][representation]
                 candidates[representation] = {
                     "kappa": KAPPA[representation],
+                    "away_minus_home_d": None
+                    if home is None or away is None or home["d"] is None or away["d"] is None
+                    else away["d"] - home["d"],
                     "home_log_rate_shift": None if shift is None else float(shift[0]),
+                    "away_log_rate_shift": None if shift is None else float(shift[1]),
                     "forecast": None if shift is None else payload(shifted_scores(scores, shift)),
                 }
             records.append(
@@ -308,6 +352,125 @@ def statistics(estimates, labels):
     }
 
 
+def round_resampling(rows, arm, metric, samples=BOOTSTRAP_SAMPLES, seed=BOOTSTRAP_SEED):
+    """Mean paired difference with a 95% interval that resamples whole match rounds."""
+    clusters = defaultdict(list)
+    for row in rows:
+        value, control = row[f"{arm}_{metric}"], row[f"control_{metric}"]
+        if value is not None and control is not None:
+            clusters[row["competition_id"], row["round"]].append(value - control)
+    if not clusters:
+        return None
+    keys = sorted(clusters, key=str)
+    sums = np.array([sum(clusters[key]) for key in keys])
+    counts = np.array([len(clusters[key]) for key in keys])
+    picks = np.random.default_rng(seed).integers(0, len(keys), (samples, len(keys)))
+    draws = sums[picks].sum(axis=1) / counts[picks].sum(axis=1)
+    return {
+        "mean": float(sums.sum() / counts.sum()),
+        "rounds": len(keys),
+        "interval_95": np.quantile(draws, [0.025, 0.975]).tolist(),
+        "resamples_below_zero": float(np.mean(draws < 0)),
+    }
+
+
+def forecast_summary(rows):
+    by_round = defaultdict(list)
+    for row in rows:
+        by_round[row["competition_id"], row["round"]].append(row)
+    arms = ("candidate", "oracle")
+    return {
+        "fixtures": len(rows),
+        "exposure": {
+            f"{kind}_abs_difference_at_least_{bound:.2f}": sum(
+                abs(row[f"{kind}_difference"]) >= bound for row in rows
+            )
+            for kind in ("estimated", "realized")
+            for bound in (0.10, 0.20)
+        },
+        **{
+            f"{arm}_minus_control_{metric}": round_resampling(rows, arm, metric)
+            for arm in arms
+            for metric in METRICS
+        },
+        "by_round": [
+            {
+                "competition_id": competition,
+                "round": number,
+                "fixtures": len(group),
+                **{
+                    f"{arm}_minus_control_{metric}": _mean(
+                        [
+                            None
+                            if row[f"{arm}_{metric}"] is None or row[f"control_{metric}"] is None
+                            else row[f"{arm}_{metric}"] - row[f"control_{metric}"]
+                            for row in group
+                        ]
+                    )
+                    for arm in arms
+                    for metric in METRICS
+                },
+            }
+            for (competition, number), group in sorted(by_round.items(), key=str)
+        ],
+    }
+
+
+def audit_cases(fixture_rows, player_rows):
+    """Matchday-squad snapshots with a large adjustment, a false large signal or a missed one."""
+    players = defaultdict(list)
+    for row in player_rows:
+        players[row["horizon"], row["match_id"], row["team_id"]].append(row)
+    cases = []
+    for row in fixture_rows:
+        if row["representation"] != "squad" or row["estimated_difference"] is None:
+            continue
+        estimated, realized = row["estimated_difference"], row["realized_difference"]
+        reasons = [
+            reason
+            for reason, flag in (
+                ("large adjustment", abs(KAPPA["squad"] * estimated) >= AUDIT_SHIFT),
+                ("large realized imbalance", abs(KAPPA["squad"] * realized) >= AUDIT_SHIFT),
+                ("false large signal", abs(estimated) >= 0.10 and abs(realized) < 0.05),
+                ("missed large signal", abs(realized) >= 0.10 and abs(estimated) < 0.05),
+                ("opposite sign", abs(realized) >= 0.10 and estimated * realized < 0),
+            )
+            if flag
+        ]
+        if not reasons:
+            continue
+        misses = []
+        for side in ("home", "away"):
+            for player in players[row["horizon"], row["match_id"], row[f"{side}_team_id"]]:
+                probability = player["probability_squad"]
+                if probability is not None and abs(probability - player["in_squad"]) >= 0.5:
+                    misses.append((side, player))
+        misses.sort(key=lambda item: -item[1]["recent_weight"])
+        cases.append(
+            {
+                **{k: row[k] for k in ("horizon", "prospective", "match_id", "round")},
+                "reasons": "; ".join(reasons),
+                "estimated_difference": estimated,
+                "realized_difference": realized,
+                "estimated_home_log_rate_shift": row["estimated_home_log_rate_shift"],
+                "oracle_home_log_rate_shift": row["oracle_home_log_rate_shift"],
+                "score": f"{row['home_goals']}-{row['away_goals']}",
+                **{
+                    f"{arm}_minus_control_score_nll": None
+                    if row[f"{arm}_score_nll"] is None
+                    else row[f"{arm}_score_nll"] - row["control_score_nll"]
+                    for arm in ("candidate", "oracle")
+                },
+                "misclassified_players": "; ".join(
+                    f"{side} {p['player_id']} weight {p['recent_weight']:.3f} "
+                    f"p {p['probability_squad']:.2f} in squad {p['in_squad']} {p['membership']}"
+                    for side, p in misses
+                ),
+            }
+        )
+    return cases
+
+
 def evaluate_command(args):
     new_run_directory(args.output)
     records = json.loads((args.archive / "records.json").read_text())
@@ -321,6 +484,7 @@ def evaluate_command(args):
     finally:
         data.close()
     by_id = {row["match_id"]: row for row in fixtures}
+    rounds = match_rounds(r2_store_if_configured("R2_DATA_BUCKET"))
     history = previous_matches(fixtures)
     final = Evidence(datetime.now(UTC) + timedelta(days=3650), **rows)
     labels = {}
@@ -329,7 +493,7 @@ def evaluate_command(args):
         if fixture["status"] != "finished":
             continue
         for team in (fixture["home_team_id"], fixture["away_team_id"]):
-            previous = [m for day, m in history[team] if day < fixture["match_date"]]
+            previous = label_matches(history[team], fixture["match_date"])
             weights = final.recent_weights(team, previous)
             starters = final.started.get((match_id, team), set())
             matchday = final.matchday.get((match_id, team), set())
@@ -358,20 +522,29 @@ def evaluate_command(args):
             "prospective": record["prospective"],
             "match_id": record["match_id"],
             "competition_id": record["competition_id"],
+            "round": rounds.get(fixture["api_id"]),
+            "kickoff_time": record["kickoff_time"],
         }
         for side in ("home", "away"):
+            window = record[side]["recent_minutes"]
             for representation in REPRESENTATIONS:
                 estimate = record[side][representation]
+                represented = label[side]["starters" if representation == "xi" else "matchday"]
                 team_rows.append(
                     {
                         **base,
+                        "side": side,
                         "team_id": record[side]["team_id"],
                         "representation": representation,
                         "estimate": None if estimate is None else estimate["d"],
                         "unresolved_weight": None
                         if estimate is None
                         else estimate["unresolved_weight"],
+                        "team_sheet": record[side].get("team_sheet_retrieved_at") is not None,
                         "realized": label[side][representation],
+                        "realized_snapshot_window": None
+                        if window is None
+                        else realized_discontinuity(window, represented),
                     }
                 )
             for player in players.get(
@@ -382,6 +555,7 @@ def evaluate_command(args):
                         **base,
                         "team_id": record[side]["team_id"],
                         "player_id": player["player_id"],
+                        "recent_weight": float(player["recent_weight"]),
                         "membership": player["membership"],
                         "conflict": player["membership_conflicts"] not in ("", "[]"),
                         "probability_xi": None
@@ -424,6 +598,12 @@ def evaluate_command(args):
                 if home is None or away is None or home["d"] is None or away["d"] is None
                 else away["d"] - home["d"],
                 "realized_difference": realized_difference,
+                "estimated_home_log_rate_shift": candidate["home_log_rate_shift"],
+                "oracle_home_log_rate_shift": float(oracle_shift[0]),
+                "home_team_id": record["home"]["team_id"],
+                "away_team_id": record["away"]["team_id"],
+                "home_unresolved_weight": None if home is None else home["unresolved_weight"],
+                "away_unresolved_weight": None if away is None else away["unresolved_weight"],
                 "candidate": candidate["forecast"] is not None,
                 **{f"control_{m}": control[m] for m in METRICS},
                 **{f"oracle_{m}": oracle[m] for m in METRICS},
@@ -445,12 +625,29 @@ def evaluate_command(args):
                 "estimate"
             ]
     order = list(HORIZONS)
+    team_complete = {key for key, values in estimates.items() if len(values) == len(order)}
     complete = {
         (match_id, representation)
-        for (match_id, _, representation), values in estimates.items()
-        if len(values) == len(order)
+        for match_id, _, representation in team_complete
+        if all(
+            (match_id, by_id[match_id][f"{side}_team_id"], representation) in team_complete
+            for side in ("home", "away")
+        )
     }
-    summary = {"estimator": {}, "revisions": {}, "forecasts": {}, "players": {}}
+    forecast_complete = defaultdict(set)
+    for row in fixture_rows:
+        if row["candidate"]:
+            forecast_complete[row["match_id"], row["representation"]].add(row["horizon"])
+    forecast_complete = {
+        key for key, values in forecast_complete.items() if len(values) == len(order)
+    }
+    summary = {
+        "estimator": {},
+        "revisions": {},
+        "forecasts": {},
+        "forecasts_matched_horizons": {},
+        "players": {},
+    }
     for label_name, prospective in (("development", False), ("prospective", True)):
         for representation in REPRESENTATIONS:
             for horizon in order:
@@ -509,31 +706,10 @@ def evaluate_command(args):
                     ),
                 }
                 scored = [r for r in games if r["candidate"]]
-                summary["forecasts"][key] = {
-                    "fixtures": len(scored),
-                    **{
-                        f"candidate_minus_control_{m}": _mean(
-                            [
-                                None
-                                if r[f"candidate_{m}"] is None or r[f"control_{m}"] is None
-                                else r[f"candidate_{m}"] - r[f"control_{m}"]
-                                for r in scored
-                            ]
-                        )
-                        for m in METRICS
-                    },
-                    **{
-                        f"oracle_minus_control_{m}": _mean(
-                            [
-                                None
-                                if r[f"oracle_{m}"] is None or r[f"control_{m}"] is None
-                                else r[f"oracle_{m}"] - r[f"control_{m}"]
-                                for r in scored
-                            ]
-                        )
-                        for m in METRICS
-                    },
-                }
+                summary["forecasts"][key] = forecast_summary(scored)
+                summary["forecasts_matched_horizons"][key] = forecast_summary(
+                    [r for r in scored if (r["match_id"], representation) in forecast_complete]
+                )
                 chosen = [
                     r
                     for r in player_rows
@@ -610,6 +786,7 @@ def evaluate_command(args):
     save_rows(args.output / "teams.csv", team_rows)
     save_rows(args.output / "fixtures.csv", fixture_rows)
     save_rows(args.output / "players.csv", player_rows)
+    save_rows(args.output / "cases.csv", audit_cases(fixture_rows, player_rows))
     summary = json.loads(json.dumps(summary, default=lambda value: value.item()))
     write_json(args.output / "summary.json", summary)
     write_json(

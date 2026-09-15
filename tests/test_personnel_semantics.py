@@ -10,12 +10,14 @@ from epl_forecast.research.personnel import (
     DEPARTED,
     MAX_UNRESOLVED,
     MEMBER,
+    MIN_SUBSTITUTES,
     UNKNOWN,
     Evidence,
     candidate_shift,
     load_evidence,
     load_propensity,
     realized_discontinuity,
+    reference_matches,
     structural_spec,
     team_expected,
 )
@@ -300,8 +302,9 @@ def test_an_official_team_sheet_before_the_cutoff_makes_the_feature_observed():
     rows, previous, _ = history()
     sheet_time = KICKOFF - timedelta(minutes=60)
     starters = REGULARS[:9] + ["new-1", "new-2"]
+    bench = ["home-9"] + [f"bench-{n}" for n in range(MIN_SUBSTITUTES - 1)]
     sheet = [appearance(TARGET, "home", p, KICKOFF, True, None, sheet_time) for p in starters] + [
-        appearance(TARGET, "home", "home-9", KICKOFF, False, None, sheet_time)
+        appearance(TARGET, "home", p, KICKOFF, False, None, sheet_time) for p in bench
     ]
     base = {"appearances": rows + sheet, "squads": squad("home", REGULARS)}
     observed = expected(Evidence(KICKOFF - timedelta(minutes=30), **base), previous)
@@ -314,3 +317,49 @@ def test_an_official_team_sheet_before_the_cutoff_makes_the_feature_observed():
     late = [{**row, "retrieved_at": KICKOFF + timedelta(minutes=5)} for row in sheet]
     after_kickoff = Evidence(KICKOFF + timedelta(hours=1), appearances=rows + late)
     assert after_kickoff.team_sheet(TARGET, "home") is None
+
+
+def test_a_team_sheet_without_the_whole_matchday_squad_is_not_observed():
+    rows, previous, _ = history()
+    sheet_time = KICKOFF - timedelta(minutes=60)
+    partial = [appearance(TARGET, "home", p, KICKOFF, True, None, sheet_time) for p in REGULARS] + [
+        appearance(TARGET, "home", f"bench-{n}", KICKOFF, False, None, sheet_time)
+        for n in range(MIN_SUBSTITUTES - 1)
+    ]
+    evidence = Evidence(
+        KICKOFF - timedelta(minutes=30), appearances=rows + partial, squads=squad("home", REGULARS)
+    )
+    assert evidence.team_sheet(TARGET, "home") is None
+    estimate = expected(evidence, previous)
+    assert estimate["team_sheet_retrieved_at"] is None
+    assert estimate["squad"]["d"] == pytest.approx(1 - PROPENSITY["squad"][8, True])
+    earlier_time = sheet_time - timedelta(minutes=10)
+    complete = [
+        appearance(TARGET, "home", p, KICKOFF, True, None, earlier_time) for p in REGULARS
+    ] + [
+        appearance(TARGET, "home", f"bench-{n}", KICKOFF, False, None, earlier_time)
+        for n in range(MIN_SUBSTITUTES)
+    ]
+    evidence = Evidence(KICKOFF - timedelta(minutes=30), appearances=rows + complete + partial)
+    assert evidence.team_sheet(TARGET, "home")[1] == earlier_time
+
+
+def test_reference_matches_are_the_matches_known_at_the_cutoff():
+    rows, previous, _ = history()
+    kickoffs = [datetime(2026, 8, 1, 14, tzinfo=UTC) + timedelta(days=5 * i) for i in range(8)]
+    wednesday = datetime(2026, 9, 16, 19, tzinfo=UTC)
+    midweek = f"{COMPETITION}:{SEASON}:home:midweek"
+    rows = rows + [appearance(midweek, "home", p, wednesday, True, 90) for p in REGULARS]
+    club = [(k, k.date(), m) for k, m in zip(kickoffs, previous, strict=True)]
+    club.append((wednesday, wednesday.date(), midweek))
+    six_days = KICKOFF - timedelta(days=6)
+    early = reference_matches(club, KICKOFF.date(), six_days)
+    assert early == previous
+    assert Evidence(six_days, appearances=rows).recent_weights("home", early) is not None
+    naive = [m for _, day, m in sorted(club, key=lambda item: item[1]) if day < KICKOFF.date()]
+    assert Evidence(six_days, appearances=rows).recent_weights("home", naive) is None
+    late = reference_matches(club, KICKOFF.date(), KICKOFF - timedelta(minutes=90))
+    assert late == [*previous, midweek]
+    assert Evidence(KICKOFF - timedelta(minutes=90), appearances=rows).recent_weights(
+        "home", late
+    ) == {**{p: 720.0 for p in REGULARS}}
