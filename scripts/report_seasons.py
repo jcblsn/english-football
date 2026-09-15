@@ -22,12 +22,12 @@ def read_rows(path):
         return list(csv.DictReader(stream))
 
 
-def paired_comparisons(rows, seed=20260908, samples=10000):
+def paired_comparisons(rows, seed=20260908, samples=10000, baseline_model="M2"):
     lookup = {(r["model_id"], r["origin"], r["season_id"], r["team_id"]): r for r in rows}
     if len(lookup) != len(rows):
         raise ValueError("Duplicate club-season origins")
-    baseline_keys = {(o, s, t) for m, o, s, t in lookup if m == "M2"}
-    models = ["M2", *sorted({r["model_id"] for r in rows} - {"M2"})]
+    baseline_keys = {(o, s, t) for m, o, s, t in lookup if m == baseline_model}
+    models = [baseline_model, *sorted({r["model_id"] for r in rows} - {baseline_model})]
     for model in models:
         if {(o, s, t) for m, o, s, t in lookup if m == model} != baseline_keys:
             raise ValueError("Models must have matched club-season origins")
@@ -39,7 +39,7 @@ def paired_comparisons(rows, seed=20260908, samples=10000):
     rng = np.random.default_rng(seed)
     output = []
     for origin in ORIGINS:
-        baseline = [r for r in rows if r["model_id"] == "M2" and r["origin"] == origin]
+        baseline = [r for r in rows if r["model_id"] == baseline_model and r["origin"] == origin]
         seasons = sorted({r["season_id"] for r in baseline})
         indices = rng.integers(0, len(seasons), size=(samples, len(seasons)))
         for model in models[1:]:
@@ -65,7 +65,7 @@ def paired_comparisons(rows, seed=20260908, samples=10000):
                         "model_id": model,
                         "origin": origin,
                         "metric": metric,
-                        "difference_vs_M2": float(delta.mean()),
+                        f"difference_vs_{baseline_model}": float(delta.mean()),
                         "season_cluster_ci_low": float(lo),
                         "season_cluster_ci_high": float(hi),
                         "club_seasons": len(baseline),
@@ -79,13 +79,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evaluation", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--baseline", default="M2")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     retain_execution(args.output)
     rows = read_rows(args.evaluation / "club_seasons.csv")
     calibration = read_rows(args.evaluation / "calibration.csv")
     summary = read_rows(args.evaluation / "summary.csv")
-    models = ["M2", *sorted({r["model_id"] for r in rows} - {"M2"})]
+    models = [args.baseline, *sorted({r["model_id"] for r in rows} - {args.baseline})]
     numeric_rows = []
     for row in rows:
         converted = {}
@@ -120,7 +121,10 @@ def main():
         label = subgroup if isinstance(subgroup, str) else "promoted" if subgroup else "incumbent"
         subgroup_scores.extend({"subgroup": label, **r} for r in scores)
     save_rows(args.output / "subgroups.csv", subgroup_scores)
-    save_rows(args.output / "paired_comparisons.csv", paired_comparisons(rows))
+    save_rows(
+        args.output / "paired_comparisons.csv",
+        paired_comparisons(rows, baseline_model=args.baseline),
+    )
     fig, axes = plt.subplots(
         5, len(models), figsize=(4 * len(models), 15), sharex=True, sharey=True
     )
