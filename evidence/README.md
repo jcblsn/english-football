@@ -9,6 +9,10 @@ This directory documents the evidence behind [validation](../docs/validation.md)
 | `research/evidence/fc94353/season_panels/<division>/forecast_marginals.json.index.json` | The hash, seasons and forecast count of the archive. |
 | `research/evidence/fc94353/season_panels/<division>/summary.csv` | Scores for each model and origin. |
 | `research/evidence/fc94353/season_panels/<division>/paired_comparisons.csv` | M7 − M2 differences with season-clustered 95% intervals. |
+| `research/evidence/national-league-entry/39bf554/match/` | Matched League Two control and source-conditioned match forecasts, scores, slices and input manifest. |
+| `research/evidence/national-league-entry/28c0f5d/season-control/` | Matched goals-only M7 season forecasts with National League entrants treated as outside. |
+| `research/evidence/national-league-entry/28c0f5d/season-candidate/` | Matched M7 season forecasts with complete National League source seasons available. |
+| `research/evidence/national-league-entry/0729098/season-report/` | Paired entrant and whole-League-Two season results. |
 
 Code commit `fc94353` made all these forecasts, with the product configuration.
 
