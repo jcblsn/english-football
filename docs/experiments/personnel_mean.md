@@ -75,23 +75,25 @@ If the oracle mapping improves score NLL with a stable direction and without mat
 
 The current-main replay covers 8,388 Premier League and Championship matches in 2017/18–2025/26. Complete recent minutes and target starting XIs are available for 8,073. The chronological scored period has 5,450 matches in 2020/21–2025/26 and 12 competition-season clusters.
 
-Kappa is stable and positive. It is 0.283 for the first scored season, 0.269 for the second and then increases from 0.282 to 0.345. Every unconstrained fit has the same positive value as its constrained fit. No fit reaches a bound.
+The corrected target map excludes substitute identities. Hand reconstruction agrees exactly for three semantic cases: Manchester United has D = 0.901 against Leicester on 11 May 2021, Leeds has D = 0.711 against West Bromwich Albion on 18 August 2023, and Chelsea has D = 0.520 against Fulham on 3 February 2023.
+
+Kappa is stable and positive. It is 0.200 for the first scored season and then increases from 0.201 to 0.295. Every unconstrained fit has the same positive value as its constrained fit. No fit reaches a bound. The fixed 2026/27 coefficient fitted on all 8,073 pre-2026/27 matches is 0.26884.
 
 Candidate minus control. Negative is better.
 
 | Scope | Matches | H/D/A log loss | Brier | Score NLL | Team-goal NLL |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| All | 5,450 | −0.00192 | −0.00127 | −0.00232 | −0.00117 |
-| Premier League | 2,280 | −0.00330 | −0.00219 | −0.00298 | −0.00150 |
-| Championship | 3,170 | −0.00093 | −0.00061 | −0.00185 | −0.00093 |
-| Opening five | 577 | −0.00014 | +0.00012 | +0.00032 | +0.00016 |
-| Promoted-club fixtures | 1,299 | −0.00312 | −0.00192 | −0.00231 | −0.00116 |
-| Relegated-club fixtures | 763 | −0.00006 | −0.00012 | −0.00355 | −0.00178 |
-| Absolute D difference at least 0.20 | 558 | −0.01216 | −0.00824 | −0.01568 | −0.00787 |
+| All | 5,450 | −0.00154 | −0.00107 | −0.00191 | −0.00096 |
+| Premier League | 2,280 | −0.00254 | −0.00179 | −0.00183 | −0.00092 |
+| Championship | 3,170 | −0.00082 | −0.00056 | −0.00197 | −0.00099 |
+| Opening five | 577 | +0.00191 | +0.00139 | +0.00218 | +0.00110 |
+| Promoted-club fixtures | 1,299 | −0.00280 | −0.00182 | −0.00236 | −0.00118 |
+| Relegated-club fixtures | 763 | −0.00139 | −0.00100 | −0.00529 | −0.00266 |
+| Absolute D difference at least 0.20 | 686 | −0.00787 | −0.00538 | −0.00951 | −0.00477 |
 
-Score NLL improves in 11 of 12 competition-seasons. The exception is the 2025/26 Premier League at +0.00229. H/D/A log loss improves in 10 of 12. The two Championship losses are small: +0.00027 in 2022/23 and +0.00017 in 2025/26. Pooled 2025/26 score NLL is worse by +0.00024. The whole-competition-season resampled score-NLL interval is [−0.00360, −0.00118]. With only 12 clusters and a hypothesis identified from these seasons, this interval is descriptive development evidence.
+Score NLL improves in 10 of 12 competition-seasons. The Premier League loses by +0.00257 in 2020/21 and +0.00408 in 2025/26. H/D/A log loss improves in 8 of 12. Pooled 2025/26 score NLL is worse by +0.00127, and both competitions lose H/D/A log loss in that season. The whole-competition-season resampled score-NLL interval is [−0.00333, −0.00042]. With only 12 clusters and a hypothesis identified from these seasons, this interval is descriptive development evidence.
 
-The classwise calibration error falls from 0.01439 to 0.01171. The median absolute log-rate shift is 0.025 and the maximum is 0.199. The adjustment changes almost nothing when the teams have similar continuity. It improves score NLL by 0.01568 on the prespecified D-imbalance slice of at least 0.20. The largest 5% of absolute case changes account for 88% of the total score-NLL gain. This concentration follows the mechanism, but it also makes the historical result fragile. The opening-five slice does not improve score NLL.
+The classwise calibration error falls from 0.01439 to 0.01261. The median absolute log-rate shift is 0.021 and the maximum is 0.140. The adjustment changes almost nothing when the teams have similar continuity. It improves score NLL by 0.00951 on the prespecified D-imbalance slice of at least 0.20. The largest 5% of absolute case changes account for 68% of the total score-NLL gain. This concentration follows the mechanism, but it also makes the historical result fragile. The opening-five slice loses on every score.
 
 ### Oracle decision
 
@@ -117,8 +119,9 @@ A material case has an absolute home-away D difference of at least 0.10 or a cha
 
 ## Retained artifacts
 
-- Current-main oracle forecasts: `research/evidence/personnel-mean/9f2203f/forecasts` in `page324-data`. Forecast code commit `9e67d85`.
-- Chronological report: `research/evidence/personnel-mean/9f2203f/report` in `page324-data`. Report code commit `9f2203f`.
+- Corrected current-main oracle forecasts: `research/evidence/personnel-mean/e82fd87/forecasts` in `page324-data`. Forecast code commit `058d062`.
+- Corrected chronological report: `research/evidence/personnel-mean/e82fd87/report` in `page324-data`. Report code commit `e82fd87`.
+- The earlier `research/evidence/personnel-mean/9f2203f` artifact is invalid and has an immutable `SUPERSEDED.json` marker. Its target map retained substitutes as zero-valued entries and then counted their identities as available. It measured matchday-squad continuity rather than starting-XI continuity. Do not use its results.
 
 Reproduce with a new empty workspace:
 
@@ -132,5 +135,5 @@ uv run python scripts/research/personnel_mean.py report --forecasts runs/personn
 - The oracle uses realized starting XIs. It is not a forecast.
 - The mean hypothesis was identified from the earlier pooled oracle on these seasons. The chronological mapping prevents target-season fitting but does not create a fresh confirmation sample.
 - The scalar continuity measure assigns the same availability effect to every recent minute. It does not estimate player value.
-- Most of the gain comes from the largest forecast changes, and 2025/26 does not improve in pooled score NLL.
+- More than two thirds of the gain comes from the largest 5% of forecast changes, and 2025/26 does not improve in pooled score NLL.
 - Historical lineups before 2026/27 cover only the Premier League and Championship.
