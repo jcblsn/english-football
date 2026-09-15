@@ -610,6 +610,7 @@ def evaluate_command(args):
     save_rows(args.output / "teams.csv", team_rows)
     save_rows(args.output / "fixtures.csv", fixture_rows)
     save_rows(args.output / "players.csv", player_rows)
+    summary = json.loads(json.dumps(summary, default=lambda value: value.item()))
     write_json(args.output / "summary.json", summary)
     write_json(
         args.output / "manifest.json",

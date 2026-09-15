@@ -6,12 +6,14 @@
 | --- | --- |
 | Main base SHA | `080f7998f45da59ffebf73beb807d70cebef2d04` |
 | Branch | `research-personnel-measurement` |
-| Status | Measurement layer built. Prospective archive armed. Not a production proposal. |
+| Status | Measurement layer built. One estimator is archived at four horizons. Not a production proposal. |
 | Evidence label | Historical results are retrospective development evidence. 2026/27 fixtures before 17 September 2026 are development cases. Fixtures from 17 September 2026 are prospective. |
 | Authoritative data | Private R2 bucket `page324-data`, read through new empty workspaces under `runs/` |
-| Frozen coefficient | κ = 0.26883582806934564, fitted on all 8,073 oracle matches before 2026/27 |
+| Frozen coefficients | κ = 0.26883582806934564 for starting-XI continuity and κ = 0.43161578781583126 for matchday-squad continuity, each fitted once on all 8,073 oracle matches before 2026/27 |
 
 This batch does not change M7 and does not recommend a model change. It gives the evidence and the tools that Batch 2 needs to make a decision.
+
+The product direction is one structural forecast that is updated continuously: the persistent M7 state plus the latest cutoff-safe expected personnel adjustment, whenever the forecast pipeline runs. The horizons in this report are evaluation checkpoints, not product variants. Section 9 gives the conclusions for Batch 2.
 
 The two earlier reports are kept next to this report: [personnel uncertainty](personnel_uncertainty.md) (stopped) and [personnel mean](personnel_mean.md) (oracle gate passed, first prospective archive invalid).
 
@@ -173,7 +175,7 @@ The archive of commit `d82b069` stays invalid and is not scored. Its runner inde
 | API-Football squads | Squad list for one club at the retrieval time. | 44 clubs, 6 daily captures each from 8 September. 75 players left a squad between captures. None came back. 63 have a summer transfer from that club, and 34 are in the latest squad of another club. |
 | API-Football transfers | Dated player moves. | Captured from 8 September. Loans and returns are separate rows. Some team IDs are not in the registry. |
 | API-Football injuries | Unavailable or doubtful for one player, club and fixture. | Every mapped row names a club in its fixture. Before kickoff in 2026/27, 5 of 208 unavailable players and 7 of 74 doubtful players started. In the final historical records, 46 of 33,344 unavailable players and 36 of 5,092 doubtful players started. |
-| FPL | Premier League club, status and chance of playing at the retrieval time. | 659 rows in the latest snapshot and 95 without a player identity. 504 FPL clubs agree with the latest API squad, 20 name another club and 40 players are in no API squad. Before kickoff, 0 of 118 i, s or u players started, and 1 of 15 d players started. |
+| FPL | Premier League club, status and chance of playing at the retrieval time. | 659 rows in the latest snapshot and 95 without a player identity. 504 FPL clubs agree with the latest API squad, 20 name another club and 40 players are in no API squad. Before kickoff, 0 of 118 i, s or u players started, and 1 of 13 d players started. |
 
 A squad capture is not a complete membership record. In the latest captures, 344 of 1,462 players with Premier League or Championship minutes since 1 April 2026 are not in the squad of their club. Most of these are summer departures, but absence alone does not prove a transfer.
 
@@ -190,10 +192,10 @@ Reep is a useful audit of the FPL identity map. It does not change the continuit
 
 `src/epl_forecast/research/personnel.py` keeps the three concepts separate. Every rule reads only rows with `retrieved_at` at or before the cutoff.
 
-Fixture representation for the confirmed-XI arm:
+Realized fixture representation, used only as an outcome label:
 
-- A player is represented only when the player is in the starting XI of the latest capture before kickoff that has 11 starters for that club.
-- Substitutes are not represented. A capture at or after kickoff is not used.
+- For starting-XI continuity, a player is represented only when the player is in the final starting XI. Substitutes are not represented.
+- For matchday-squad continuity, a player is represented when the player is in the final matchday squad, as a starter or a substitute.
 
 Membership at the cutoff for a recent player and a club:
 
@@ -203,15 +205,15 @@ Membership at the cutoff for a recent player and a club:
 
 Availability for a member, a club and a fixture:
 
-- API-Football unavailable gives 0 and doubtful gives 0.1. The rows must name the same club and fixture.
-- In the Premier League, FPL i, s, n or u gives 0, d gives 0.1 and a gives 1. FPL is used only when FPL names the same club. An FPL row for another club can only be membership evidence against the former club.
+- API-Football unavailable gives 0. Doubtful gives 0.1 for a start and 0.3 for the matchday squad. The rows must name the same club and fixture.
+- In the Premier League, FPL i, s, n or u gives 0, d gives the same doubtful value and a gives 1. FPL is used only when FPL names the same club. An FPL row for another club can only be membership evidence against the former club.
 - Two providers that give 0 and 1 make availability unknown. Otherwise the lower value is used. No evidence gives 1.
 
-The value 0.1 for doubtful comes from the development captures before 17 September 2026. The FPL chance of playing is not a probability of starting, so it is not used.
+The doubtful values come from the development captures before 17 September 2026: 8 of 87 doubtful players started and 25 of 87 were in the matchday squad. The FPL chance of playing is not a probability of starting, so it is not used.
 
 Unknown membership or unknown availability makes the player unresolved. An unresolved player is left out of the expected D, and the recent weight of the player is reported. When more than 25% of the recent weight of a club is unresolved, the candidate is not made.
 
-`tests/test_personnel_semantics.py` covers the batch invariants. An observation after the cutoff cannot change a feature. Substitutes do not enter confirmed-XI continuity, and the confirmed D equals the historical feature. A lineup captured after kickoff is not used. Identity is not membership. Availability is scoped to club and fixture. A new-club FPL status cannot restore a player to the former club. Unresolved players cannot create a large shock. Equal continuity gives zero adjustment. κ = 0 gives the control exactly. The adjustment does not change the fitted model. Odds in the store do not change the personnel evidence, and the control is the structural M7 specification.
+`tests/test_personnel_semantics.py` covers the batch invariants. An observation after the cutoff cannot change an estimate. Substitutes do not enter the starting-XI label, they do enter the matchday-squad label, and the starting-XI label equals the historical feature. Recent starts and matchday squads are counted separately. Identity is not membership. Availability is scoped to club and fixture. A new-club FPL status cannot restore a player to the former club. Unresolved players cannot create a large shock. Equal continuity gives zero adjustment. κ = 0 gives the control exactly. The adjustment does not change the fitted model. Odds in the store do not change the personnel evidence, and the control is the structural M7 specification.
 
 ## 4. One personnel-aware forecast observed at fixed horizons
 
@@ -255,20 +257,31 @@ Archives go to `research/evidence/personnel-measurement/<commit>/<run>/` in `pag
 
 ### Status on 15 September 2026
 
-The first archive, `pm-archive-dev`, covers fixtures from 9 September 2026 to 18:53 UTC on 15 September 2026. It has 52 records and 46 candidates. All of them are development cases, and no prospective fixture has been played.
+The archive `pm-archive-horizons` was made with commit `7dcb8ee`. It covers fixtures from 9 September 2026 whose 90-minute cutoff was before 19:31 UTC on 15 September 2026. It has 76 snapshots: 2 at 6 days, 23 at 3 days, 24 at 24 hours and 27 at 90 minutes. 57 snapshots have a candidate for each representation. All of them are development cases.
 
-- Only Tottenham Hotspur against Everton on 12 September has a confirmed-XI record. Both XIs were captured 2 minutes before kickoff. The confirmed D is 0.583 for Tottenham and 0.381 for Everton. The XIs did not change after the capture.
-- The two Championship fixtures at 18:45 UTC on 15 September have no confirmed-XI record.
-- Bolton Wanderers, Cardiff City and Lincoln City have no D, because they have fewer than eight Championship matches with lineup minutes.
+- A 6-day snapshot is possible only for fixtures from 15 September, because the personnel sources start on 9 September. The two 6-day fixtures were not finished at evaluation.
+- Bolton Wanderers, Cardiff City and Lincoln City have no estimate, because they have fewer than eight Championship matches with lineup minutes.
+- The runner includes a fixture only after its 90-minute cutoff. The first prospective fixtures are on 18 September 2026.
 
-The valid prospective archive starts with the fixtures of 18 September 2026. Run the archive again after each match round, with a new empty workspace:
+Run the archive again after each match round, with new empty workspaces:
 
 ```sh
 uv run python scripts/research/personnel_prospective.py archive --data runs/ws-personnel-archive --output runs/personnel-archive-<date> --since 2026-09-17T00:00:00+00:00 --upload
 uv run python scripts/research/personnel_prospective.py evaluate --data runs/ws-personnel-evaluate --archive runs/personnel-archive-<date> --output runs/personnel-evaluate-<date>
 ```
 
-The development archive and its evaluation are `research/evidence/personnel-measurement/0b98f57/pm-archive-dev` and `pm-eval-dev`. The reproduction, roster diagnostic and propensity runs are under `research/evidence/personnel-measurement/7a021aa/`. The invalid archive of commit `d82b069` is preserved, with an `INVALID.json` marker, under `research/evidence/personnel-mean/d82b069/invalid-prospective`.
+Retained artifacts in `page324-data` under `research/evidence/personnel-measurement/`:
+
+| Key | Content |
+| --- | --- |
+| `7a021aa/pm-repro-forecasts`, `7a021aa/pm-repro-report` | Current-main reproduction |
+| `7a021aa/pm-transition-features`, `7a021aa/pm-transition-report` | Roster-transition diagnostic |
+| `3b27319/pm-representation` | Matchday-squad and starting-XI comparison |
+| `3b27319/pm-propensity-v2` | Start and matchday-squad propensity tables |
+| `7dcb8ee/pm-archive-horizons`, `7dcb8ee/pm-eval-horizons` | Development horizon archive and evaluation |
+| `0b98f57/pm-archive-dev`, `0b98f57/pm-eval-dev` | Superseded development archive with the removed confirmed-XI arm |
+
+The invalid archive of commit `d82b069` is preserved, with an `INVALID.json` marker, under `research/evidence/personnel-mean/d82b069/invalid-prospective`.
 
 ## 5. Expected-continuity estimator
 
@@ -325,79 +338,112 @@ The historical injury records are final provider records, not captures before ki
 
 ### Coverage
 
-In the development archive, the 90-minute arm has an estimate for 50 of 54 team-fixtures and the 24-hour arm for 44 of 48. Every missing estimate is a club without eight complete matches. The mean unresolved recent weight is 0.009 and the largest is 0.069. No club reached the 25% limit.
+In the development horizon archive, the evaluation has an estimate and a label for 46 clubs at 90 minutes, 40 at 24 hours and 26 at 3 days. Every missing estimate is a club without eight complete matches. The mean unresolved recent weight is 0.009 at each horizon. No club reached the 25% limit.
 
-At 90 minutes, 1,060 recent players were members, 287 were departed and 29 had unknown membership. One departed player (0.3%) started. 15 of the 29 unknown players started, so unknown membership is not a hidden departure.
+At 90 minutes, 1,034 recent players were members, 281 were departed and 29 had unknown membership. One departed player (0.4%) was in the matchday squad and started. 22 of the 29 unknown players were in the matchday squad, so unknown membership is not a hidden departure.
 
-## 6. Expected versus realized continuity
+## 6. Expected versus realized continuity by horizon
 
-These are development results. They use captures from before kickoff, but the doubtful mapping was chosen with the same fixtures and the code was written after the matches. The realized D uses the final starting XI and the archived recent minutes.
+These are development results. They use observations retrieved before each cutoff, but the doubtful values were chosen with the same week and the code was written after the matches. A label uses the eight matches before the target date and the final starting XI or matchday squad. No 6-day snapshot has a finished fixture.
 
-| Measure | 24 hours | 90 minutes |
-| --- | ---: | ---: |
-| Team estimates | 41 | 47 |
-| Mean expected D / realized D | 0.441 / 0.416 | 0.442 / 0.414 |
-| Bias in D | +0.025 | +0.029 |
-| Mean absolute error in D | 0.061 | 0.060 |
-| Correlation in D | 0.71 | 0.75 |
-| Fixtures with both D | 20 | 23 |
-| Mean absolute error in D_a − D_h | 0.075 | 0.071 |
-| Correlation in D_a − D_h | 0.70 | 0.75 |
-| Sign agreement when realized absolute D_a − D_h is at least 0.05 | 14 of 17 | 16 of 19 |
-| Fixtures with realized absolute D_a − D_h at least 0.10 | 9 | 11 |
-| Sign agreement on those fixtures | 8 of 9 | 10 of 11 |
-| Estimate at least 0.10 but realized below 0.05 | 1 | 1 |
-| Realized at least 0.10 but estimate below 0.05 | 2 | 2 |
-| Players with a membership conflict | 35 | 39 |
+| Horizon | Representation | Clubs | Bias in D | Mean absolute error | Correlation | Fixtures | Mean absolute error in D_a − D_h | Correlation in D_a − D_h | Sign agreement, realized at least 0.05 | Sign agreement, realized at least 0.10 | Estimate at least 0.10, realized below 0.05 | Realized at least 0.10, estimate below 0.05 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 days | Matchday squad | 26 | −0.014 | 0.044 | 0.85 | 11 | 0.044 | 0.85 | 6 of 7 | 4 of 4 | 0 | 0 |
+| 3 days | Starting XI | 26 | −0.000 | 0.053 | 0.70 | 11 | 0.070 | 0.61 | 7 of 8 | 4 of 4 | 0 | 2 |
+| 24 hours | Matchday squad | 40 | +0.023 | 0.045 | 0.86 | 20 | 0.048 | 0.88 | 14 of 14 | 8 of 8 | 3 | 0 |
+| 24 hours | Starting XI | 40 | +0.027 | 0.062 | 0.71 | 20 | 0.075 | 0.70 | 14 of 17 | 8 of 9 | 1 | 2 |
+| 90 minutes | Matchday squad | 46 | +0.023 | 0.044 | 0.87 | 23 | 0.044 | 0.92 | 16 of 16 | 9 of 9 | 2 | 0 |
+| 90 minutes | Starting XI | 46 | +0.030 | 0.060 | 0.76 | 23 | 0.071 | 0.75 | 16 of 19 | 10 of 11 | 1 | 2 |
 
-The estimator is slightly too high in D. The bias is almost the same for both clubs, so it has little effect on the home-away difference. Player start probabilities are close to the observed rates at 90 minutes:
+Mean absolute change in club D between consecutive horizons:
 
-| Start probability | Players | Mean probability | Started |
+| Change | Clubs | Matchday squad | Starting XI |
 | --- | ---: | ---: | ---: |
-| 0.0–0.2 | 675 | 0.054 | 0.062 |
-| 0.2–0.4 | 136 | 0.286 | 0.287 |
-| 0.4–0.6 | 46 | 0.475 | 0.543 |
-| 0.6–0.8 | 262 | 0.711 | 0.721 |
-| 0.8–1.0 | 228 | 0.873 | 0.882 |
+| 6 days to 3 days | 0 | — | — |
+| 3 days to 24 hours | 26 | 0.033 | 0.030 |
+| 24 hours to 90 minutes | 40 | 0.005 | 0.004 |
 
-On these few development fixtures, the estimator follows the later XI feature well enough that a prospective forecast comparison is meaningful. It is not yet evidence that it does so prospectively. The sample is small and early in the season, when D is high because many recent players have left.
+Matchday-squad probabilities against the final matchday squad at 90 minutes:
 
-## 7. Early prospective forecast results
+| Probability | Players | Mean probability | In matchday squad |
+| --- | ---: | ---: | ---: |
+| 0.0–0.2 | 415 | 0.009 | 0.036 |
+| 0.2–0.4 | 39 | 0.336 | 0.231 |
+| 0.4–0.6 | 39 | 0.459 | 0.436 |
+| 0.6–0.8 | 12 | 0.628 | 0.500 |
+| 0.8–1.0 | 810 | 0.935 | 0.942 |
 
-No prospective fixture has been played. The development results below are not evidence for the mechanism. The sample is too small, it is in the same week that set the doubtful mapping, and it is not prospective.
+Start probabilities against the final starting XI at 90 minutes are 0.054 against 0.062, 0.287 against 0.290, 0.476 against 0.568, 0.711 against 0.722 and 0.873 against 0.879 in the same bins.
 
-Candidate minus control. Negative is better.
+In this small sample, the matchday-squad feature is measured more accurately than the starting-XI feature at every scored horizon. The difference is largest for the home-away difference, which is the quantity the mapping uses. Most of the probability mass of the matchday-squad estimate is near 0 or near 1, so it depends mainly on membership and availability. The estimate changes most between 3 days and 24 hours and changes little in the last day. The 3-day sample has only 11 fixtures.
 
-| Arm | Division | Fixtures | H/D/A log loss | Brier | Score NLL |
-| --- | --- | ---: | ---: | ---: | ---: |
-| expected-24h | Premier League | 10 | −0.00063 | −0.00151 | +0.00514 |
-| expected-24h | Championship | 10 | −0.02052 | −0.01483 | −0.02453 |
-| expected-90m | Premier League | 10 | −0.00036 | −0.00113 | +0.00544 |
-| expected-90m | Championship | 13 | −0.02074 | −0.01500 | −0.02211 |
-| confirmed-xi | Premier League | 1 | −0.00457 | −0.00524 | −0.00447 |
+## 7. Forecast value by horizon
 
-Do not recommend production promotion from these results or from the historical reproduction.
+No prospective fixture has been played. These development results are not evidence for the mechanism or for a horizon. The oracle applies the same frozen κ to the realized label after the match. It separates mechanism error from measurement error and is never an operational forecast.
+
+Candidate minus control and oracle minus control. Negative is better.
+
+| Horizon | Representation | Fixtures | Candidate H/D/A log loss | Candidate Brier | Candidate score NLL | Oracle H/D/A log loss | Oracle score NLL |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 days | Matchday squad | 11 | +0.00427 | +0.00422 | +0.01985 | −0.00443 | +0.01136 |
+| 3 days | Starting XI | 11 | +0.00308 | +0.00189 | +0.00373 | +0.00069 | +0.00108 |
+| 24 hours | Matchday squad | 20 | −0.01383 | −0.01027 | +0.00079 | −0.01786 | −0.01613 |
+| 24 hours | Starting XI | 20 | −0.01058 | −0.00817 | −0.00970 | −0.01057 | −0.02074 |
+| 90 minutes | Matchday squad | 23 | −0.01864 | −0.01350 | −0.00319 | −0.01863 | −0.01582 |
+| 90 minutes | Starting XI | 23 | −0.01188 | −0.00897 | −0.01013 | −0.01032 | −0.01893 |
+
+The oracle with realized labels is also worse than the control in score NLL on the 11 three-day fixtures. The three-day loss is therefore not caused by measurement in this sample. With 11–23 fixtures, a few matches decide these values. Do not recommend production promotion from them or from the historical results.
 
 ## 8. Unresolved issues
 
 Collection and operation:
 
-- Pull request #2 is not merged. Without it, the confirmed-XI arm and the realized-versus-expected comparison stay very small.
-- GitHub can delay or skip scheduled runs. A 10-minute schedule gives more chances, but it does not guarantee a capture in the hour before kickoff. If the capture rate stays low after the merge, a reliable external trigger for `workflow_dispatch` is the next option. It needs a token and a decision by the owner.
-- The archive is rebuilt from retrieval times after the fixtures. No scheduled research job publishes it at the cutoff, because a scheduled workflow must be on `main`.
+- The archive is rebuilt from retrieval times after each round. No scheduled research job publishes snapshots at their cutoffs, because a scheduled workflow must be on `main`.
+- GitHub ran only 4 scheduled production runs on 15 September 2026. Injury, squad and FPL evidence at a cutoff can therefore be older than its refresh interval. The snapshots record the retrieval times.
+- Pull request #2 was closed. If a later diagnostic needs official XIs before kickoff, the collection question must be opened again.
 - The M7 control uses data retrieved before the London day of the cutoff, not all data retrieved before the personnel cutoff. This is the product match-day convention.
+- No 6-day snapshot is scored yet, and the 3-day sample is 11 fixtures. The horizon questions need several prospective rounds.
 
 Measurement semantics:
 
-- The doubtful value 0.1 comes from 89 development observations before 17 September 2026. The FPL chance of playing is not used, and FPL next-round and this-round fields are not mapped to fixtures.
+- The doubtful values 0.1 and 0.3 come from 87 development observations before 17 September 2026. The FPL chance of playing is not used, and FPL next-round and this-round fields are not mapped to fixtures.
 - Transfer records have dates but no times. A transfer dated on the match day is treated as known on that day.
 - Absence from a captured squad without other evidence stays unknown. The 25% unresolved-weight limit was set before the prospective results and was not tuned.
 - The FPL ingest does not record which identity rule matched. Reep can audit the map but is not part of the pipeline.
-- The start-propensity table is one pooled table. It is not different for division, club, season stage or manager change.
+- Each propensity table is one pooled table. It is not different for division, club, season stage or manager change.
 - A club promoted from League One has no lineup minutes before 2026/27, so it has no D until it has eight complete Championship matches.
 
 Model interpretation:
 
-- The historical κ mixes a weak benched effect and a stronger absent-from-squad effect. The confirmed-XI and expected arms both use the single frozen κ, so a prospective loss can come from this mixture as well as from measurement.
+- The starting-XI κ mixes a weak benched effect and a stronger absent-from-squad effect. The matchday-squad feature avoids this mixture, but it was chosen after the decomposition on the same seasons.
 - The opening-season loss probably comes from a stale reference window after the summer, not from permanent departures. The data do not show demotions directly.
 - The historical gain is concentrated in a few high-imbalance fixtures. A few prospective weeks cannot confirm or reject it.
+
+## 9. Conclusions for Batch 2
+
+### Historical mechanism
+
+- The retained oracle result reproduces exactly on current `main`. Starting-XI discontinuity carries a temporary relative Quality signal, but the gain is concentrated, the opening five lose and 2025/26 is adverse.
+- The roster decomposition shows where the signal is. A recent regular on the bench carries little of it. A recent regular who is absent from the matchday squad, departed or unresolved carries most of it. Permanent departures do not cause the opening-five loss.
+- Matchday-squad discontinuity uses this directly. On the same chronological protocol it improves every proper score in all 12 competition-seasons, removes the opening-five loss and improves 2025/26. It is better than starting-XI discontinuity by −0.00174 score NLL [−0.00311, −0.00033].
+- These are retrospective results on the seasons that suggested the hypotheses. The matchday-squad comparison was chosen after the decomposition, so it has more selection exposure than the retained feature.
+
+### Measurement
+
+- The same estimator runs at any cutoff. Its inputs degrade naturally with distance from kickoff: membership and recent selection are always present, and fixture injury lists and FPL status update when they are captured.
+- In the development week, both features track their realized labels at 3 days, 24 hours and 90 minutes. The matchday-squad feature is measured more accurately at every scored horizon. At 90 minutes, its home-away correlation is 0.92 against 0.75 for the starting-XI feature, and it has no missed large imbalance.
+- The estimate changes by 0.03 between 3 days and 24 hours and by 0.005 in the last day.
+- No 6-day case is scored, and the samples are 11–23 fixtures. The horizon at which the measurement becomes reliable is not established. The first prospective rounds give 6-day and 3-day cases for the same fixtures.
+
+### Forecast value
+
+- No prospective fixture is scored.
+- The development forecast differences are dominated by a few matches. Even the oracle with realized labels loses to the control in score NLL on the 11 three-day fixtures.
+- No horizon-specific forecast value is established.
+
+### Product implication
+
+- The evidence supports the matchday-squad representation over the starting-XI representation: historically on every competition-season, and in measurement accuracy in the development week. The current mechanism does not need a detailed start-probability model. The start estimator stays as a prespecified baseline in the archive.
+- The earliest useful horizon is not established. There is no evidence yet for a horizon gate, and no evidence that 24 hours is necessary.
+- Batch 2 should decide from the prospective archive, using the frozen κ values: the measurement accuracy of D_squad at each horizon on the same fixtures, and the candidate minus control scores at each horizon.
+- Batch 1 makes no production choice.
