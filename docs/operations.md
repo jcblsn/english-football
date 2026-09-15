@@ -26,7 +26,7 @@ A failed or unverified division does not publish. Other verified divisions in th
 | `--force` | Run even if the effective inputs did not change. |
 | `--no-collect` | Use the canonical archive as it is. |
 | `--simulations 10000` | Set the number of season paths. The publication floor is 1,000. |
-| `--site`, `--runs`, `--data` | Set ephemeral workspace locations. |
+| `--runs`, `--data` | Set ephemeral workspace locations. |
 
 ## Schedule and refresh rules
 
@@ -34,7 +34,7 @@ A failed or unverified division does not publish. Other verified divisions in th
 
 Fixture lists are eligible each hour. Match details are eligible every 15 minutes near kickoff and have bounded correction checks after full time. Other sources keep their own intervals.
 
-A new forecast is due only when effective model inputs or forecast code and configuration change. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
+A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because M7 does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
 
 Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance.
 
@@ -49,7 +49,7 @@ uv run epl-forecast verify --archive runs/check/l1 --output runs/check/l1-verifi
 
 ## Publication boundary
 
-`configs/publication.toml` lists every key that can appear in a published document. It also lists key parts and value patterns that must not appear, such as provider names, file paths and odds.
+`epl_forecast.publication` defines focused key contracts for forecast documents, the current pointer document, competition archive indexes and the performance record. `configs/publication.toml` defines key parts and value patterns that must not appear, such as provider names, file paths and odds.
 
 The code enforces the boundary when it derives a document, before it writes an object, and when `scripts/check_publishable.py` checks the materialized Pages artifact.
 
@@ -71,15 +71,15 @@ Private:
 
 ## Publication layout
 
-The pipeline writes each live forecast once to `forecasts/<run>/<competition>.json` in `page324-publish`. It then updates `forecasts/index.json`. The index lists history and the latest successful forecast for each division. Verified forecasts from one run share a run identity.
+The pipeline gives each competition forecast its own ID and writes it once to `forecasts/<competition>/<forecast>.json` in `page324-publish`. It updates `forecasts/<competition>/archive.json` after the immutable forecast exists. It updates the compact `forecasts/current.json` document last. The current document has one latest pointer for each division and does not contain history.
 
-The separate `hindcasts/` namespace has its own index. It is empty in this batch. Future retrospective forecasts must use that namespace, so a reader cannot mistake them for forecasts that existed at the historical time.
+Future retrospective forecasts must use the separate `hindcasts/` namespace, so a reader cannot mistake them for forecasts that existed at the historical time.
 
-Historical forecast documents use unique keys. The two indexes, per-division latest pointers and `record.json` are mutable.
+Historical forecast documents use unique keys. Competition archive indexes, `forecasts/current.json` and `record.json` are mutable.
 
 ## Prospective record
 
-`record.json` scores each settled match once. It uses the last live forecast made before kickoff. It reports H/D/A log loss, Brier score and classwise ECE, overall and for each division. This record starts fresh with the production publication surface.
+`record.json` keeps one pending last pre-kickoff forecast for each match. As results arrive, the pipeline moves these small records to the settled list and recalculates the summaries. It does not read the forecast archive during a routine run. It reports H/D/A log loss, Brier score and classwise ECE, overall and for each division. The record can be rebuilt from the partitioned competition archives when necessary.
 
 ## Viewer
 
@@ -91,6 +91,8 @@ uv run python -m http.server -d site 8000
 ```
 
 The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
+
+The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build.
 
 Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, checks the boundary and deploys the site. Both R2 buckets stay private.
 
@@ -104,7 +106,7 @@ Put `DATAWRAPPER_API_KEY` in the ignored `.env` file, then run:
 uv run epl-forecast datawrapper-poc
 ```
 
-The first run creates a disposable proof-of-concept chart and saves its public chart ID in `configs/datawrapper_poc.toml`. Later runs update and publish the same test chart. The command prints the chart ID, the published URL and the source run ID. It stops if the credential or an API step fails.
+The first run creates a disposable proof-of-concept chart and saves its public chart ID in `configs/datawrapper_poc.toml`. Later runs update and publish the same test chart. The command prints the chart ID, the published URL and the source forecast ID. It stops if the credential or an API step fails.
 
 ## Development
 

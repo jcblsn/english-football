@@ -1,15 +1,8 @@
-"""The compact derived surface that may leave this machine.
+"""Build and validate the small public forecast surface."""
 
-A published document is built only from model output: probabilities, season
-distributions, event masses, timestamps and model identity. Provider payloads,
-captured odds, request records, local file hashes and player tables stay in the
-private archive. `configs/publication.toml` declares the allowlist, every
-document is assembled from it by construction, and `check_publishable` re-checks
-the assembled result so a careless addition fails loudly instead of shipping.
-"""
-
-import json
 import re
+import shutil
+import tempfile
 import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,7 +10,7 @@ from pathlib import Path
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.datasets import timestamp
 from epl_forecast.simulation import EVERY_TEAM, OUTCOME_NAMES
-from epl_forecast.storage import json_bytes, write_immutable, write_json
+from epl_forecast.storage import write_json
 
 POLICY_PATH = Path("configs/publication.toml")
 MINIMUM_SIMULATIONS = 1000
@@ -49,6 +42,128 @@ TEAM_FIELDS = (
     "mean_goal_difference",
 )
 
+FORECAST_KEYS = {
+    "away",
+    "away_rate",
+    "away_team_id",
+    "baseline",
+    "basis",
+    "carried_from",
+    "competition_id",
+    "competition_name",
+    "conditional",
+    "coverage",
+    "current_points",
+    "draw",
+    "event",
+    "events",
+    "fixtures",
+    "forecast_id",
+    "generated_at",
+    "grid_home_rows_away_columns",
+    "home",
+    "home_rate",
+    "home_team_id",
+    "horizon_days",
+    "href",
+    "impact",
+    "impacts",
+    "kickoff_time",
+    "market_assisted",
+    "match_date",
+    "match_horizon_days",
+    "match_id",
+    "matches",
+    "max_standard_error",
+    "mean_goal_difference",
+    "mean_points",
+    "mean_position",
+    "median_points",
+    "median_position",
+    "minimum_conditional_samples",
+    "model",
+    "model_results_cutoff",
+    "movement_floor",
+    "name",
+    "omitted_probability",
+    "outcome",
+    "outcome_counts",
+    "p_away",
+    "p_draw",
+    "p_home",
+    "played",
+    "points_distribution",
+    "points_intervals",
+    "points_quantiles_05_50_95",
+    "position_intervals",
+    "position_probabilities",
+    "position_sd",
+    "rms_movement",
+    "schema_version",
+    "score_probabilities",
+    "season_id",
+    "simulated_on",
+    "simulations",
+    "smallest_outcome_count",
+    "state_observed_at",
+    "state_uncertainty",
+    "status",
+    "sufficient_sample",
+    "team_id",
+    "teams",
+    "top_rms_movement",
+    "unavailable_reason",
+    "unscheduled_assumption",
+    "unscheduled_fixtures",
+    "unsettled_assumption",
+    "unsettled_fixtures",
+    "version",
+    "window_end",
+    "window_start",
+}
+POINTER_KEYS = {
+    "competition_id",
+    "competition_name",
+    "forecast_id",
+    "forecasts",
+    "generated_at",
+    "href",
+    "matches",
+    "model_version",
+    "schema_version",
+    "season_id",
+    "updated_at",
+}
+RECORD_KEYS = {
+    "brier",
+    "classwise_ece",
+    "competition_id",
+    "forecast_id",
+    "generated_at",
+    "kickoff_time",
+    "log_loss",
+    "match_id",
+    "outcome",
+    "overall",
+    "p_away",
+    "p_draw",
+    "p_home",
+    "pending",
+    "schema_version",
+    "scored",
+    "season_id",
+    "settled",
+    "summary",
+    "unsettled",
+    "updated_at",
+}
+CONTRACT_KEYS = {
+    "forecast": FORECAST_KEYS,
+    "current": POINTER_KEYS,
+    "archive": POINTER_KEYS,
+    "record": RECORD_KEYS,
+}
+
 
 def load_policy(path: Path = POLICY_PATH) -> dict:
     with Path(path).open("rb") as stream:
@@ -56,7 +171,8 @@ def load_policy(path: Path = POLICY_PATH) -> dict:
     forbidden = policy["boundary"]["forbidden_key_substrings"]
     leaked = sorted(
         key
-        for key in policy["surface"]["allowed_keys"]
+        for keys in CONTRACT_KEYS.values()
+        for key in keys
         if any(substring in key for substring in forbidden)
     )
     if leaked:
@@ -64,9 +180,18 @@ def load_policy(path: Path = POLICY_PATH) -> dict:
     return policy
 
 
-def check_publishable(document, policy: dict) -> None:
-    allowed = set(policy["surface"]["allowed_keys"])
-    digest_keys = set(policy["surface"]["digest_keys"])
+def document_kind(document: dict) -> str:
+    if "teams" in document:
+        return "forecast"
+    if "forecasts" in document:
+        return "archive" if "competition_id" in document else "current"
+    if "settled" in document:
+        return "record"
+    raise ValueError("Unknown public document type")
+
+
+def check_publishable(document, policy: dict, kind: str | None = None) -> None:
+    allowed = CONTRACT_KEYS[kind or document_kind(document)]
     forbidden = policy["boundary"]["forbidden_key_substrings"]
     patterns = [re.compile(p) for p in policy["boundary"]["forbidden_value_patterns"]]
 
@@ -76,7 +201,9 @@ def check_publishable(document, policy: dict) -> None:
                 if any(substring in name for substring in forbidden):
                     raise ValueError(f"Private key on the published surface: {trail}.{name}")
                 if name not in allowed and not _is_open_map(trail):
-                    raise ValueError(f"Key is not on the publication allowlist: {trail}.{name}")
+                    raise ValueError(
+                        f"Key is not in the {kind or document_kind(document)} contract: {trail}.{name}"
+                    )
                 walk(value, f"{trail}.{name}", name)
         elif isinstance(node, list):
             for index, value in enumerate(node):
@@ -85,7 +212,7 @@ def check_publishable(document, policy: dict) -> None:
             for pattern in patterns:
                 if pattern.search(node):
                     raise ValueError(f"Private value on the published surface: {trail} ({node!r})")
-            if DIGEST.search(node) and key not in digest_keys:
+            if DIGEST.search(node):
                 raise ValueError(f"Unexpected digest on the published surface: {trail}")
 
     walk(document, "$")
@@ -100,7 +227,6 @@ def _is_open_map(trail: str) -> bool:
             ".summary",
             ".points_intervals",
             ".position_intervals",
-            ".latest_by_competition",
         )
     )
 
@@ -217,84 +343,45 @@ def derive_impact(simulation: dict, kickoffs: dict, window: dict | None = None) 
     }
 
 
-def last_pre_kickoff(site: Path, extract) -> dict:
-    """The last record published for each match before that match kicked off.
-
-    One cutoff rule serves the prospective ledger and the carried-forward impacts: a
-    snapshot counts for a match only when it was generated strictly before the kickoff.
-    `extract` reads the records of interest out of one published document.
-    """
-    latest = {}
-    for document in published_documents(site):
-        generated = timestamp(document["generated_at"])
-        for match_id, kickoff, record in extract(document):
-            if not kickoff or generated >= timestamp(kickoff):
-                continue
-            current = latest.get(match_id)
-            if current and timestamp(current["generated_at"]) >= generated:
-                continue
-            latest[match_id] = {
-                "snapshot_id": document["snapshot_id"],
-                "generated_at": document["generated_at"],
-                **record,
-            }
-    return latest
-
-
-def _all_team_impacts(competition_id: str, wanted: set[str]):
-    """Read all-club impact records for the wanted matches out of one published document."""
-
-    def extract(document):
-        impact = document.get("impact") or {}
-        if document["competition_id"] != competition_id or impact.get("coverage") != EVERY_TEAM:
-            return
-        events = {team["team_id"]: team["events"] for team in document["teams"]}
-        for fixture in impact["fixtures"]:
-            # Only a snapshot that still had the match to play holds a pre-match record of it.
-            # A carried record, and a fixture that snapshot could not measure either, hold none.
-            if fixture["match_id"] not in wanted or fixture["status"] != "scheduled":
-                continue
-            record = {key: fixture[key] for key in CARRIED_FIELDS}
-            # The baseline of a carried record is the one that stood before the kickoff.
-            record["impacts"] = {
-                event: {
-                    **block,
-                    "baseline": [events.get(team, {}).get(event) for team in block["team_id"]],
-                }
-                for event, block in fixture["impacts"].items()
-            }
-            yield fixture["match_id"], fixture["kickoff_time"], record
-
-    return extract
-
-
-def carry_forward_impacts(site: Path, document: dict) -> dict:
-    """Fill each finished fixture of the slate from its last pre-kickoff all-club record.
-
-    A finished match is not measured again on the current paths. Once the result is
-    known, conditioning those paths on another result is no longer a pre-match
-    statement. The carried record names the snapshot it comes from. A fixture with no
-    eligible record keeps its disclosure instead of a number.
-    """
+def update_impact_state(document: dict, state: dict) -> dict:
+    """Carry eligible impact rows forward and retain only active match candidates."""
     impact = document.get("impact")
     if not impact:
         return document
-    wanted = {
-        fixture["match_id"] for fixture in impact["fixtures"] if fixture["status"] != "scheduled"
-    }
-    if not wanted:
-        return document
-    archived = last_pre_kickoff(site, _all_team_impacts(document["competition_id"], wanted))
+    candidates = state.setdefault("matches", {})
     fixtures = []
+    events = {team["team_id"]: team["events"] for team in document["teams"]}
+    generated = timestamp(document["generated_at"])
     for fixture in impact["fixtures"]:
-        record = archived.get(fixture["match_id"]) if fixture["status"] != "scheduled" else None
+        match_id = fixture["match_id"]
+        record = candidates.get(match_id) if fixture["status"] != "scheduled" else None
         if record:
             fixture = {
                 **{key: value for key, value in fixture.items() if key != "unavailable_reason"},
                 **{key: record[key] for key in CARRIED_FIELDS},
                 "carried_from": {
-                    "snapshot_id": record["snapshot_id"],
+                    "forecast_id": record["forecast_id"],
                     "generated_at": record["generated_at"],
+                },
+            }
+            if fixture["status"] == "finished":
+                candidates.pop(match_id)
+        elif (
+            fixture["status"] == "scheduled"
+            and fixture["kickoff_time"]
+            and impact.get("coverage") == EVERY_TEAM
+            and generated < timestamp(fixture["kickoff_time"])
+        ):
+            candidates[match_id] = {
+                "forecast_id": document["forecast_id"],
+                "generated_at": document["generated_at"],
+                **{key: fixture[key] for key in CARRIED_FIELDS},
+                "impacts": {
+                    event: {
+                        **block,
+                        "baseline": [events.get(team, {}).get(event) for team in block["team_id"]],
+                    }
+                    for event, block in fixture["impacts"].items()
                 },
             }
         fixtures.append(fixture)
@@ -303,16 +390,14 @@ def carry_forward_impacts(site: Path, document: dict) -> dict:
 
 def derive_forecast(
     forecast: dict,
-    run: dict,
-    snapshot_id: str,
-    verification: dict | None = None,
+    forecast_id: str,
     horizon_days: int = 21,
     public_model_version: str = "v0.0",
 ) -> dict:
     simulation = forecast["simulation"]
     if simulation is None:
         raise ValueError(
-            f"Refusing to publish a forecast without a season projection: {snapshot_id}"
+            f"Refusing to publish a forecast without a season projection: {forecast_id}"
         )
     if simulation["simulations"] < MINIMUM_SIMULATIONS:
         raise ValueError(
@@ -381,8 +466,8 @@ def derive_forecast(
         if row["status"] == "unscheduled"
     ]
     document = {
-        "schema_version": 2,
-        "snapshot_id": snapshot_id,
+        "schema_version": 3,
+        "forecast_id": forecast_id,
         "competition_id": forecast["competition_id"],
         "competition_name": forecast["competition_name"],
         "season_id": forecast["season_id"],
@@ -421,181 +506,126 @@ def derive_forecast(
     return document
 
 
-def write_derived(path: Path, value: dict) -> dict:
-    """Write a rebuilt document, keeping the old one when only its timestamp moved."""
-    if path.exists():
-        existing = json.loads(path.read_text())
-        if {k: v for k, v in existing.items() if k != "archived_at"} == {
-            k: v for k, v in value.items() if k != "archived_at"
-        }:
-            return existing
-    write_json(path, value)
-    return value
-
-
-def snapshot_directory(site: Path, snapshot_id: str) -> Path:
-    return Path(site) / "data" / "forecasts" / snapshot_id
-
-
-def publish_document(site: Path, document: dict, policy: dict) -> Path:
-    check_publishable(document, policy)
-    target = (
-        snapshot_directory(site, document["snapshot_id"]) / f"{document['competition_id']}.json"
+def _competition_order(row: dict) -> tuple[int, str]:
+    competition_id = row["competition_id"]
+    return (
+        COMPETITION_IDS.index(competition_id)
+        if competition_id in COMPETITION_IDS
+        else len(COMPETITION_IDS),
+        competition_id,
     )
-    write_immutable(target, json_bytes(document))
-    return target
 
 
-def rebuild_index(site: Path, policy: dict) -> dict:
-    site = Path(site)
-    root = site / "data" / "forecasts"
-    snapshots = []
-    for directory in sorted(p for p in root.glob("*") if p.is_dir()):
-        competitions = []
-        for path in sorted(directory.glob("*.json")):
-            document = json.loads(path.read_text())
-            competitions.append(
-                {
-                    "competition_id": document["competition_id"],
-                    "competition_name": document["competition_name"],
-                    "season_id": document["season_id"],
-                    "model_version": document["model"].get(
-                        "version", policy["product"]["model_version"]
-                    ),
-                    "matches": len(document["matches"]),
-                    "href": path.relative_to(site / "data").as_posix(),
-                }
-            )
-            generated = document["generated_at"]
-        # Pyramid order, so the viewer opens on the top division.
-        competitions.sort(
-            key=lambda row: (
-                COMPETITION_IDS.index(row["competition_id"])
-                if row["competition_id"] in COMPETITION_IDS
-                else len(COMPETITION_IDS),
-                row["competition_id"],
-            )
-        )
-        if competitions:
-            snapshots.append(
-                {
-                    "snapshot_id": directory.name,
-                    "generated_at": generated,
-                    "competitions": competitions,
-                }
-            )
-    snapshots.sort(key=lambda row: row["snapshot_id"], reverse=True)
-    index = {
-        "schema_version": 1,
-        "archived_at": datetime.now(UTC).isoformat(),
-        "latest": snapshots[0]["snapshot_id"] if snapshots else None,
-        "snapshots": snapshots,
-    }
-    check_publishable(index, policy)
-    return write_derived(site / "data" / "index.json", index)
-
-
-def published_documents(site: Path):
-    for path in sorted((Path(site) / "data" / "forecasts").glob("*/*.json")):
-        yield json.loads(path.read_text())
-
-
-def empty_index(namespace: str, updated_at: str | None = None) -> dict:
+def empty_current(updated_at: str | None = None) -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 1,
         "updated_at": updated_at or datetime.now(UTC).isoformat(),
-        "namespace": namespace,
-        "latest_by_competition": {},
-        "snapshots": [],
+        "forecasts": [],
     }
 
 
-def publish_documents_to_store(store, documents: list[dict], policy: dict) -> dict:
-    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
-    snapshots = {row["snapshot_id"]: row for row in index.get("snapshots", [])}
+def empty_archive(competition_id: str, updated_at: str | None = None) -> dict:
+    return {
+        "schema_version": 1,
+        "updated_at": updated_at or datetime.now(UTC).isoformat(),
+        "competition_id": competition_id,
+        "forecasts": [],
+    }
+
+
+def forecast_pointer(document: dict) -> dict:
+    competition_id = document["competition_id"]
+    forecast_id = document["forecast_id"]
+    return {
+        "competition_id": competition_id,
+        "competition_name": document["competition_name"],
+        "season_id": document["season_id"],
+        "forecast_id": forecast_id,
+        "generated_at": document["generated_at"],
+        "model_version": document["model"]["version"],
+        "matches": len(document["matches"]),
+        "href": f"forecasts/{competition_id}/{forecast_id}.json",
+    }
+
+
+def publish_documents(store, documents: list[dict], policy: dict) -> dict:
+    current = store.get_json("forecasts/current.json", empty_current())
+    latest = {row["competition_id"]: row for row in current["forecasts"]}
+    archives = {}
     for document in documents:
-        check_publishable(document, policy)
-        key = f"forecasts/{document['snapshot_id']}/{document['competition_id']}.json"
-        store.put_json(key, document, immutable=True)
-        snapshot = snapshots.setdefault(
-            document["snapshot_id"],
-            {
-                "snapshot_id": document["snapshot_id"],
-                "generated_at": document["generated_at"],
-                "competitions": [],
-            },
-        )
-        entry = {
-            "competition_id": document["competition_id"],
-            "competition_name": document["competition_name"],
-            "season_id": document["season_id"],
-            "model_version": document["model"]["version"],
-            "matches": len(document["matches"]),
-            "href": key,
+        check_publishable(document, policy, "forecast")
+        pointer = forecast_pointer(document)
+        store.put_json(pointer["href"], document, immutable=True)
+        competition_id = document["competition_id"]
+        archive_key = f"forecasts/{competition_id}/archive.json"
+        archive = store.get_json(archive_key, empty_archive(competition_id))
+        entries = {row["forecast_id"]: row for row in archive["forecasts"]}
+        entries[pointer["forecast_id"]] = pointer
+        archives[archive_key] = {
+            **archive,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "forecasts": sorted(entries.values(), key=lambda row: row["forecast_id"], reverse=True),
         }
-        snapshot["competitions"] = [
-            row
-            for row in snapshot["competitions"]
-            if row["competition_id"] != document["competition_id"]
-        ]
-        snapshot["competitions"].append(entry)
-    rows = sorted(snapshots.values(), key=lambda row: row["snapshot_id"], reverse=True)
-    latest = {}
-    for snapshot in rows:
-        snapshot["competitions"].sort(
-            key=lambda row: (
-                COMPETITION_IDS.index(row["competition_id"])
-                if row["competition_id"] in COMPETITION_IDS
-                else len(COMPETITION_IDS),
-                row["competition_id"],
-            )
-        )
-        for entry in snapshot["competitions"]:
-            latest.setdefault(
-                entry["competition_id"],
-                {"snapshot_id": snapshot["snapshot_id"], **entry},
-            )
+        latest[competition_id] = pointer
+    for key, archive in archives.items():
+        check_publishable(archive, policy, "archive")
+        store.put_json(key, archive)
     result = {
-        "schema_version": 2,
+        "schema_version": 1,
         "updated_at": datetime.now(UTC).isoformat(),
-        "namespace": "forecasts",
-        "latest_by_competition": latest,
-        "snapshots": rows,
+        "forecasts": sorted(latest.values(), key=_competition_order),
     }
-    check_publishable(result, policy)
-    store.put_json("forecasts/index.json", result)
-    if not store.exists("hindcasts/index.json"):
-        hindcasts = empty_index("hindcasts")
-        check_publishable(hindcasts, policy)
-        store.put_json("hindcasts/index.json", hindcasts)
+    check_publishable(result, policy, "current")
+    store.put_json("forecasts/current.json", result)
     return result
 
 
-def stored_documents(store):
-    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
-    for snapshot in reversed(index["snapshots"]):
-        for entry in snapshot["competitions"]:
-            yield store.get_json(entry["href"])
+def archive_documents(store, competition_id: str):
+    archive = store.get_json(
+        f"forecasts/{competition_id}/archive.json", empty_archive(competition_id)
+    )
+    for entry in reversed(archive["forecasts"]):
+        yield store.get_json(entry["href"])
 
 
-def materialize_publication(store, site: Path) -> dict:
+def materialize_publication(store, site: Path, archive_competitions: tuple[str, ...] = ()) -> dict:
     site = Path(site)
-    data = site / "data"
-    index = store.get_json("forecasts/index.json", empty_index("forecasts"))
-    check_publishable(index, load_policy())
-    write_json(data / "index.json", index)
-    documents = 0
-    for snapshot in index["snapshots"]:
-        for entry in snapshot["competitions"]:
+    site.mkdir(parents=True, exist_ok=True)
+    target = site / "data"
+    policy = load_policy()
+    with tempfile.TemporaryDirectory(prefix=".publication-", dir=site) as temporary:
+        data = Path(temporary)
+        current = store.get_json("forecasts/current.json", empty_current())
+        check_publishable(current, policy, "current")
+        write_json(data / "current.json", current)
+        written = set()
+
+        def materialize(entry: dict) -> None:
+            if entry["href"] in written:
+                return
             document = store.get_json(entry["href"])
-            check_publishable(document, load_policy())
+            check_publishable(document, policy, "forecast")
             write_json(data / entry["href"], document)
-            documents += 1
-    record = store.get_json("record.json")
-    if record is not None:
-        check_publishable(record, load_policy())
-        write_json(data / "record.json", record)
-    hindcasts = store.get_json("hindcasts/index.json", empty_index("hindcasts"))
-    check_publishable(hindcasts, load_policy())
-    write_json(data / "hindcasts" / "index.json", hindcasts)
-    return {"documents": documents, "record": record is not None}
+            written.add(entry["href"])
+
+        for entry in current["forecasts"]:
+            materialize(entry)
+        for competition_id in archive_competitions:
+            key = f"forecasts/{competition_id}/archive.json"
+            archive = store.get_json(key, empty_archive(competition_id))
+            check_publishable(archive, policy, "archive")
+            write_json(data / key, archive)
+            for entry in archive["forecasts"]:
+                materialize(entry)
+        record = store.get_json("record.json")
+        if record is not None:
+            check_publishable(record, policy, "record")
+            write_json(data / "record.json", record)
+        if target.exists():
+            shutil.rmtree(target)
+        data.replace(target)
+    return {
+        "documents": len(written),
+        "archives": len(archive_competitions),
+        "record": record is not None,
+    }

@@ -8,18 +8,10 @@ from pathlib import Path
 from epl_forecast.datasets import KEYS, SCHEMAS, Dataset
 from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
 
-IMMUTABLE_DATA_DIRECTORIES = ("raw", "requests", "parquet", "manifests")
-
 
 def read_manifests(root: Path) -> list[dict]:
     return [
         json.loads(path.read_text()) for path in sorted((Path(root) / "manifests").glob("*.json"))
-    ]
-
-
-def read_requests(root: Path) -> list[dict]:
-    return [
-        json.loads(path.read_text()) for path in sorted((Path(root) / "requests").glob("*.json"))
     ]
 
 
@@ -63,44 +55,19 @@ def sync_data(
     root: Path,
     store: R2Store,
     *,
-    manifest_paths: list[Path] | None = None,
-    request_paths: list[Path] | None = None,
+    manifest_paths: list[Path],
+    request_paths: list[Path],
 ) -> dict:
-    """Upload canonical objects, then advance their compact state pointers.
-
-    Routine callers pass the files created in the current collection. A migration can
-    omit them to scan the local archive once and skip keys that already exist remotely.
-    """
+    """Upload objects from this collection, then advance their state pointers."""
     root = Path(root)
-    migration = manifest_paths is None or request_paths is None
-    if migration:
-        existing = set(store.keys())
-        manifest_paths = sorted((root / "manifests").glob("*.json"))
-        request_paths = sorted((root / "requests").glob("*.json"))
-        new_manifests = [
-            json.loads(path.read_text())
-            for path in manifest_paths
-            if path.relative_to(root).as_posix() not in existing
-        ]
-        new_requests = [json.loads(path.read_text()) for path in request_paths]
-        paths = [
-            path
-            for directory in IMMUTABLE_DATA_DIRECTORIES
-            for path in (root / directory).rglob("*")
-            if path.is_file()
-        ]
-    else:
-        existing = None
-        manifest_paths = sorted(Path(path) for path in manifest_paths)
-        request_paths = sorted(Path(path) for path in request_paths)
-        new_manifests = [json.loads(path.read_text()) for path in manifest_paths]
-        new_requests = [json.loads(path.read_text()) for path in request_paths]
-        paths = [*manifest_paths, *request_paths]
-        paths.extend(root / record["raw_path"] for record in new_requests)
-        paths.extend(
-            root / item["path"] for manifest in new_manifests for item in manifest["files"]
-        )
-    uploaded = _upload_missing(store, root, sorted(set(paths)), existing)
+    manifest_paths = sorted(Path(path) for path in manifest_paths)
+    request_paths = sorted(Path(path) for path in request_paths)
+    new_manifests = [json.loads(path.read_text()) for path in manifest_paths]
+    new_requests = [json.loads(path.read_text()) for path in request_paths]
+    paths = [*manifest_paths, *request_paths]
+    paths.extend(root / record["raw_path"] for record in new_requests)
+    paths.extend(root / item["path"] for manifest in new_manifests for item in manifest["files"])
+    uploaded = _upload_missing(store, root, sorted(set(paths)))
     audits = sorted(path for path in (root / "audits").glob("*.json") if path.is_file())
     for path in audits:
         store.upload(path, path.relative_to(root).as_posix())

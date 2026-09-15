@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
 import pytest
-from test_publication import sample_forecast, sample_run
+from test_publication import sample_forecast
 
 from epl_forecast.live import LiveSeason
 from epl_forecast.live_forecast import started_slate, weekly_window
@@ -10,12 +10,11 @@ from epl_forecast.models.base import Forecast
 from epl_forecast.publication import (
     IMPACT_MOVEMENT_FLOOR,
     UNAVAILABLE_IMPACT,
-    carry_forward_impacts,
     check_publishable,
     derive_forecast,
     derive_impact,
     load_policy,
-    publish_document,
+    update_impact_state,
 )
 from epl_forecast.schema import Fixture, fixture_id
 from epl_forecast.simulation import (
@@ -401,35 +400,41 @@ def played_forecast(generated, status="finished", outcome="H"):
     return forecast
 
 
-def publish(site, generated, snapshot, **kwargs):
-    document = derive_forecast(scheduled_forecast(generated, **kwargs), sample_run(), snapshot)
-    publish_document(site, document, load_policy())
-    return document
+def publish(state, generated, forecast_id, **kwargs):
+    document = derive_forecast(scheduled_forecast(generated, **kwargs), forecast_id)
+    return update_impact_state(document, state)
 
 
-def carried(site, generated="2026-09-12T18:00:00+00:00", snapshot="2026-09-12T180000Z", **kwargs):
-    document = derive_forecast(played_forecast(generated, **kwargs), sample_run(), snapshot)
-    return carry_forward_impacts(site, document)
+def carried(
+    state,
+    generated="2026-09-12T18:00:00+00:00",
+    forecast_id="2026-09-12T180000Z",
+    **kwargs,
+):
+    document = derive_forecast(played_forecast(generated, **kwargs), forecast_id)
+    return update_impact_state(document, state)
 
 
-def test_a_match_in_play_shows_its_last_pre_kickoff_impact(tmp_path):
-    publish(tmp_path, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
-    document = carried(tmp_path, status="in_progress", outcome=None)
+def test_a_match_in_play_shows_its_last_pre_kickoff_impact():
+    state = {}
+    publish(state, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
+    document = carried(state, status="in_progress", outcome=None)
     check_publishable(document, load_policy())
     fixture = document["impact"]["fixtures"][0]
     assert fixture["status"] == "in_progress" and fixture["outcome"] is None
-    assert fixture["carried_from"]["snapshot_id"] == "2026-09-12T090000Z"
+    assert fixture["carried_from"]["forecast_id"] == "2026-09-12T090000Z"
     assert fixture["impacts"]["title_probability"]["rms_movement"] == [0.07, 0.07]
 
 
-def test_a_finished_fixture_shows_its_last_pre_kickoff_impact(tmp_path):
-    publish(tmp_path, "2026-09-11T12:00:00+00:00", "2026-09-11T120000Z", movement=0.02)
-    publish(tmp_path, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
-    document = carried(tmp_path)
+def test_a_finished_fixture_shows_its_last_pre_kickoff_impact():
+    state = {}
+    publish(state, "2026-09-11T12:00:00+00:00", "2026-09-11T120000Z", movement=0.02)
+    publish(state, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
+    document = carried(state)
     check_publishable(document, load_policy())
     fixture = document["impact"]["fixtures"][0]
     assert fixture["status"] == "finished" and fixture["outcome"] == "H"
-    assert fixture["carried_from"]["snapshot_id"] == "2026-09-12T090000Z"
+    assert fixture["carried_from"]["forecast_id"] == "2026-09-12T090000Z"
     assert "unavailable_reason" not in fixture
     block = fixture["impacts"]["title_probability"]
     assert block["rms_movement"] == [0.07, 0.07]
@@ -437,9 +442,10 @@ def test_a_finished_fixture_shows_its_last_pre_kickoff_impact(tmp_path):
     assert block["home"] == [0.6, 0.6]
 
 
-def test_a_snapshot_made_after_the_kickoff_cannot_supply_the_impact(tmp_path):
-    publish(tmp_path, "2026-09-12T16:00:00+00:00", "2026-09-12T160000Z")
-    document = carried(tmp_path)
+def test_a_forecast_made_after_the_kickoff_cannot_supply_the_impact():
+    state = {}
+    publish(state, "2026-09-12T16:00:00+00:00", "2026-09-12T160000Z")
+    document = carried(state)
     fixture = document["impact"]["fixtures"][0]
     assert fixture["carried_from"] is None
     assert fixture["impacts"] == {}
@@ -447,28 +453,25 @@ def test_a_snapshot_made_after_the_kickoff_cannot_supply_the_impact(tmp_path):
     check_publishable(document, load_policy())
 
 
-def test_impacts_from_before_this_feature_are_not_carried_forward(tmp_path):
-    publish(tmp_path, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", coverage="participants")
-    fixture = carried(tmp_path)["impact"]["fixtures"][0]
+def test_impacts_from_before_this_feature_are_not_carried_forward():
+    state = {}
+    publish(state, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", coverage="participants")
+    fixture = carried(state)["impact"]["fixtures"][0]
     assert fixture["carried_from"] is None
     assert fixture["unavailable_reason"] == UNAVAILABLE_IMPACT
 
 
-def test_a_record_that_holds_no_numbers_is_not_carried_forward(tmp_path):
-    """A snapshot from before the kickoff can hold the same match with no numbers of its own."""
-    publish_document(
-        tmp_path,
-        carried(tmp_path, "2026-09-12T13:00:00+00:00", "2026-09-12T130000Z"),
-        load_policy(),
-    )
-    fixture = carried(tmp_path)["impact"]["fixtures"][0]
+def test_a_record_that_holds_no_numbers_is_not_carried_forward():
+    state = {}
+    carried(state, "2026-09-12T13:00:00+00:00", "2026-09-12T130000Z")
+    fixture = carried(state)["impact"]["fixtures"][0]
     assert fixture["carried_from"] is None
     assert fixture["unavailable_reason"] == UNAVAILABLE_IMPACT
 
 
-def test_a_carried_record_is_not_carried_again(tmp_path):
-    publish(tmp_path, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
-    first = carried(tmp_path)
-    publish_document(tmp_path, first, load_policy())
-    second = carried(tmp_path, "2026-09-12T21:00:00+00:00", "2026-09-12T210000Z")
-    assert second["impact"]["fixtures"][0]["carried_from"]["snapshot_id"] == "2026-09-12T090000Z"
+def test_an_in_play_record_remains_available_for_the_finished_forecast():
+    state = {}
+    publish(state, "2026-09-12T09:00:00+00:00", "2026-09-12T090000Z", movement=0.07)
+    carried(state, status="in_progress", outcome=None)
+    second = carried(state, "2026-09-12T21:00:00+00:00", "2026-09-12T210000Z")
+    assert second["impact"]["fixtures"][0]["carried_from"]["forecast_id"] == "2026-09-12T090000Z"

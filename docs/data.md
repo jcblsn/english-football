@@ -74,12 +74,3 @@ uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM fixtu
 Routine synchronization uploads only objects from the current collection. It does not list the full bucket. Canonical compaction is a maintenance task, not part of each collection. Run `uv run python scripts/compact_r2.py` after the incremental-batch threshold is reached. The default threshold is 250 batches.
 
 A backfill of history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
-
-## Initial migration
-
-```sh
-uv run python scripts/migrate_r2.py
-uv run python scripts/migrate_r2.py --include-private-runs
-```
-
-The first command copies provider data and publishes the compact state only after the immutable objects exist. The second command also copies retained private forecast runs and snapshots. Both commands are resumable.

@@ -41,5 +41,4 @@ jobs:
           uv run epl-forecast operate
           --data "${RUNNER_TEMP}/data"
           --runs "${RUNNER_TEMP}/runs"
-          --site "${RUNNER_TEMP}/site"
           ${{ inputs.force && '--force' || '' }}

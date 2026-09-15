@@ -35,7 +35,7 @@ class Client:
 
 def forecast():
     return {
-        "snapshot_id": "2026-09-13T193232Z",
+        "forecast_id": "2026-09-13T193232Z",
         "generated_at": "2026-09-13T19:33:15+00:00",
         "season_id": "2026-2027",
         "simulations": 20000,
@@ -49,20 +49,16 @@ def forecast():
 
 def site(root: Path):
     data = root / "data"
-    document = data / "forecasts/latest/eng-premier-league.json"
+    document = data / "forecasts/eng-premier-league/2026-09-13T193232Z.json"
     document.parent.mkdir(parents=True)
     document.write_text(json.dumps(forecast()))
-    (data / "index.json").write_text(
+    (data / "current.json").write_text(
         json.dumps(
             {
-                "snapshots": [
+                "forecasts": [
                     {
-                        "competitions": [
-                            {
-                                "competition_id": "eng-premier-league",
-                                "href": "forecasts/latest/eng-premier-league.json",
-                            }
-                        ]
+                        "competition_id": "eng-premier-league",
+                        "href": "forecasts/eng-premier-league/2026-09-13T193232Z.json",
                     }
                 ]
             }
@@ -99,7 +95,7 @@ def test_publish_creates_once_then_updates_the_same_chart(tmp_path):
         "action": "created",
         "chart_id": "Ab123",
         "url": "https://datawrapper.dwcdn.net/Ab123/1/",
-        "snapshot_id": "2026-09-13T193232Z",
+        "forecast_id": "2026-09-13T193232Z",
     }
     assert second["action"] == "updated"
     assert config.read_text() == 'chart_id = "Ab123"\n'
@@ -114,18 +110,21 @@ def test_publish_creates_once_then_updates_the_same_chart(tmp_path):
     ]
 
 
-def test_latest_forecast_reads_the_publication_index_from_r2(tmp_path):
+def test_latest_forecast_reads_the_current_document_from_r2(tmp_path):
     expected = forecast()
 
     class Store:
         def get_json(self, key):
             return {
-                "forecasts/index.json": {
-                    "latest_by_competition": {
-                        "eng-premier-league": {"href": "forecasts/run/premier.json"}
-                    }
+                "forecasts/current.json": {
+                    "forecasts": [
+                        {
+                            "competition_id": "eng-premier-league",
+                            "href": "forecasts/eng-premier-league/current.json",
+                        }
+                    ]
                 },
-                "forecasts/run/premier.json": expected,
+                "forecasts/eng-premier-league/current.json": expected,
             }[key]
 
     assert latest_forecast(tmp_path, Store()) == expected

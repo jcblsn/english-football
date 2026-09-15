@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,23 +12,19 @@ from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError, writer_lock
 from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
-from epl_forecast.ledger import build_ledger, build_record, realized_outcomes
 from epl_forecast.publication import (
-    carry_forward_impacts,
     derive_forecast,
     load_policy,
-    materialize_publication,
-    publish_document,
-    publish_documents_to_store,
-    rebuild_index,
+    publish_documents,
+    update_impact_state,
 )
+from epl_forecast.record import realized_outcomes, update_record
 from epl_forecast.storage import (
     file_hash,
     json_bytes,
     r2_store_if_configured,
     sha256_bytes,
     write_immutable,
-    write_json,
 )
 
 PRODUCT_MODEL = "M7-xg-v1"
@@ -36,7 +33,7 @@ LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 
-def snapshot_id(moment: datetime) -> str:
+def forecast_id(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H%M%SZ")
 
 
@@ -86,19 +83,54 @@ def verify_archive(data: Path, archive: Path, output: Path):
     )
 
 
-def information_fingerprint(data):
-    """A digest of the inputs that can change a forecast; a new digest makes a run due."""
-    fields = {
-        "fixtures": "match_id, kickoff_time, status, home_goals, away_goals",
-        "memberships": "player_id, team_id, season_id, basis",
-        "availability": "player_id, fpl_code, scope, status, reason, chance_next_round",
-        "team_process": "match_id, team_id, xg",
-        "odds": "match_id, family, home_odds, draw_odds, away_odds",
+def training_competitions(competition_id: str) -> list[str]:
+    with PRODUCT_CONFIG.open("rb") as stream:
+        config = tomllib.load(stream)
+    model = next(spec for spec in config["models"] if spec["id"] == PRODUCT_MODEL)
+    competitions = model.get("train_competitions", {})
+    return list(competitions.get(competition_id, [competition_id]))
+
+
+def information_fingerprint(data, competition_id: str):
+    """Digest only the canonical values that one competition forecast consumes."""
+    training = training_competitions(competition_id)
+    placeholders = ", ".join("?" for _ in training)
+    queries = {
+        "fixtures": (
+            "SELECT DISTINCT match_id, competition_id, season_id, stage, home_team_id, "
+            "away_team_id, match_date, kickoff_time, status, home_goals, away_goals "
+            f"FROM fixtures WHERE competition_id IN ({placeholders}) "
+            "AND (competition_id=? OR status='finished') ORDER BY ALL",
+            [*training, competition_id],
+        ),
+        "team_process": (
+            "SELECT DISTINCT match_id, team_id, xg FROM team_process "
+            f"WHERE competition_id IN ({placeholders}) ORDER BY ALL",
+            training,
+        ),
+        "odds": (
+            "SELECT DISTINCT match_id, family, home_odds, draw_odds, away_odds FROM odds "
+            "WHERE competition_id=? AND season_id=(SELECT max(season_id) FROM fixtures "
+            "WHERE competition_id=?) ORDER BY ALL",
+            [competition_id, competition_id],
+        ),
+        "standings": (
+            "SELECT DISTINCT team_id, points, played, wins, draws, losses, goals_for, "
+            "goals_against, goal_difference FROM standings WHERE competition_id=? "
+            "AND season_id=(SELECT max(season_id) FROM fixtures WHERE competition_id=?) "
+            "ORDER BY ALL",
+            [competition_id, competition_id],
+        ),
+        "teams": (
+            "SELECT DISTINCT team_id, name FROM teams WHERE team_id IN ("
+            "SELECT home_team_id FROM fixtures WHERE competition_id=? AND "
+            "season_id=(SELECT max(season_id) FROM fixtures WHERE competition_id=?) UNION "
+            "SELECT away_team_id FROM fixtures WHERE competition_id=? AND "
+            "season_id=(SELECT max(season_id) FROM fixtures WHERE competition_id=?)) ORDER BY ALL",
+            [competition_id] * 4,
+        ),
     }
-    records = {
-        table: data.rows(f"SELECT DISTINCT {columns} FROM {table} ORDER BY ALL")
-        for table, columns in fields.items()
-    }
+    records = {name: data.rows(sql, parameters) for name, (sql, parameters) in queries.items()}
     return sha256_bytes(json.dumps(records, default=str, sort_keys=True).encode())
 
 
@@ -130,10 +162,8 @@ def install_launch_agent(label, arguments, root, interval_seconds, logs=None):
     return path
 
 
-FORECAST_CODE = (
+MODEL_CODE = (
     Path("src/epl_forecast/models"),
-    Path("src/epl_forecast/artifacts.py"),
-    Path("src/epl_forecast/cli.py"),
     Path("src/epl_forecast/competitions.py"),
     Path("src/epl_forecast/data/efl_adjustments.json"),
     Path("src/epl_forecast/data/pl_adjustments.json"),
@@ -143,23 +173,19 @@ FORECAST_CODE = (
     Path("src/epl_forecast/live.py"),
     Path("src/epl_forecast/live_forecast.py"),
     Path("src/epl_forecast/market.py"),
-    Path("src/epl_forecast/pipeline.py"),
     Path("src/epl_forecast/postseason.py"),
-    Path("src/epl_forecast/publication.py"),
     Path("src/epl_forecast/sanctions.py"),
     Path("src/epl_forecast/schema.py"),
     Path("src/epl_forecast/simulation.py"),
     Path("src/epl_forecast/training.py"),
-    Path("src/epl_forecast/verification.py"),
     Path("configs/product.toml"),
     Path("configs/market_pool.json"),
-    Path("configs/publication.toml"),
 )
 
 
 def production_fingerprint(data_fingerprint: str) -> str:
     paths = []
-    for path in FORECAST_CODE:
+    for path in MODEL_CODE:
         paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
     code = {str(path): file_hash(path) for path in paths}
     return sha256_bytes(json_bytes({"data": data_fingerprint, "forecast_code": code}))
@@ -171,22 +197,20 @@ def due(state: dict, fingerprint: str, competition: str) -> bool:
 
 def operate(
     data: Path = Path("data"),
-    site: Path = Path("site"),
     runs: Path = Path("runs/product"),
     simulations: int = 10000,
-    interval_hours: float | None = None,
     force: bool = False,
     collect_first: bool = True,
     data_store=None,
     publish_store=None,
 ) -> dict:
-    data, site, runs = Path(data), Path(site), Path(runs)
+    data, runs = Path(data), Path(runs)
     data_store = data_store if data_store is not None else r2_store_if_configured("R2_DATA_BUCKET")
     publish_store = (
         publish_store if publish_store is not None else r2_store_if_configured("R2_PUBLISH_BUCKET")
     )
-    if (data_store is None) != (publish_store is None):
-        raise ValueError("Configure both R2 buckets or neither bucket")
+    if data_store is None or publish_store is None:
+        raise ValueError("Production needs both R2 buckets")
     policy = load_policy()
     result = {"status": "ok", "published": [], "collection": None}
     if collect_first:
@@ -195,46 +219,35 @@ def operate(
                 old_manifests = set((data / "manifests").glob("*.json"))
                 old_requests = set((data / "requests").glob("*.json"))
                 result["collection"] = collect(data, store=data_store)
-                if data_store:
-                    result["data_sync"] = sync_data(
-                        data,
-                        data_store,
-                        manifest_paths=list(
-                            set((data / "manifests").glob("*.json")) - old_manifests
-                        ),
-                        request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
-                    )
+                result["data_sync"] = sync_data(
+                    data,
+                    data_store,
+                    manifest_paths=list(set((data / "manifests").glob("*.json")) - old_manifests),
+                    request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
+                )
         except SourceAccessError as error:
             return {"status": "skipped", "reason": str(error)}
     now = datetime.now(UTC)
     dataset = Dataset(data, now, store=data_store)
     try:
-        fingerprint = production_fingerprint(information_fingerprint(dataset))
+        fingerprints = {
+            competition_id: production_fingerprint(information_fingerprint(dataset, competition_id))
+            for competition_id in LEAGUES
+        }
         outcomes = realized_outcomes(dataset.fixtures())
     finally:
         dataset.close()
-    state_path = runs / "state.json"
-    state = (
-        data_store.get_json("state/forecast.json", {})
-        if data_store
-        else json.loads(state_path.read_text())
-        if state_path.exists()
-        else {}
-    )
-    pending = [league for league in LEAGUES if force or due(state, fingerprint, league)]
+    state = data_store.get_json("state/forecast.json", {})
+    pending = [league for league in LEAGUES if force or due(state, fingerprints[league], league)]
     if not pending:
         result.update(status="unchanged", reason="No new information since the last publication")
-        if publish_store:
-            materialize_publication(publish_store, site)
-            record = build_record(site, outcomes, policy)
-            publish_store.put_json("record.json", record)
-        else:
-            build_ledger(site, outcomes, policy)
+        record = update_record(publish_store.get_json("record.json"), [], outcomes, policy)
+        publish_store.put_json("record.json", record)
+        result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
         return result
-    if publish_store:
-        materialize_publication(publish_store, site)
-    snapshot = snapshot_id(now)
-    attempt = runs / snapshot
+    run_id = forecast_id(now)
+    attempt = runs / run_id
+    impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
     documents, failures = [], []
     for league in pending:
         archive = attempt / league
@@ -257,58 +270,44 @@ def operate(
                 {"league": league, "stage": "verify", "detail": verification.stdout[-800:]}
             )
             continue
-        report = json.loads((reports / "verification.json").read_text())
         documents.append(
-            carry_forward_impacts(
-                site,
+            update_impact_state(
                 derive_forecast(
                     json.loads((archive / "forecast.json").read_text()),
-                    json.loads((archive / "run.json").read_text()),
-                    snapshot,
-                    report["archives"][str(archive)],
+                    run_id,
                     public_model_version=policy["product"]["model_version"],
                 ),
+                impact_state,
             )
         )
-    # A division that fails holds back only itself. The snapshot carries the divisions that pass.
     if not documents:
         result.update(status="failed", failures=failures, attempt=str(attempt))
         write_immutable(attempt / "pipeline.json", json_bytes(result))
-        if data_store:
-            sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
+        sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
         return result
-    if publish_store:
-        result["private_sync"] = sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
-        index = publish_documents_to_store(publish_store, documents, policy)
-        materialize_publication(publish_store, site)
-        record = build_record(site, outcomes, policy)
-        publish_store.put_json("record.json", record)
-    else:
-        for document in documents:
-            publish_document(site, document, policy)
-        index = rebuild_index(site, policy)
-        record = build_ledger(site, outcomes, policy)
+    result["private_sync"] = sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
+    current = publish_documents(publish_store, documents, policy)
+    record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
+    publish_store.put_json("record.json", record)
     for document in documents:
-        result["published"].append(f"{snapshot}/{document['competition_id']}")
+        result["published"].append(f"{document['competition_id']}/{document['forecast_id']}")
     result.update(
         status="partial" if failures else "ok",
         failures=failures,
         attempt=str(attempt),
-        snapshot_id=snapshot,
-        snapshots=len(index["snapshots"]),
+        run_id=run_id,
+        current_forecasts=len(current["forecasts"]),
         scored_matches=record["summary"].get("overall", {}).get("scored", 0),
     )
     write_immutable(attempt / "pipeline.json", json_bytes(result))
     competition_state = state.setdefault("competitions", {})
     for document in documents:
         competition_state[document["competition_id"]] = {
-            "fingerprint": fingerprint,
+            "fingerprint": fingerprints[document["competition_id"]],
             "published_at": now.isoformat(),
-            "snapshot_id": snapshot,
+            "forecast_id": document["forecast_id"],
         }
-    if data_store:
-        data_store.put_json("state/forecast.json", state)
-        sync_tree(attempt, data_store, f"runs/forecasts/{snapshot}")
-    else:
-        write_json(state_path, state)
+    data_store.put_json("state/forecast.json", state)
+    data_store.put_json("state/impacts.json", impact_state)
+    sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
     return result

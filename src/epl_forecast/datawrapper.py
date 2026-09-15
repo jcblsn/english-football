@@ -129,20 +129,25 @@ def save_chart_id(config_path: Path, chart_id: str) -> None:
 
 def latest_forecast(site: Path, store=None) -> dict:
     if store:
-        index = store.get_json("forecasts/index.json")
-        if not index:
-            raise DatawrapperError("The publication bucket has no forecast index")
-        entry = index["latest_by_competition"].get("eng-premier-league")
+        current = store.get_json("forecasts/current.json")
+        if not current:
+            raise DatawrapperError("The publication bucket has no current forecasts")
+        entry = next(
+            (row for row in current["forecasts"] if row["competition_id"] == "eng-premier-league"),
+            None,
+        )
         if entry:
             return store.get_json(entry["href"])
-        raise DatawrapperError("The publication index has no Premier League forecast")
+        raise DatawrapperError("The current document has no Premier League forecast")
     data_root = site / "data"
-    index = json.loads((data_root / "index.json").read_text())
-    for snapshot in index["snapshots"]:
-        for competition in snapshot["competitions"]:
-            if competition["competition_id"] == "eng-premier-league":
-                return json.loads((data_root / competition["href"]).read_text())
-    raise DatawrapperError("The site index has no Premier League forecast")
+    current = json.loads((data_root / "current.json").read_text())
+    entry = next(
+        (row for row in current["forecasts"] if row["competition_id"] == "eng-premier-league"),
+        None,
+    )
+    if entry:
+        return json.loads((data_root / entry["href"]).read_text())
+    raise DatawrapperError("The site has no current Premier League forecast")
 
 
 def chart_data(forecast: dict) -> str:
@@ -234,5 +239,5 @@ def publish(
         "action": action,
         "chart_id": chart_id,
         "url": public_url(published, chart_id),
-        "snapshot_id": forecast["snapshot_id"],
+        "forecast_id": forecast["forecast_id"],
     }

@@ -64,7 +64,7 @@ sqrt( sum over results r of P(r) × (P(event | r) − P(event))² )
 
 These numbers are conditional forecasts. They are not causal effects. The verifier checks that the groups cover all paths, that the weighted conditionals return the published event probability, and that every club is measured against every match. A result with fewer than 100 paths is marked as a thin sample.
 
-A match of the current day that already has a result is not measured again. After the result is known, the current paths cannot give an honest statement about the other results. The published forecast carries the record of the last snapshot that was made before the kickoff. The record names that snapshot and holds the baseline of that snapshot and the result of the match. If no snapshot from before the kickoff measures every club, the match shows no numbers and says why.
+A match of the current day that already has a result is not measured again. After the result is known, the current paths cannot give an honest statement about the other results. The published forecast carries the record of the last forecast that was made before the kickoff. The record names that forecast and holds its baseline and the result of the match. If no forecast from before the kickoff measures every club, the match shows no numbers and says why.
 
 ## European places
 

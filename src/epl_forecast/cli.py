@@ -185,8 +185,6 @@ def operate_command(args) -> None:
                 "operate",
                 "--data",
                 str(args.data.resolve()),
-                "--site",
-                str(args.site.resolve()),
                 "--runs",
                 str(args.runs.resolve()),
                 "--simulations",
@@ -199,13 +197,11 @@ def operate_command(args) -> None:
         print(f"Installed the product pipeline agent: {path}")
         return
     result = operate(
-        args.data,
-        args.site,
-        args.runs,
-        args.simulations,
-        None,
-        args.force,
-        not args.no_collect,
+        data=args.data,
+        runs=args.runs,
+        simulations=args.simulations,
+        force=args.force,
+        collect_first=not args.no_collect,
     )
     print(json.dumps({k: v for k, v in result.items() if k != "collection"}, indent=2))
     if result["status"] in ("failed", "skipped"):
@@ -230,7 +226,9 @@ def materialize_command(args) -> None:
     from epl_forecast.publication import materialize_publication
     from epl_forecast.storage import R2Store
 
-    result = materialize_publication(R2Store.from_environment("R2_PUBLISH_BUCKET"), args.site)
+    result = materialize_publication(
+        R2Store.from_environment("R2_PUBLISH_BUCKET"), args.site, tuple(args.archive)
+    )
     print(json.dumps(result, indent=2))
 
 
@@ -259,7 +257,6 @@ def parser() -> argparse.ArgumentParser:
         "operate", help="Collect, forecast every division, verify and publish derived artifacts"
     )
     operate.add_argument("--data", type=Path, default=Path("data"))
-    operate.add_argument("--site", type=Path, default=Path("site"))
     operate.add_argument("--runs", type=Path, default=Path("runs/product"))
     operate.add_argument("--simulations", type=int, default=10000)
     operate.add_argument("--force", action="store_true")
@@ -284,6 +281,13 @@ def parser() -> argparse.ArgumentParser:
         "materialize", help="Build the static publication data from R2"
     )
     materialize.add_argument("--site", type=Path, default=Path("site"))
+    materialize.add_argument(
+        "--archive",
+        action="append",
+        choices=COMPETITION_IDS,
+        default=[],
+        help="Also materialize one competition archive",
+    )
     materialize.set_defaults(func=materialize_command)
     evaluate = commands.add_parser(
         "evaluate", help="Score rolling historical match forecasts for M7 and M2"

@@ -1,4 +1,4 @@
-const state = { index: null, document: null, record: null, view: "table", team: null, event: null };
+const state = { current: null, document: null, record: null, view: "table", team: null, event: null };
 const panel = document.getElementById("panel");
 const VIEWS = [
   ["table", "Table"],
@@ -73,17 +73,11 @@ async function load(href) {
   return response.json();
 }
 
-function competitionsOf(snapshot) {
-  if (snapshot === "latest") return Object.values(state.index.latest_by_competition ?? {});
-  return state.index.snapshots.find((row) => row.snapshot_id === snapshot)?.competitions ?? [];
-}
-
 async function refresh() {
-  const snapshot = document.getElementById("snapshot").value;
   const competition = document.getElementById("competition").value;
   const entry =
-    competitionsOf(snapshot).find((row) => row.competition_id === competition) ??
-    competitionsOf(snapshot)[0];
+    state.current.forecasts.find((row) => row.competition_id === competition) ??
+    state.current.forecasts[0];
   if (!entry) return;
   state.document = await load(`data/${entry.href}`);
   document.getElementById("meta").textContent =
@@ -103,7 +97,7 @@ function render() {
 }
 
 function unscheduledNote() {
-  // Snapshots published before this field existed carry no disclosure.
+  // Forecasts published before this field existed carry no disclosure.
   const fixtures = state.document.unscheduled_fixtures ?? [];
   if (!fixtures.length) return [];
   const names = Object.fromEntries(state.document.teams.map((team) => [team.team_id, team.name]));
@@ -115,7 +109,7 @@ function unscheduledNote() {
 }
 
 function unsettledNote() {
-  // Snapshots published before the in-play policy changed carry no such fixture.
+  // Forecasts published before the in-play policy changed carry no such fixture.
   const fixtures = state.document.unsettled_fixtures ?? [];
   if (!fixtures.length) return [];
   const names = teamNames();
@@ -217,7 +211,7 @@ function weeklyImpact(chosen) {
   const names = teamNames();
   const slate = impactSlate(impact);
   const mine = (rows) => rows.filter((row) => row.team_id === chosen.team_id);
-  // A snapshot from before this feature measures only the two clubs of each match.
+  // A forecast from before this feature measures only the two clubs of each match.
   const everyClub = (impact.coverage ?? "participants") === "every_team";
   const floorText = `${(100 * (impact.movement_floor ?? 0)).toFixed(3)} percentage points`;
   const listedText = `${(100 * DISPLAY_FLOOR).toFixed(1)} percentage points`;
@@ -340,7 +334,7 @@ function impactSlate(impact) {
   return impact.fixtures.map((fixture) => ({ fixture, rows: impactRows(fixture, baselines) }));
 }
 
-// A snapshot published before the all-club impact holds one record for each club and event.
+// A forecast published before the all-club impact holds one record for each club and event.
 function impactRows(fixture, baselines) {
   const blocks = fixture.impacts ?? {};
   if (Array.isArray(blocks)) {
@@ -362,7 +356,7 @@ function impactRows(fixture, baselines) {
       rows.push({
         team_id: team,
         event,
-        // A finished match keeps the baseline of its own snapshot; a coming match uses this one.
+        // A finished match keeps the baseline of its own forecast; a coming match uses this one.
         baseline: block.baseline ? block.baseline[index] : baselines[team]?.[event],
         conditional,
         rms: block.rms_movement[index],
@@ -470,7 +464,7 @@ function recordView() {
     ),
     element("h2", { textContent: "Scored matches" }),
     table(
-      ["Kickoff (UTC)", "Match", "Outcome", "H", "D", "A", "Snapshot"],
+      ["Kickoff (UTC)", "Match", "Outcome", "H", "D", "A", "Forecast"],
       [...state.record.settled].reverse().map((row) =>
         element("tr", {}, [
           cell(when(row.kickoff_time)),
@@ -479,7 +473,7 @@ function recordView() {
           cell(pct(row.p_home)),
           cell(pct(row.p_draw)),
           cell(pct(row.p_away)),
-          cell(row.snapshot_id),
+          cell(row.forecast_id),
         ])
       )
     )
@@ -488,27 +482,21 @@ function recordView() {
 
 async function start() {
   try {
-    state.index = await load("data/index.json");
+    state.current = await load("data/current.json");
   } catch (error) {
     panel.append(element("p", { className: "error", textContent: `No published forecasts found (${error.message}). Run: uv run epl-forecast operate` }));
     return;
   }
   state.record = await load("data/record.json").catch(() => null);
-  const snapshots = document.getElementById("snapshot");
-  snapshots.append(
-    element("option", { value: "latest", textContent: "Latest by division" }),
-    ...state.index.snapshots.map((row) => element("option", { value: row.snapshot_id, textContent: row.snapshot_id }))
-  );
   const competitions = document.getElementById("competition");
   competitions.append(
-    ...competitionsOf("latest").map((row) => element("option", { value: row.competition_id, textContent: row.competition_name }))
+    ...state.current.forecasts.map((row) => element("option", { value: row.competition_id, textContent: row.competition_name }))
   );
   document.getElementById("views").append(
     ...VIEWS.map(([view, text]) =>
       element("button", { textContent: text, dataset: { view }, onclick: () => { state.view = view; render(); } })
     )
   );
-  snapshots.onchange = refresh;
   competitions.onchange = refresh;
   await refresh();
 }

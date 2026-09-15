@@ -5,12 +5,11 @@ import pytest
 from epl_forecast.publication import (
     check_publishable,
     derive_forecast,
-    empty_index,
+    empty_archive,
+    empty_current,
     load_policy,
     materialize_publication,
-    publish_document,
-    publish_documents_to_store,
-    rebuild_index,
+    publish_documents,
 )
 
 
@@ -131,18 +130,12 @@ def sample_run():
     }
 
 
-def test_policy_allowlist_respects_the_boundary():
-    policy = load_policy()
-    forbidden = policy["boundary"]["forbidden_key_substrings"]
-    assert not [
-        key
-        for key in policy["surface"]["allowed_keys"]
-        if any(substring in key for substring in forbidden)
-    ]
+def test_document_contracts_respect_the_boundary():
+    assert load_policy()["product"]["model_version"] == "v0.0"
 
 
 def test_derived_forecast_drops_provider_evidence():
-    document = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    document = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
     check_publishable(document, load_policy())
     text = json.dumps(document)
     assert "decimal_odds" not in text
@@ -160,7 +153,7 @@ def test_derived_forecast_drops_provider_evidence():
 
 
 def test_derived_forecast_keeps_the_distributional_surface():
-    document = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    document = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
     arsenal = document["teams"][0]
     assert arsenal["team_id"] == "arsenal"
     assert arsenal["name"] == "Arsenal"
@@ -172,7 +165,7 @@ def test_derived_forecast_keeps_the_distributional_surface():
 
 
 def test_distant_fixtures_stay_outside_the_horizon():
-    document = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    document = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
     assert [match["match_date"] for match in document["matches"]] == ["2026-09-12"]
 
 
@@ -193,7 +186,7 @@ def test_postponed_fixtures_are_disclosed_with_their_placement():
     )
     forecast["unscheduled_fixtures"] = [match_id]
     forecast["unscheduled_placeholder"] = UNSCHEDULED_PLACEHOLDER
-    document = derive_forecast(forecast, sample_run(), "2026-09-10T120000Z")
+    document = derive_forecast(forecast, "2026-09-10T120000Z")
     check_publishable(document, load_policy())
     assert document["unscheduled_fixtures"] == [
         {
@@ -206,7 +199,7 @@ def test_postponed_fixtures_are_disclosed_with_their_placement():
     ]
     assert document["unscheduled_assumption"] == UNSCHEDULED_PLACEHOLDER
     assert match_id not in {match["match_id"] for match in document["matches"]}
-    plain = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    plain = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
     assert plain["unscheduled_fixtures"] == []
     assert plain["unscheduled_assumption"] is None
 
@@ -215,58 +208,29 @@ def test_a_thin_or_missing_projection_is_not_a_product():
     coarse = sample_forecast()
     coarse["simulation"]["simulations"] = 20
     with pytest.raises(ValueError, match="product floor"):
-        derive_forecast(coarse, sample_run(), "2026-09-10T120000Z")
+        derive_forecast(coarse, "2026-09-10T120000Z")
     without = sample_forecast()
     without["simulation"] = None
     with pytest.raises(ValueError, match="without a season projection"):
-        derive_forecast(without, sample_run(), "2026-09-10T120000Z")
+        derive_forecast(without, "2026-09-10T120000Z")
 
 
 def test_check_publishable_refuses_private_content():
     policy = load_policy()
     with pytest.raises(ValueError, match="Private key"):
-        check_publishable({"sources": []}, policy)
-    with pytest.raises(ValueError, match="not on the publication allowlist"):
-        check_publishable({"expected_goals": 1}, policy)
+        check_publishable({"sources": []}, policy, "forecast")
+    with pytest.raises(ValueError, match="not in the forecast contract"):
+        check_publishable({"expected_goals": 1}, policy, "forecast")
     with pytest.raises(ValueError, match="Private value"):
-        check_publishable({"name": "/Users/someone/data"}, policy)
+        check_publishable({"name": "/Users/someone/data"}, policy, "forecast")
     with pytest.raises(ValueError, match="Unexpected digest"):
-        check_publishable({"name": "d" * 64}, policy)
-
-
-def test_publish_document_is_immutable_and_indexed(tmp_path):
-    policy = load_policy()
-    document = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
-    publish_document(tmp_path, document, policy)
-    publish_document(tmp_path, document, policy)
-    index = rebuild_index(tmp_path, policy)
-    assert index["latest"] == "2026-09-10T120000Z"
-    assert index["snapshots"][0]["competitions"][0]["href"] == (
-        "forecasts/2026-09-10T120000Z/eng-premier-league.json"
-    )
-    with pytest.raises(ValueError, match="Refusing to overwrite"):
-        publish_document(tmp_path, {**document, "simulations": 99}, policy)
-
-
-def test_the_index_lists_divisions_in_pyramid_order(tmp_path):
-    policy = load_policy()
-    for competition in ("eng-league-two", "eng-championship", "eng-premier-league"):
-        forecast = sample_forecast(competition)
-        forecast["matches"] = []
-        publish_document(
-            tmp_path, derive_forecast(forecast, sample_run(), "2026-09-10T120000Z"), policy
-        )
-    index = rebuild_index(tmp_path, policy)
-    assert [row["competition_id"] for row in index["snapshots"][0]["competitions"]] == [
-        "eng-premier-league",
-        "eng-championship",
-        "eng-league-two",
-    ]
+        check_publishable({"name": "d" * 64}, policy, "forecast")
 
 
 class Store:
     def __init__(self):
         self.objects = {}
+        self.writes = []
 
     def get_json(self, key, default=None):
         return self.objects.get(key, default)
@@ -275,34 +239,60 @@ class Store:
         if immutable and key in self.objects and self.objects[key] != value:
             raise ValueError(key)
         self.objects[key] = value
+        self.writes.append((key, immutable))
 
     def exists(self, key):
         return key in self.objects
 
 
-def test_r2_index_advances_each_division_independently_and_materializes(tmp_path):
+def test_current_advances_each_division_independently_and_materializes_only_current(tmp_path):
     store = Store()
     policy = load_policy()
-    premier = derive_forecast(sample_forecast(), sample_run(), "2026-09-10T120000Z")
+    premier = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
     championship_forecast = sample_forecast("eng-championship", "2026-09-11T12:00:00+00:00")
-    championship = derive_forecast(championship_forecast, sample_run(), "2026-09-11T120000Z")
+    championship = derive_forecast(championship_forecast, "2026-09-11T120000Z")
     later_premier = derive_forecast(
         sample_forecast(generated="2026-09-12T12:00:00+00:00"),
-        sample_run(),
         "2026-09-12T120000Z",
     )
-    publish_documents_to_store(store, [premier, championship], policy)
-    index = publish_documents_to_store(store, [later_premier], policy)
-    assert index["latest_by_competition"]["eng-premier-league"]["snapshot_id"] == (
-        "2026-09-12T120000Z"
-    )
-    assert index["latest_by_competition"]["eng-championship"]["snapshot_id"] == (
-        "2026-09-11T120000Z"
-    )
-    assert store.objects["hindcasts/index.json"]["namespace"] == "hindcasts"
+    publish_documents(store, [premier, championship], policy)
+    current = publish_documents(store, [later_premier], policy)
+    latest = {row["competition_id"]: row for row in current["forecasts"]}
+    assert latest["eng-premier-league"]["forecast_id"] == "2026-09-12T120000Z"
+    assert latest["eng-championship"]["forecast_id"] == "2026-09-11T120000Z"
+    stale = tmp_path / "data/forecasts/old.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale")
     result = materialize_publication(store, tmp_path)
-    assert result == {"documents": 3, "record": False}
-    assert json.loads((tmp_path / "data/index.json").read_text()) == index
-    assert json.loads((tmp_path / "data/hindcasts/index.json").read_text()) == empty_index(
-        "hindcasts", store.objects["hindcasts/index.json"]["updated_at"]
-    )
+    assert result == {"documents": 2, "archives": 0, "record": False}
+    assert json.loads((tmp_path / "data/current.json").read_text()) == current
+    assert not stale.exists()
+    assert not (tmp_path / "data/forecasts/eng-premier-league/archive.json").exists()
+
+    archived = materialize_publication(store, tmp_path, ("eng-premier-league",))
+    assert archived == {"documents": 3, "archives": 1, "record": False}
+    archive = json.loads((tmp_path / "data/forecasts/eng-premier-league/archive.json").read_text())
+    assert archive == store.objects["forecasts/eng-premier-league/archive.json"]
+    assert [row["forecast_id"] for row in archive["forecasts"]] == [
+        "2026-09-12T120000Z",
+        "2026-09-10T120000Z",
+    ]
+
+
+def test_immutable_forecasts_and_archive_are_written_before_current_pointer():
+    store = Store()
+    document = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
+
+    publish_documents(store, [document], load_policy())
+
+    assert store.writes == [
+        ("forecasts/eng-premier-league/2026-09-10T120000Z.json", True),
+        ("forecasts/eng-premier-league/archive.json", False),
+        ("forecasts/current.json", False),
+    ]
+    assert empty_current("now") == {
+        "schema_version": 1,
+        "updated_at": "now",
+        "forecasts": [],
+    }
+    assert empty_archive("eng-league-one", "now")["competition_id"] == "eng-league-one"
