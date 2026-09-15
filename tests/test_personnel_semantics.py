@@ -294,3 +294,23 @@ def test_personnel_evidence_ignores_market_information(tmp_path):
     _, spec = structural_spec(COMPETITION, tmp_path, CUTOFF)
     assert spec["kind"] == "bayesian_xg_quality_tilt"
     assert not any("market" in key for key in spec["parameters"])
+
+
+def test_an_official_team_sheet_before_the_cutoff_makes_the_feature_observed():
+    rows, previous, _ = history()
+    sheet_time = KICKOFF - timedelta(minutes=60)
+    starters = REGULARS[:9] + ["new-1", "new-2"]
+    sheet = [appearance(TARGET, "home", p, KICKOFF, True, None, sheet_time) for p in starters] + [
+        appearance(TARGET, "home", "home-9", KICKOFF, False, None, sheet_time)
+    ]
+    base = {"appearances": rows + sheet, "squads": squad("home", REGULARS)}
+    observed = expected(Evidence(KICKOFF - timedelta(minutes=30), **base), previous)
+    assert observed["team_sheet_retrieved_at"] == sheet_time.isoformat()
+    assert observed["xi"]["d"] == pytest.approx(2 / 11)
+    assert observed["squad"]["d"] == pytest.approx(1 / 11)
+    before_sheet = expected(Evidence(KICKOFF - timedelta(minutes=90), **base), previous)
+    assert before_sheet["team_sheet_retrieved_at"] is None
+    assert before_sheet["squad"]["d"] == pytest.approx(1 - PROPENSITY["squad"][8, True])
+    late = [{**row, "retrieved_at": KICKOFF + timedelta(minutes=5)} for row in sheet]
+    after_kickoff = Evidence(KICKOFF + timedelta(hours=1), appearances=rows + late)
+    assert after_kickoff.team_sheet(TARGET, "home") is None

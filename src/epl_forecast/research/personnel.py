@@ -24,6 +24,7 @@ from epl_forecast.research.personnel_mean import (
     quality_shift,
 )
 
+STARTING_XI = 11
 MEMBER = "member"
 DEPARTED = "departed"
 UNKNOWN = "unknown"
@@ -65,11 +66,16 @@ class Evidence:
         self.started = defaultdict(set)
         self.matchday = defaultdict(set)
         spells = defaultdict(set)
+        self.sheets = defaultdict(lambda: defaultdict(dict))
         for row in appearances:
             kickoff = row["kickoff_time"]
-            if row["retrieved_at"] > cutoff or kickoff is None or kickoff >= cutoff:
+            if row["retrieved_at"] > cutoff or kickoff is None:
                 continue
             key = row["match_id"], row["team_id"]
+            if row["retrieved_at"] < kickoff:
+                self.sheets[key][row["retrieved_at"]][row["player_id"]] = bool(row["starts"])
+            if kickoff >= cutoff:
+                continue
             spells[row["player_id"]].add((row["match_date"], row["team_id"]))
             self.matchday[key].add(row["player_id"])
             if row["starts"]:
@@ -204,6 +210,16 @@ class Evidence:
                 weights[player] += minutes
         return dict(weights)
 
+    def team_sheet(self, match_id, team):
+        """The official team sheet of the latest capture before kickoff, or None."""
+        captures = self.sheets.get((match_id, team), {})
+        for retrieved_at in sorted(captures, reverse=True):
+            sheet = captures[retrieved_at]
+            starters = {player for player, starts in sheet.items() if starts}
+            if len(starters) == STARTING_XI:
+                return {"xi": starters, "squad": set(sheet)}, retrieved_at
+        return None
+
     def selection(self, team, previous_matches, player, window=WINDOW):
         """Recent starts and matchday squads, each with inclusion in the last window match."""
         previous = previous_matches[-window:]
@@ -251,6 +267,9 @@ def team_expected(evidence, team, match_id, competition_id, previous_matches, pr
     total = sum(weights.values())
     probabilities = {representation: {} for representation in REPRESENTATIONS}
     players = []
+    # An official team sheet captured before the cutoff turns the expected feature into the
+    # observed feature. The estimator and its coefficients do not change.
+    sheet = evidence.team_sheet(match_id, team)
     for player, weight in sorted(weights.items(), key=lambda item: (-item[1], item[0])):
         membership = evidence.membership(player, team)
         selection = evidence.selection(team, previous_matches, player)
@@ -268,7 +287,9 @@ def team_expected(evidence, team, match_id, competition_id, previous_matches, pr
         }
         for representation in REPRESENTATIONS:
             probability = None
-            if membership.state == DEPARTED:
+            if sheet is not None:
+                probability = float(player in sheet[0][representation])
+            elif membership.state == DEPARTED:
                 probability = 0.0
             elif membership.state == MEMBER:
                 availability, basis = evidence.availability(
@@ -282,7 +303,10 @@ def team_expected(evidence, team, match_id, competition_id, previous_matches, pr
             probabilities[representation][player] = probability
             row["probability"][representation] = probability
         players.append(row)
-    result = {"players": players}
+    result = {
+        "players": players,
+        "team_sheet_retrieved_at": None if sheet is None else sheet[1].isoformat(),
+    }
     for representation in REPRESENTATIONS:
         d, unresolved = expected_discontinuity(weights, probabilities[representation])
         result[representation] = {"d": d, "unresolved_weight": unresolved}
