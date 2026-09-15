@@ -129,7 +129,7 @@ The audit also found 21 player-team cases in which the API-Football squad omitte
 
 The investigation used the public Reep DuckDB release `20260907T201034Z`, generated on 7 September 2026. The downloaded file had the published size of 745,811,968 bytes and the verified SHA-256 `580eedc9dd633be820902b98cf7659794184d0702d366142e0751e74607bbfb5`. The release manifest is `https://data.reep.football/releases/20260907T201034Z/release.json`. Reep publishes this bridge register under CC0-1.0.
 
-Reep has no bridge with provider name `fpl`. The retained FPL `fpl_code` field nevertheless maps through Reep's `opta/person_numeric` namespace. The two-hop audit used:
+The current Reep release has no bridge row with provider name `fpl`. Reep's draft FPL provider card at `https://github.com/withqwerty/reep-toolkit/blob/main/docs/providers/fpl.md` identifies FPL as a bridge source and instructs users to store FPL `code` as an Opta numeric identifier, not as an FPL-specific person bridge. The retained FPL `fpl_code` field therefore maps through Reep's `opta/person_numeric` namespace. The two-hop audit used:
 
 ```text
 FPL fpl_code -> Reep Opta person_numeric bridge -> Reep ID -> API-Football player bridge
