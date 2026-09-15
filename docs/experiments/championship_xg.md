@@ -84,3 +84,13 @@ The tests on this branch pass:
 - The calibrated scale uses only observations available at the cutoff. A changed future xG value does not change the forecast.
 - An incremental fit filters again from the start when the scale changes, and it agrees with a batch fit.
 - Higher provider xG raises the attacking log rate of the team.
+
+## Prospective archive
+
+`scripts/research/archive_prospective_pair.py` makes a product control forecast and a candidate forecast from one cutoff, with the same code, seed and 10,000 paths. The candidate adds the calibrated API xG parameters to the product M7 specification. Both archives must pass the product checks. The pair stays in R2 also if the candidate is later rejected.
+
+```sh
+uv run python scripts/research/archive_prospective_pair.py --experiment championship-xg --competition eng-championship --candidate-parameters '{"xg_sources": [{"provider": "understat"}, {"provider": "api_football", "competitions": ["eng-championship"]}], "provider_scales": {"api_football": "calibrated"}}'
+```
+
+The first pair has the cutoff 2026-09-15T06:06:21Z and code commit `a7e5403`. It is at `research/evidence/championship-xg/prospective/eng-championship/20260915T060621Z` in `page324-data`. Both archives pass 1,582 of 1,582 product checks. The control filter uses no xG, because the Championship filter updates only from Championship matches. The candidate admits 1,721 API xG matches with a calibrated scale of 0.968. Across 471 remaining matches, the median largest H/D/A probability change is 0.030 and the maximum is 0.115. Make one pair before each Championship match round. Score the pairs on the prespecified slices after the results.
