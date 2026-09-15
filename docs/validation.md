@@ -138,6 +138,18 @@ Championship, 72 club-seasons at each origin in 2023/24–2025/26. The M7 foreca
 
 Rank RPS and points CRPS improve at every origin. By season, rank RPS changes are 0.0000, +0.0065, +0.0004, −0.0002 and −0.0019 in 2023/24; −0.0122, −0.0087, −0.0097, −0.0078 and −0.0027 in 2024/25; and −0.0050, −0.0152, −0.0151, +0.0043 and −0.0038 in 2025/26. The 2023/24 MW6 forecast is worse because only a few weeks of xG were available. Title, automatic promotion, playoff and relegation Brier scores improve at every origin. Promotion Brier improves at four origins and is worse at MW30 (+0.0025). The intervals are narrower, and the 80% points coverage decreases at every origin.
 
+Premier League, 80 club-seasons at each origin in 2022/23–2025/26. The M7 forecasts before the change come from the main base `f3660fe`.
+
+| Origin | Rank RPS | Points CRPS | 90% points width | 80% points coverage | 90% points coverage |
+| --- | ---: | ---: | ---: | --- | --- |
+| preseason | +0.0007 | +0.01 | 32.38 → 32.38 | 72.5% → 72.5% | 81.2% → 81.2% |
+| MW6 | +0.0008 | +0.04 | 27.91 → 27.75 | 72.5% → 70.0% | 77.5% → 78.7% |
+| MW12 | +0.0008 | +0.05 | 23.93 → 23.95 | 75.0% → 72.5% | 86.2% → 86.2% |
+| MW19 | +0.0003 | +0.00 | 19.40 → 19.43 | 81.2% → 80.0% | 91.2% → 91.2% |
+| MW30 | +0.0000 | +0.01 | 11.79 → 11.89 | 85.0% → 81.2% | 92.5% → 91.2% |
+
+In the Premier League, API-Football xG is slightly worse on season scores at every origin. The loss comes mostly from 2025/26, where rank RPS is +0.0048, +0.0053 and +0.0050 at preseason, MW6 and MW12. In 2023/24, rank RPS improves at the same origins (−0.0029, −0.0021, −0.0013), and 2024/25 is mixed. The 2022/23 forecasts are identical until MW19, because API-Football xG starts in January 2023. Title, top-four, top-five and relegation Brier changes are all smaller than 0.003.
+
 ### Production checks
 
 At one cutoff on 15 September 2026, the forecast of each division passes every product check: 1,151 in the Premier League, 1,582 in the Championship, 1,602 in League One and 1,599 in League Two. The filters use 4,590, 1,721, 47 and 47 xG matches. Each derived public document has model version `v0.1` and passes the publication boundary.
