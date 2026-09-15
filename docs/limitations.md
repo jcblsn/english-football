@@ -17,6 +17,7 @@ Read the forecasts with these limits in mind.
 - The persistent M7 state does not use lineups, injuries, suspensions or transfers. Only the temporary continuity adjustment uses them, and only for Premier League and Championship fixtures in the next six days. League One and League Two have no adjustment.
 - A club without eight previous matches with complete lineup minutes, for example a club promoted from League One, has no adjustment until it has them.
 - An official team sheet enters the adjustment only when a production run captures it before the forecast cutoff.
+- API-Football publishes the injury list of a fixture only a short time before the match. On 15 September 2026 at 21:30 UTC, the latest capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore uses membership and FPL status, and in the Championship membership only.
 - The production workflow wakes each hour. Fixture lists are eligible each hour, and match details are eligible every 15 minutes around kickoff. An hourly wake can still miss very late team news.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.
 
