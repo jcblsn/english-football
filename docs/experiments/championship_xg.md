@@ -186,3 +186,8 @@ The match run is at `research/evidence/championship-xg/77b685e/match` and the co
 uv run python scripts/research/evaluate_xg_observation.py predict --competition eng-championship --arm api-calibrated --data runs/ws-xg-championship-api-calibrated --output runs/xg-match/eng-championship
 uv run python scripts/research/evaluate_xg_observation.py report --competition eng-championship --data runs/ws-xg-report --output runs/xg-match/eng-championship
 ```
+
+
+### Schedule
+
+A per-user launchd agent on the operator Mac runs the pair runner once each 24 hours from this worktree, and once when it is loaded. The data come from R2 and the forecasts use the product freshness check, so a pair is made before the next match round. Logs are in `runs/prospective/` of the worktree. The job was installed on 15 September 2026 with `epl_forecast.pipeline.install_launch_agent`. Remove it with `launchctl bootout gui/$(id -u)/org.epl-forecast.prospective-championship-xg` and delete `~/Library/LaunchAgents/org.epl-forecast.prospective-championship-xg.plist`.
