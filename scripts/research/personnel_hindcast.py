@@ -260,11 +260,7 @@ def report_command(args):
     for season in seasons[pm.INITIAL_SEASONS :]:
         earlier = {s for s in all_seasons if s < season}
         cells, pooled = propensity(players, earlier)
-        estimates = {
-            key: expected(values, cells, pooled)
-            for key, values in players.items()
-            if values[0][0] <= season
-        }
+        estimates = {key: expected(values, cells, pooled) for key, values in players.items()}
         hindcast_feature = np.array(
             [
                 [
