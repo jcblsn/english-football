@@ -30,9 +30,9 @@ A failed or unverified division does not publish. Other verified divisions in th
 
 ## Schedule and refresh rules
 
-`.github/workflows/production.yml` wakes at 17 minutes after each hour and also supports manual dispatch. Source refresh intervals are independent of this wake schedule. GitHub Actions concurrency lets one production run finish before another starts.
+`.github/workflows/production.yml` wakes every 10 minutes and also supports manual dispatch. GitHub can delay or skip a scheduled run, so the short interval gives more chances to capture the starting lineups before kickoff. Source refresh intervals are independent of this wake schedule. GitHub Actions concurrency lets one production run finish before another starts.
 
-Fixture lists are eligible each hour. Match details are eligible every 15 minutes near kickoff and have bounded correction checks after full time. Other sources keep their own intervals.
+Fixture lists are eligible each hour. Match details are eligible every 9 minutes in the 75 minutes before kickoff, so that the collection keeps the starting lineups before the match starts. During the match they are eligible each hour. After full time they have bounded correction checks. A run with no due source sends no request, and a forecast runs only when its effective inputs change. Other sources keep their own intervals.
 
 Each collection run that sends requests to API-Football writes one usage record to `audits/api_football/<UTC timestamp>.json` in `page324-data`. The record has the number of requests and the last daily limit and remaining values from the provider. `audits/collection.json` shows the same values for the most recent run. Use these records to see the real usage over a week.
 
