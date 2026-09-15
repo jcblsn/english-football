@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Main base SHA | `080f7998f45da59ffebf73beb807d70cebef2d04` |
-| Status | Active oracle representation test |
+| Status | Oracle gate passed; prospective availability implementation under review |
 | Historical evidence label | Retrospective development evidence |
 | Authoritative data | Private R2 bucket `page324-data`, read through a new empty workspace under `runs/` |
 | Control | Frozen M7 from the main base SHA |
@@ -116,6 +116,54 @@ For each target fixture, use only provider observations captured before the arch
 The first archive covers the next scheduled fixture of each Premier League and Championship team. It saves each player's recent weight, estimated availability, evidence basis and timestamp; team D; the control and candidate match distributions; and the later realized starting XI when it becomes available. Only a fixture archived before kickoff is a prospective case.
 
 A material case has an absolute home-away D difference of at least 0.10 or a change of at least 0.05 from the prior archive. Keep nonmaterial cases as controls. Track missing teams, provider conflicts and false alarms. Do not tune the thresholds, probability mapping or kappa from named injuries.
+
+## Reep identity investigation and first prospective archive
+
+The first prospective run used code commit `d82b069` and cutoff `2026-09-15T15:06:12+00:00`. It produced 24 next-fixture records: 10 candidate forecasts and one material case. All 10 candidate forecasts were for the Championship. Every Premier League fixture had at least one missing D. This archive is an invalid implementation diagnostic. Do not score, upload or treat it as prospective evidence. The oracle result and fitted kappa are not affected because the historical oracle uses realized starting XIs and does not use FPL availability.
+
+The failure was in team scoping. The runner indexed the latest FPL observation by player identity only. It then applied that observation while calculating D for any team in the player's recent history. A healthy player at his new club therefore supplied positive availability evidence to his former club. The captured squad excluded the player from the former club, so the runner returned missing availability instead of the required transferred-out value of zero. The run contained 34 such positive transfer-out observations across 14 former teams. Their combined recent weight was 0.9684 across the affected team-fixture calculations.
+
+The audit also found 21 player-team cases in which the API-Football squad omitted a player but FPL assigned him to that same team. All 21 had zero FPL availability in this snapshot, so the numerical availability remained zero. The disagreements still show that a squad capture with at least 18 players is not necessarily a complete membership record. Preserve and report this condition.
+
+### Reep validation
+
+The investigation used the public Reep DuckDB release `20260907T201034Z`, generated on 7 September 2026. The downloaded file had the published size of 745,811,968 bytes and the verified SHA-256 `580eedc9dd633be820902b98cf7659794184d0702d366142e0751e74607bbfb5`. The release manifest is `https://data.reep.football/releases/20260907T201034Z/release.json`. Reep publishes this bridge register under CC0-1.0.
+
+Reep has no bridge with provider name `fpl`. The retained FPL `fpl_code` field nevertheless maps through Reep's `opta/person_numeric` namespace. The two-hop audit used:
+
+```text
+FPL fpl_code -> Reep Opta person_numeric bridge -> Reep ID -> API-Football player bridge
+```
+
+| Current FPL identity check | Players |
+| --- | ---: |
+| Latest FPL rows | 659 |
+| FPL codes found in `opta/person_numeric` | 635 |
+| Rows with an onward API-Football player bridge | 543 |
+| Exact agreement with the repository API player ID | 472 |
+| Agreement after the reviewed API alias registry | 4 |
+| Repository identity unresolved but Reep two-hop identity available | 67 |
+| No complete FPL-to-API Reep path | 116 |
+
+There were no unexplained disagreements among the 476 rows that both systems resolved after the four reviewed API aliases were applied. This is strong evidence that Reep can validate and extend the FPL-to-API identity mapping. Coverage is incomplete, so Reep cannot be the only resolver.
+
+Reep does not solve team-at-time membership. The public register does not publish player squad or career relationships. Its `observed_clubs` table gives only a club count and first and last observed seasons, not the current club. The release is weekly and is suitable for stable identity bridges, not live transfer or availability decisions.
+
+### Proposed infrastructure boundary
+
+Treat identity resolution as a required semantic dependency of the personnel experiment. Do not make a broad player-ID migration as part of this work. The smallest proposed role is:
+
+- Pin the latest Reep release published before the forecast cutoff. Retain its release stamp, manifest and checksum with the experiment inputs.
+- Use Reep as an identity resolver and audit layer. Keep the repository's reviewed API alias normalization and an explicit unresolved fallback.
+- Keep Reep ID and bridge provenance with each accepted FPL-to-API mapping. Resolve Reep redirects explicitly.
+- Do not use Reep as current-squad evidence.
+- Key availability evidence by player identity, target team and target fixture or round. Never apply a player's status at one club to another club.
+- When FPL assigns a recent player to a different club, set his availability to zero for the former club. His playing probability at the new club is irrelevant to the former club.
+- When FPL assigns a player to the target Premier League club, use the cutoff-safe FPL probability for that club and surface any disagreement with the API squad.
+- When same-team providers give incompatible availability probabilities, return missing and retain both observations.
+- When no valid FPL mapping exists, use cutoff-safe API squad and exact-fixture injury evidence. Do not use fuzzy matching silently.
+
+Before a replacement archive is accepted, add invariants that a new-team FPL observation cannot increase availability for a former team, a transferred-out player contributes zero to the former team's continuity, the same identity can carry different team-specific availability at the same cutoff, and disabling Reep resolution preserves the reviewed fallback behavior. The eventual pull request must describe the failure, affected artifact, bridge coverage, unresolved cases, Reep release policy, team-at-time rules, chronology and fallbacks in sufficient detail for independent review.
 
 ## Retained artifacts
 
