@@ -81,3 +81,40 @@ def test_bad_odds_are_audited_without_losing_the_result(price):
     assert len(matches) == 1
     assert odds == []
     assert audit["odds"]["bet365_preclosing"]["invalid"] == 1
+
+
+def xg_row(match_id, match_date, provider):
+    return {
+        "match_id": match_id,
+        "match_date": match_date,
+        "home_xg": 1.0,
+        "away_xg": 1.0,
+        "provider": provider,
+    }
+
+
+def test_api_football_xg_replaces_understat_from_its_first_match_date():
+    from epl_forecast.datasets import select_xg_observations
+
+    understat = [
+        xg_row("eng-premier-league:2022-2023:a:b", "2022-08-06", "understat"),
+        xg_row("eng-premier-league:2022-2023:c:d", "2023-01-20", "understat"),
+        xg_row("eng-premier-league:2026-2027:e:f", "2026-08-20", "understat"),
+    ]
+    api = [
+        xg_row("eng-premier-league:2022-2023:g:h", "2023-01-18", "api_football"),
+        xg_row("eng-championship:2023-2024:i:j", "2023-08-04", "api_football"),
+    ]
+    selected = select_xg_observations(understat, api)
+    assert [row["match_id"] for row in selected] == [
+        "eng-premier-league:2022-2023:a:b",
+        "eng-premier-league:2022-2023:g:h",
+        "eng-championship:2023-2024:i:j",
+    ]
+
+
+def test_understat_stays_where_a_competition_has_no_api_football_xg():
+    from epl_forecast.datasets import select_xg_observations
+
+    understat = [xg_row("eng-premier-league:2025-2026:a:b", "2025-08-16", "understat")]
+    assert select_xg_observations(understat, []) == understat

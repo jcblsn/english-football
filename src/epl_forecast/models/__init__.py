@@ -22,7 +22,7 @@ def make_model(spec: dict):
 
         data = Dataset(data_root, parameters.pop("data_cutoff", None))
         try:
-            parameters["observations"] = data.process()
+            parameters["observations"] = data.xg_observations()
         finally:
             data.close()
     try:
