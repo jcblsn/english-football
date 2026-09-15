@@ -16,7 +16,12 @@ from epl_forecast.data.capture import (
     WriterBusy,
     writer_lock,
 )
-from epl_forecast.data.sources import COMPETITIONS, season_name, source_url
+from epl_forecast.data.sources import (
+    COMPETITIONS,
+    ENTRY_SOURCE_COMPETITIONS,
+    season_name,
+    source_url,
+)
 from epl_forecast.datasets import Dataset
 from epl_forecast.storage import sha256_bytes, write_json
 
@@ -313,7 +318,7 @@ def backfill(root=Path("data"), start=2010, end=None, max_requests=None):
                     get(endpoint, {"player": person["api_id"]})
             report[f"{phase}_api_complete"] = True
         for year in range(end, start - 1, -1):
-            for division, competition in COMPETITIONS.items():
+            for division, competition in ENTRY_SOURCE_COMPETITIONS.items():
                 record, payload = fetcher.get(
                     "football_data",
                     source_url(year, division),
@@ -498,7 +503,7 @@ def collect(root=Path("data"), season=None, store=None):
                 max_age=FIXTURE_DETAIL_REFRESH_SECONDS,
             )
     refresh("fpl", fpl.URL, fpl.ingest, max_age=1800, context={"season_id": season_name(year)})
-    for division, comp in COMPETITIONS.items():
+    for division, comp in ENTRY_SOURCE_COMPETITIONS.items():
         context = {
             "season_start": year,
             "season_id": season_name(year),
@@ -679,7 +684,10 @@ def audit(root):
             "SELECT competition_id, season_id, "
             "count(*) FILTER (WHERE stage='regular') AS regular_fixtures, "
             "CASE competition_id "
-            + " ".join(f"WHEN '{c['id']}' THEN {c['matches']}" for c in COMPETITIONS.values())
+            + " ".join(
+                f"WHEN '{c['id']}' THEN {c['matches']}"
+                for c in ENTRY_SOURCE_COMPETITIONS.values()
+            )
             + " END AS expected_regular, "
             "count(*) FILTER (WHERE stage<>'regular') AS playoff_fixtures, "
             "count(a.match_id) AS fixtures_with_appearances "

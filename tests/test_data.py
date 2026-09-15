@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from epl_forecast.data.football_data import normalize_rows, parse_date
+from epl_forecast.data.sources import source_url
 from epl_forecast.storage import sha256_bytes
 
 HEADER = "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,B365H,B365D,B365A\n"
@@ -38,6 +39,10 @@ def test_dates_availability_and_provenance():
     assert match.source_time == ""
     assert odds[0]["observed_at"] == ""
     assert not audit["complete"]
+
+
+def test_national_league_has_a_historical_result_source():
+    assert source_url(2025, "EC") == "https://football-data.co.uk/mmz4281/2526/EC.csv"
 
 
 @pytest.mark.parametrize(

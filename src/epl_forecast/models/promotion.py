@@ -8,13 +8,13 @@ from numpy.polynomial.legendre import leggauss
 from scipy.linalg import cho_factor, cho_solve
 from scipy.special import logsumexp
 
-from epl_forecast.competitions import COMPETITIONS
+from epl_forecast.competitions import ENTRY_SOURCE_COMPETITIONS
 from epl_forecast.models.baselines import AttackDefensePoisson
 from epl_forecast.schema import Match
 
 PL = "eng-premier-league"
 CHAMPIONSHIP = "eng-championship"
-FIELD_SIZES = {c.competition_id: c.teams for c in COMPETITIONS}
+FIELD_SIZES = {c.competition_id: c.teams for c in ENTRY_SOURCE_COMPETITIONS}
 
 
 @dataclass(frozen=True)

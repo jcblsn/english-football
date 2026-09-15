@@ -15,6 +15,8 @@ from epl_forecast.models.quality_tilt import QualityTiltFilter
 from epl_forecast.schema import Fixture, Match, fixture_id
 
 BASE, HOME, LEVEL = np.log(1.35), 0.24, -0.15
+LEAGUE_TWO = "eng-league-two"
+NATIONAL_LEAGUE = "eng-national-league"
 
 
 def play(rng, competition, season, teams, quality, offset, start):
@@ -75,6 +77,24 @@ def panel(matches, as_of=date(2030, 1, 1)):
     return completed_seasons(matches, as_of)
 
 
+def national_league_history(seed=9):
+    rng = np.random.default_rng(seed)
+    league_two = [f"league-two-{index}" for index in range(24)]
+    national = [f"national-{index}" for index in range(24)]
+    quality = {team: rng.normal(0, 0.15) for team in [*league_two, *national]}
+    previous = "2024-2025"
+    matches = [
+        *play(rng, LEAGUE_TWO, previous, league_two, quality, 0, date(2024, 8, 1)),
+        *play(rng, NATIONAL_LEAGUE, previous, national, quality, -0.15, date(2024, 8, 1)),
+    ]
+    target = "2025-2026"
+    target_teams = [*league_two[:-2], *national[:2]]
+    matches.extend(
+        play(rng, LEAGUE_TWO, target, target_teams, quality, 0, date(2025, 8, 1))[:1]
+    )
+    return matches, target, national[:2]
+
+
 def test_memory_weight_decays_and_rejects_a_continuing_club():
     assert memory_weight(2, 4.0) == pytest.approx(1.0)
     assert memory_weight(6, 4.0) < memory_weight(3, 4.0) < 1.0
@@ -103,6 +123,40 @@ def test_features_separate_continuing_clubs_from_each_kind_of_entrant():
         if club_features(seasons, CHAMPIONSHIP, target, team) is None
     ]
     assert len(continuing) == 24 - sum(r["season_id"] == target for r in rows)
+
+
+def test_a_national_league_source_season_prevents_the_outside_fallback():
+    matches, target, entrants = national_league_history()
+    seasons = completed_seasons(matches, date(2025, 8, 2))
+    assert (NATIONAL_LEAGUE, "2024-2025") in seasons
+    for team in entrants:
+        features = club_features(seasons, LEAGUE_TWO, target, team)
+        assert features["transition"] == transition_id(NATIONAL_LEAGUE, LEAGUE_TWO)
+        assert features["source_attack"] is not None
+        without_source = {key: rows for key, rows in seasons.items() if key[0] != NATIONAL_LEAGUE}
+        fallback = club_features(without_source, LEAGUE_TWO, target, team)
+        assert fallback["transition"] == transition_id(None, LEAGUE_TWO)
+        assert fallback["source_attack"] is None
+
+
+def test_national_league_matches_do_not_update_the_league_two_filter():
+    matches, target, entrants = national_league_history()
+    cutoff = date(2025, 8, 2)
+    eligible = [match for match in matches if match.available_on <= cutoff]
+    model = QualityTiltFilter()
+    model.primary_competition = LEAGUE_TWO
+    model.fit(eligible, cutoff)
+    league_two_dates = {
+        match.fixture.match_date
+        for match in eligible
+        if match.fixture.competition_id == LEAGUE_TWO
+    }
+    assert model.updates == len(league_two_dates)
+    assert not (set(model.team_index) & {f"national-{index}" for index in range(2, 24)})
+    for team in entrants:
+        assert model.team_state(team, target).source.startswith(
+            transition_id(NATIONAL_LEAGUE, LEAGUE_TWO)
+        )
 
 
 def test_the_transition_prior_separates_relegated_clubs_from_outside_arrivals():
