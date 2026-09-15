@@ -34,6 +34,7 @@ A historical run, for example a hindcast or a season panel, must read the canoni
 | `state/manifests.json` | The compact retained base and the canonical batches collected after it. |
 | `state/forecast.json` | The last published effective-input fingerprint for each division. |
 | `runs/forecasts/` | Private forecast archives, logs and verification reports. |
+| `runs/hindcasts/` | The private simulation output of each weekly hindcast and the frozen model of each public model version. See [operations](operations.md#hindcasts). |
 
 DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping. The local writer lock also protects one workspace.
 

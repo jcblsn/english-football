@@ -6,6 +6,7 @@ Read the forecasts with these limits in mind.
 
 - The historical evaluation is retrospective. It assumes that a result and its xG are available on the day after the match. Historical odds have no quote times.
 - Each season panel has only nine to eleven seasons. Its intervals are wide. See [validation](validation.md).
+- Hindcasts are retrospective. The model specification was developed with the same history, so hindcasts can look better than live forecasts. They use the fixture dates that each season finally used, and they assume that results and xG were available on the day after each match.
 - The prospective record starts fresh before launch. It will have few settled matches at first.
 - The only comparison is with M2 and with the betting market. There is no comparison with public forecast models yet.
 

@@ -27,7 +27,7 @@ See the [methodology](docs/methodology.md) and the [season simulation rules](doc
 
 ## Public forecasts
 
-Forecast documents are immutable objects in the private `page324-publish` R2 bucket. The forecast index identifies the latest successful document for each division. A separate `record.json` scores settled forecasts. The Pages workflow materializes this sanitized surface into its deployment artifact. Generated forecasts are not committed to Git.
+Forecast documents are immutable objects in the private `page324-publish` R2 bucket. The forecast index identifies the latest successful document for each division. A separate `record.json` scores settled forecasts. The Pages workflow materializes this sanitized surface into its deployment artifact. Generated forecasts are not committed to Git. Weekly hindcasts of the completed seasons 2021/22–2025/26 are a separate, retrospective product under `hindcasts/`. They never enter the forecast index or the record. See [operations](docs/operations.md#hindcasts).
 
 To view the forecasts on your computer:
 

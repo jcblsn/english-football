@@ -83,9 +83,44 @@ Private:
 
 The pipeline gives each competition forecast its own ID and writes it once to `forecasts/<competition>/<forecast>.json` in `page324-publish`. It updates `forecasts/<competition>/archive.json` after the immutable forecast exists. It updates the compact `forecasts/current.json` document last. The current document has one latest pointer for each division and does not contain history.
 
-Future retrospective forecasts must use the separate `hindcasts/` namespace, so a reader cannot mistake them for forecasts that existed at the historical time.
-
 Historical forecast documents use unique keys. Competition archive indexes, `forecasts/current.json` and `record.json` are mutable.
+
+## Hindcasts
+
+A hindcast is a retrospective forecast of a completed season. It is a separate product type. The frozen public model makes it after the season, so it is not a forecast that existed at the origin time. Hindcasts never enter `forecasts/current.json`, a competition archive or `record.json`. The publication contracts refuse a hindcast link in a live pointer, and the prospective record refuses a hindcast document. The prelaunch prospective forecasts stay in `forecasts/`. They are not hindcasts.
+
+```sh
+uv run epl-forecast hindcast --workers 7
+```
+
+The command makes hindcasts for the four divisions in 2021/22–2025/26. Use `--competition` and `--seasons` to make a part of the archive. The `--data` workspace must be empty. The command reads the canonical history from `page324-data`. It does not use the files in the repository `data/` directory.
+
+The rules for each hindcast:
+
+- There is one origin each Monday at 09:00 Europe/London. The first origin is the Monday on or before the first regular-season match. The last origin is the first Monday after the last result. The archive keeps every weekly origin, also when the estimates do not change.
+- The model uses the results of matches played before the London day of the origin. It uses the same information rules as the [season panels](validation.md#method): results and xG are available on the day after each match, a points deduction applies from its reviewed announcement date, and the simulation uses the fixture dates that the season finally used.
+- The structural model makes the season simulation. A hindcast has no market-assisted probabilities, no match impacts and no score grids.
+- Each document lists these assumptions in `assumptions`, and has `"product": "hindcast"` and `"retrospective": true`.
+
+The command writes these objects:
+
+| Bucket | Key | Content |
+| --- | --- | --- |
+| `page324-data` | `runs/hindcasts/<version>/edition.json` | The model code hashes, the seed, the number of paths and the origin rule of the public model version. It is immutable. |
+| `page324-data` | `runs/hindcasts/<version>/<competition>/<season>/<hindcast>.json` | The private simulation output of one origin. It is immutable. |
+| `page324-publish` | `hindcasts/<version>/<competition>/<season>/<hindcast>.json` | The sanitized season estimates of each club at one origin. It is immutable. |
+| `page324-publish` | `hindcasts/<version>/<competition>/<season>/series.json` | The weekly series of the season. |
+| `page324-publish` | `hindcasts/index.json` | One row for each public model version, division and season, with a link to its series. |
+
+The hindcast ID is the origin time in UTC, in the same form as a forecast ID. `origin_at` gives the origin in London time.
+
+The edition file freezes the model of a public model version. If the model code, the seed or the number of paths changes, the command stops. Change `model_version` in `configs/publication.toml` before you make hindcasts with a different model. The new version gets new keys, and the earlier hindcasts stay.
+
+A run can stop and start again. The command does not simulate an origin that has a public document. When only the private output exists, it publishes that output without a new simulation. It writes the series of a season only when every weekly document of the season exists. It then updates the index.
+
+To get the weekly estimates of a club, read `hindcasts/index.json`, then the `series.json` of the division and season. In `series.json`, `origins` lists the origins in time order. Each club in `teams` has one array for each estimate, with one value for each origin in the same order: `played`, `current_points`, `mean_points`, `median_points`, `mean_position`, `median_position`, `position_sd` and `mean_goal_difference`. `events` has one array for each event probability, for example `title_probability`, `promotion_probability` or `relegation_probability`. The weekly document at `href` has the full points and position distributions and their intervals.
+
+Hindcasts do not overwrite the mutable production objects. You do not have to stop production to make them.
 
 ## Prospective record
 
@@ -102,7 +137,7 @@ uv run python -m http.server -d site 8000
 
 The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
 
-The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build.
+The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts or hindcasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build. Add `--hindcasts` to get the hindcast index, each season series and each weekly hindcast document.
 
 Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, checks the boundary and deploys the site. Both R2 buckets stay private.
 
