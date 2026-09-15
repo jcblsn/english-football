@@ -207,6 +207,23 @@ Rules:
 
 Archives go to `research/evidence/personnel-measurement/<commit>/<run>/` in `page324-data`.
 
+### Status on 15 September 2026
+
+The first archive, `pm-archive-dev`, covers fixtures from 9 September 2026 to 18:53 UTC on 15 September 2026. It has 52 records and 46 candidates. All of them are development cases, and no prospective fixture has been played.
+
+- Only Tottenham Hotspur against Everton on 12 September has a confirmed-XI record. Both XIs were captured 2 minutes before kickoff. The confirmed D is 0.583 for Tottenham and 0.381 for Everton. The XIs did not change after the capture.
+- The two Championship fixtures at 18:45 UTC on 15 September have no confirmed-XI record.
+- Bolton Wanderers, Cardiff City and Lincoln City have no D, because they have fewer than eight Championship matches with lineup minutes.
+
+The valid prospective archive starts with the fixtures of 18 September 2026. Run the archive again after each match round, with a new empty workspace:
+
+```sh
+uv run python scripts/research/personnel_prospective.py archive --data runs/ws-personnel-archive --output runs/personnel-archive-<date> --since 2026-09-17T00:00:00+00:00 --upload
+uv run python scripts/research/personnel_prospective.py evaluate --data runs/ws-personnel-evaluate --archive runs/personnel-archive-<date> --output runs/personnel-evaluate-<date>
+```
+
+The development archive and its evaluation are `research/evidence/personnel-measurement/0b98f57/pm-archive-dev` and `pm-eval-dev`. The reproduction, roster diagnostic and propensity runs are under `research/evidence/personnel-measurement/7a021aa/`. The invalid archive of commit `d82b069` is preserved, with an `INVALID.json` marker, under `research/evidence/personnel-mean/d82b069/invalid-prospective`.
+
 ## 5. Expected-continuity estimator
 
 ### Definition
@@ -244,9 +261,60 @@ Each cell has at least 3,186 player-matches. The last start is strongly informat
 
 The historical injury records are final provider records, not captures before kickoff. They are used only to remove listed players from this table.
 
+### Coverage
+
+In the development archive, the 90-minute arm has an estimate for 50 of 54 team-fixtures and the 24-hour arm for 44 of 48. Every missing estimate is a club without eight complete matches. The mean unresolved recent weight is 0.009 and the largest is 0.069. No club reached the 25% limit.
+
+At 90 minutes, 1,060 recent players were members, 287 were departed and 29 had unknown membership. One departed player (0.3%) started. 15 of the 29 unknown players started, so unknown membership is not a hidden departure.
+
 ## 6. Expected versus realized continuity
 
+These are development results. They use captures from before kickoff, but the doubtful mapping was chosen with the same fixtures and the code was written after the matches. The realized D uses the final starting XI and the archived recent minutes.
+
+| Measure | 24 hours | 90 minutes |
+| --- | ---: | ---: |
+| Team estimates | 41 | 47 |
+| Mean expected D / realized D | 0.441 / 0.416 | 0.442 / 0.414 |
+| Bias in D | +0.025 | +0.029 |
+| Mean absolute error in D | 0.061 | 0.060 |
+| Correlation in D | 0.71 | 0.75 |
+| Fixtures with both D | 20 | 23 |
+| Mean absolute error in D_a − D_h | 0.075 | 0.071 |
+| Correlation in D_a − D_h | 0.70 | 0.75 |
+| Sign agreement when realized absolute D_a − D_h is at least 0.05 | 14 of 17 | 16 of 19 |
+| Fixtures with realized absolute D_a − D_h at least 0.10 | 9 | 11 |
+| Sign agreement on those fixtures | 8 of 9 | 10 of 11 |
+| Estimate at least 0.10 but realized below 0.05 | 1 | 1 |
+| Realized at least 0.10 but estimate below 0.05 | 2 | 2 |
+| Players with a membership conflict | 35 | 39 |
+
+The estimator is slightly too high in D. The bias is almost the same for both clubs, so it has little effect on the home-away difference. Player start probabilities are close to the observed rates at 90 minutes:
+
+| Start probability | Players | Mean probability | Started |
+| --- | ---: | ---: | ---: |
+| 0.0–0.2 | 675 | 0.054 | 0.062 |
+| 0.2–0.4 | 136 | 0.286 | 0.287 |
+| 0.4–0.6 | 46 | 0.475 | 0.543 |
+| 0.6–0.8 | 262 | 0.711 | 0.721 |
+| 0.8–1.0 | 228 | 0.873 | 0.882 |
+
+On these few development fixtures, the estimator follows the later XI feature well enough that a prospective forecast comparison is meaningful. It is not yet evidence that it does so prospectively. The sample is small and early in the season, when D is high because many recent players have left.
+
 ## 7. Early prospective forecast results
+
+No prospective fixture has been played. The development results below are not evidence for the mechanism. The sample is too small, it is in the same week that set the doubtful mapping, and it is not prospective.
+
+Candidate minus control. Negative is better.
+
+| Arm | Division | Fixtures | H/D/A log loss | Brier | Score NLL |
+| --- | --- | ---: | ---: | ---: | ---: |
+| expected-24h | Premier League | 10 | −0.00063 | −0.00151 | +0.00514 |
+| expected-24h | Championship | 10 | −0.02052 | −0.01483 | −0.02453 |
+| expected-90m | Premier League | 10 | −0.00036 | −0.00113 | +0.00544 |
+| expected-90m | Championship | 13 | −0.02074 | −0.01500 | −0.02211 |
+| confirmed-xi | Premier League | 1 | −0.00457 | −0.00524 | −0.00447 |
+
+Do not recommend production promotion from these results or from the historical reproduction.
 
 ## 8. Unresolved issues
 
