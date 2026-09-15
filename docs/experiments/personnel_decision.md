@@ -56,3 +56,29 @@ These changes do not change any forecast.
 - Measurement comes first: bias, mean absolute error, correlation, sign behaviour, false and missed large signals, unresolved weight and revision, for club D_squad and for D_a − D_h against the final matchday squad. Horizons are compared on matched fixtures.
 - Forecast value is separate: candidate minus control and realized-squad oracle minus control in score NLL, H/D/A log loss and Brier, by round, with whole-round resampling.
 - The 2026/27 calendar gives Premier League round 5 and Championship round 8 on 18–20 September, then an international break. League play starts again on 9 October.
+
+## 4. Release decision (15 September 2026)
+
+The owner decided on 15 September 2026 to promote the matchday-squad continuity adjustment on retrospective evidence. The prospective gate of the steering memo was not run before this decision. No 2026/27 fixture from 17 September 2026 had been played.
+
+| Question | Status at the decision |
+| --- | --- |
+| Mechanism | Retrospective support only. Realized D_squad improves every proper score in all 12 competition-seasons, with selection exposure because D_squad was chosen on the same seasons. |
+| Measurement | Retrospective and development support. The history-only hindcast keeps 42% of the oracle gain. In the development week the D_a − D_h correlation is 0.84 at 3 days, 0.88 at 24 hours and 0.92 at 90 minutes. The injury and FPL part of the estimator and the 6-day horizon are not scored. |
+| Product | Promoted without prospective evidence, with the rollback rule below and the prospective archive as a post-release monitor. |
+
+### Freeze
+
+- Freeze commit: `6fc7d818bc08f2c8fec0c836bdc87eb817dc1285`. GitHub `checks` run 35023567336 passed on it.
+- The research archive for the prospective evaluation uses this commit. A later change to the estimator semantics must be recorded, with its commit, as a change to the released model.
+
+### Rollback rule
+
+This rule was written before any prospective outcome. It uses the same archive and evaluation as section 3.
+
+- Review points: after the matches of 26 October 2026, then after the matches of 30 November 2026.
+- Remove the adjustment from the structural forecast at a review point if either condition holds on prospective fixtures:
+  - Measurement: at 24 hours, the correlation between estimated and realized D_a − D_h is below 0.5, or the sign agrees in less than 70% of fixtures with a realized absolute difference of at least 0.10.
+  - Forecast value: at 90 minutes, the whole-round 95% interval of candidate minus control in score NLL is entirely above zero.
+- Remove or correct the adjustment at once when an audited case shows a semantic or data error: a wrong club, a truncated squad, an identity split or an observation after the cutoff.
+- A review that meets neither condition keeps the adjustment. It does not re-estimate κ or change the estimator.
