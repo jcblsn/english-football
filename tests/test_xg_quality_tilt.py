@@ -107,3 +107,62 @@ def test_zero_weight_mixture_likelihood_is_silent():
     with np.errstate(divide="raise"):
         actual = ScoreMixture([component, component], [1.0, 0.0]).log_probability(1, 2)
     assert actual == pytest.approx(component.log_probability(1, 2))
+
+
+def test_unit_scale_and_uncalibrated_provider_recover_their_controls(small_history):
+    cutoff = small_history[-1].available_on
+    rows = observations(small_history)
+    base = XGQualityTiltFilter(rows).fit(small_history, cutoff)
+    unit = XGQualityTiltFilter(rows, provider_scales={"understat": 1.0}).fit(small_history, cutoff)
+    np.testing.assert_array_equal(base.mean, unit.mean)
+    np.testing.assert_array_equal(base.covariance, unit.covariance)
+    api = [{**r, "provider": "api_football"} for r in rows]
+    goals_only = XGQualityTiltFilter().fit(small_history, cutoff)
+    waiting = XGQualityTiltFilter(
+        api, provider_scales={"api_football": "calibrated"}, calibration_matches=len(rows) + 1
+    ).fit(small_history, cutoff)
+    np.testing.assert_array_equal(goals_only.mean, waiting.mean)
+    np.testing.assert_array_equal(goals_only.covariance, waiting.covariance)
+    assert waiting.xg_updates == 0
+    assert waiting.scales == {"api_football": None}
+
+
+def test_provider_scale_equals_unit_scale_on_rescaled_xg(small_history):
+    cutoff = small_history[-1].available_on
+    scaled = XGQualityTiltFilter(
+        observations(small_history), provider_scales={"understat": 0.8}
+    ).fit(small_history, cutoff)
+    divided = XGQualityTiltFilter(observations(small_history, 1.5 / 0.8, 1.0)).fit(
+        small_history, cutoff
+    )
+    np.testing.assert_allclose(scaled.mean, divided.mean, atol=1e-10)
+    np.testing.assert_allclose(scaled.covariance, divided.covariance, atol=1e-10)
+
+
+def test_calibrated_scale_uses_only_observations_available_at_the_cutoff(small_history):
+    rows = [{**r, "provider": "api_football"} for r in observations(small_history)]
+    cutoff = small_history[4].available_on
+    settings = {"provider_scales": {"api_football": "calibrated"}, "calibration_matches": 1}
+    training = [m for m in small_history if m.available_on <= cutoff]
+    left = XGQualityTiltFilter(rows, **settings).fit(training, cutoff)
+    goals = sum(m.home_goals + m.away_goals for m in training)
+    assert left.scales["api_football"] == pytest.approx(2.3 * len(training) / goals)
+    later = [
+        {**r, "home_xg": 50.0} if m.available_on > cutoff else r
+        for r, m in zip(rows, small_history, strict=True)
+    ]
+    right = XGQualityTiltFilter(later, **settings).fit(training, cutoff)
+    assert right.scales == left.scales
+    np.testing.assert_array_equal(left.mean, right.mean)
+
+
+def test_incremental_fit_filters_again_when_the_calibrated_scale_changes(small_history):
+    rows = [{**r, "provider": "api_football"} for r in observations(small_history)]
+    settings = {"provider_scales": {"api_football": "calibrated"}, "calibration_matches": 1}
+    model = XGQualityTiltFilter(rows, **settings)
+    for i, match in enumerate(small_history):
+        model.fit(small_history[: i + 1], match.available_on)
+    batch = XGQualityTiltFilter(rows, **settings).fit(small_history, small_history[-1].available_on)
+    assert model.scales == batch.scales
+    np.testing.assert_allclose(model.mean, batch.mean, atol=1e-10)
+    np.testing.assert_allclose(model.covariance, batch.covariance, atol=1e-10)
