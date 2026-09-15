@@ -23,7 +23,7 @@ from epl_forecast.season_evaluation import (
     summarize,
 )
 from epl_forecast.simulation import simulate_season
-from epl_forecast.storage import file_hash, write_json
+from epl_forecast.storage import file_hash, load_environment, write_json
 
 SPECS = {
     "M2": ("configs/product.toml", "M2-attack-defense-v1"),
@@ -45,6 +45,7 @@ def competition_config(name, competition, train_competitions=None, data_root=Non
 
 
 def main():
+    load_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--data", type=Path, default=Path("data"))
