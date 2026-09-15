@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
 
-from epl_forecast.data.sources import COMPETITIONS, csv_rows
+from epl_forecast.data.sources import COMPETITIONS, ENTRY_SOURCE_COMPETITIONS, csv_rows
 from epl_forecast.schema import Fixture, Match, fixture_id
 
 TEAM_FILE = Path(__file__).with_name("teams.csv")
@@ -127,7 +127,7 @@ def normalize_rows(
 
     validate_unique(matches)
     teams = {team for m in matches for team in (m.fixture.home_team_id, m.fixture.away_team_id)}
-    expected_teams = COMPETITIONS[entry["division"]]["teams"]
+    expected_teams = ENTRY_SOURCE_COMPETITIONS[entry["division"]]["teams"]
     if entry["division"] == "E0" and entry["season_start"] < 1995:
         expected_teams = 22
     n = len(matches)

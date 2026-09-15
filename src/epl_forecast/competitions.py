@@ -10,7 +10,7 @@ class Competition:
     tier: int
     teams: int
     football_data_division: str
-    api_football_league: int
+    api_football_league: int | None
 
     @property
     def matches(self) -> int:
@@ -21,14 +21,20 @@ class Competition:
         return 2 * (self.teams - 1)
 
 
-COMPETITIONS = (
+FORECAST_COMPETITIONS = (
     Competition("eng-premier-league", "Premier League", 1, 20, "E0", 39),
     Competition("eng-championship", "Championship", 2, 24, "E1", 40),
     Competition("eng-league-one", "League One", 3, 24, "E2", 41),
     Competition("eng-league-two", "League Two", 4, 24, "E3", 42),
 )
-COMPETITION_IDS = tuple(c.competition_id for c in COMPETITIONS)
-_BY_ID = {c.competition_id: c for c in COMPETITIONS}
+NATIONAL_LEAGUE = Competition(
+    "eng-national-league", "National League", 5, 24, "EC", None
+)
+ENTRY_SOURCE_COMPETITIONS = (*FORECAST_COMPETITIONS, NATIONAL_LEAGUE)
+COMPETITIONS = FORECAST_COMPETITIONS
+COMPETITION_IDS = tuple(c.competition_id for c in FORECAST_COMPETITIONS)
+ENTRY_SOURCE_COMPETITION_IDS = tuple(c.competition_id for c in ENTRY_SOURCE_COMPETITIONS)
+_BY_ID = {c.competition_id: c for c in FORECAST_COMPETITIONS}
 
 
 def competition(competition_id: str) -> Competition:

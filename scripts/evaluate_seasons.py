@@ -6,7 +6,11 @@ from pathlib import Path
 
 from epl_forecast.artifacts import execution_provenance
 from epl_forecast.cli import fitted_model, load_config, save_rows
-from epl_forecast.competitions import COMPETITION_IDS, competition
+from epl_forecast.competitions import (
+    COMPETITION_IDS,
+    ENTRY_SOURCE_COMPETITION_IDS,
+    competition,
+)
 from epl_forecast.datasets import Dataset
 from epl_forecast.sanctions import REGISTRIES, load_registry
 from epl_forecast.season_evaluation import (
@@ -52,7 +56,7 @@ def main():
     parser.add_argument(
         "--train-competitions",
         nargs="+",
-        choices=COMPETITION_IDS,
+        choices=ENTRY_SOURCE_COMPETITION_IDS,
         help="Replace the multi-division training set of every spec that declares one",
     )
     args = parser.parse_args()
