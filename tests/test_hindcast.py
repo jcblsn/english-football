@@ -127,6 +127,8 @@ def test_the_series_keeps_every_weekly_origin_and_materializes_only_on_request(t
     assert arsenal["events"]["title_probability"] == [0.5, 0.5, 0.7]
     assert arsenal["mean_points"] == [80.5, 80.5, 80.5]
     assert arsenal["current_points"] == [9, 9, 9]
+    assert arsenal["points_intervals"]["80"] == [[65, 95]] * 3
+    assert arsenal["position_intervals"]["90"] == [[1, 2]] * 3
     index = publish_index(publish_store, [entry], policy)
     assert document_kind(index) == "hindcast_index"
     assert index["seasons"] == [entry]

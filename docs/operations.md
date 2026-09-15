@@ -118,7 +118,7 @@ The edition file freezes the model of a public model version. If the model code,
 
 A run can stop and start again. The command does not simulate an origin that has a public document. When only the private output exists, it publishes that output without a new simulation. It writes the series of a season only when every weekly document of the season exists. It then updates the index.
 
-To get the weekly estimates of a club, read `hindcasts/index.json`, then the `series.json` of the division and season. In `series.json`, `origins` lists the origins in time order. Each club in `teams` has one array for each estimate, with one value for each origin in the same order: `played`, `current_points`, `mean_points`, `median_points`, `mean_position`, `median_position`, `position_sd` and `mean_goal_difference`. `events` has one array for each event probability, for example `title_probability`, `promotion_probability` or `relegation_probability`. The weekly document at `href` has the full points and position distributions and their intervals.
+To get the weekly estimates of a club, read `hindcasts/index.json`, then the `series.json` of the division and season. In `series.json`, `origins` lists the origins in time order. Each club in `teams` has one array for each estimate, with one value for each origin in the same order: `played`, `current_points`, `mean_points`, `median_points`, `mean_position`, `median_position`, `position_sd` and `mean_goal_difference`. `points_intervals` and `position_intervals` have one `[low, high]` pair for each origin at the 50%, 80% and 90% levels. `events` has one array for each event probability, for example `title_probability`, `promotion_probability` or `relegation_probability`. The weekly document at `href` has the full points and position distributions and their intervals.
 
 Hindcasts do not overwrite the mutable production objects. You do not have to stop production to make them.
 
@@ -135,7 +135,7 @@ uv run epl-forecast materialize --site site
 uv run python -m http.server -d site 8000
 ```
 
-The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. Its Hindcasts view shows the weekly hindcast series of one club, season and estimate as a line chart and a table, with the retrospective notice and the information rules. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
+The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. Its Hindcasts view shows the weekly hindcast series of one club, season and estimate as a line chart and a table, with the central 80% interval for expected points and expected position, with the retrospective notice and the information rules. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
 
 The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts or hindcasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build. Add `--hindcasts` to get the hindcast index, each season series and each weekly hindcast document.
 

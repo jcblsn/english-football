@@ -522,6 +522,10 @@ async function hindcastView() {
   if (!measures.some(([key]) => key === state.hindcastMeasure)) state.hindcastMeasure = measures[0][0];
   const [measure, measureName] = measures.find(([key]) => key === state.hindcastMeasure);
   const values = team[measure] ?? team.events[measure];
+  // A series published before intervals were added has no band.
+  const intervals = { mean_points: "points_intervals", mean_position: "position_intervals" }[measure];
+  const band = intervals ? team[intervals]?.["80"] ?? null : null;
+  const range = (index) => (band ? `${band[index][0]}–${band[index][1]}` : "");
   const probability = measure.endsWith("_probability");
   const format = probability
     ? (value) => `${pct(value)}%`
@@ -541,13 +545,15 @@ async function hindcastView() {
       chooser(measure, measures, (value) => { state.hindcastMeasure = value; }),
     ]),
     element("h2", { textContent: `${team.name}: ${measureName}, ${series.competition_name} ${seasonName(series.season_id)}` }),
-    element("p", { className: "muted", textContent: "One estimate each Monday at 09:00 in London, from before the first match until every result is known." }),
+    element("p", { className: "muted", textContent: "One estimate each Monday at 09:00 in London, from before the first match until every result is known." +
+      (band ? " The shaded band is the central 80% interval." : "") }),
     lineChart(series.origins.map(monday), values, {
       probability,
       invert: measure === "mean_position",
       places: series.teams.length,
       format,
-      detail: (index) => `Monday ${monday(series.origins[index])} · ${team.played[index]} played · ${team.current_points[index]} points`,
+      band,
+      detail: (index) => `${band ? `80% interval ${range(index)} · ` : ""}Monday ${monday(series.origins[index])} · ${team.played[index]} played · ${team.current_points[index]} points`,
       name: `${team.name} ${measureName}`,
     }),
     element("details", {}, [
@@ -555,13 +561,14 @@ async function hindcastView() {
       element("ul", {}, series.assumptions.map((text) => element("li", { textContent: text }))),
     ]),
     table(
-      ["Monday (London)", "Played", "Points", measureName],
+      ["Monday (London)", "Played", "Points", measureName, ...(band ? ["80% interval"] : [])],
       series.origins.map((origin, index) =>
         element("tr", {}, [
           cell(monday(origin)),
           cell(team.played[index]),
           cell(team.current_points[index]),
           cell(format(values[index]), { dataset: { sort: values[index] } }),
+          ...(band ? [cell(range(index), { dataset: { sort: band[index][0] } })] : []),
         ])
       )
     )
@@ -575,7 +582,7 @@ function svgNode(tag, attributes = {}, text = null) {
   return node;
 }
 
-function lineChart(days, values, { probability, invert, places, format, detail, name }) {
+function lineChart(days, values, { probability, invert, places, format, detail, name, band = null }) {
   const width = 760, height = 280, left = 46, right = 64, top = 14, bottom = 30;
   let low = 0, high, ticks;
   if (probability) {
@@ -586,8 +593,9 @@ function lineChart(days, values, { probability, invert, places, format, detail, 
     high = places;
     ticks = [...new Set([1, ...[5, 10, 15, 20].filter((tick) => tick < places), places])];
   } else {
-    const step = Math.max(...values) > 60 ? 20 : 10;
-    high = Math.max(step, Math.ceil(Math.max(...values) / step) * step);
+    const peak = Math.max(...values, ...(band ?? []).flat());
+    const step = peak > 60 ? 20 : 10;
+    high = Math.max(step, Math.ceil(peak / step) * step);
     ticks = Array.from({ length: high / step + 1 }, (_, index) => index * step);
   }
   const x = (index) => left + (days.length > 1 ? (index * (width - left - right)) / (days.length - 1) : 0);
@@ -610,6 +618,11 @@ function lineChart(days, values, { probability, invert, places, format, detail, 
   const last = values.length - 1;
   const crosshair = svgNode("line", { class: "crosshair", y1: top, y2: height - bottom, visibility: "hidden" });
   const marker = svgNode("circle", { class: "series-dot", r: 4, visibility: "hidden" });
+  if (band) {
+    const upper = band.map(([, hi], index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(hi).toFixed(1)}`);
+    const lower = band.map(([lo], index) => `L${x(index).toFixed(1)},${y(lo).toFixed(1)}`).reverse();
+    svg.append(svgNode("path", { class: "series-band", d: `${upper.join("")}${lower.join("")}Z` }));
+  }
   svg.append(
     crosshair,
     svgNode("path", { class: "series-line", d: values.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join("") }),

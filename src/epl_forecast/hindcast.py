@@ -229,6 +229,10 @@ def derive_series(documents: list[dict]) -> dict:
                 "team_id": team["team_id"],
                 "name": team["name"],
                 **{field: [row[field] for row in rows] for field in SERIES_FIELDS},
+                **{
+                    field: {level: [row[field][level] for row in rows] for level in rows[0][field]}
+                    for field in ("points_intervals", "position_intervals")
+                },
                 "events": {event: [row["events"].get(event) for row in rows] for event in events},
             }
         )
