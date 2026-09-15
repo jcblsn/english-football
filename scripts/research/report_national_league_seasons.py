@@ -302,7 +302,8 @@ def main():
         {
             "execution": execution_provenance(),
             "main_base_sha": "f3660fe78367243290706acb406055ca422f559c",
-            "candidate_sha": execution_provenance()["commit"],
+            "candidate_sha": candidate_manifest["execution"]["commit"],
+            "report_sha": execution_provenance()["commit"],
             "data_authority": "page324-data through an empty R2-backed workspace",
             "data_manifest": data_manifest,
             "control_manifest_sha256": file_hash(args.control / "manifest.json"),
