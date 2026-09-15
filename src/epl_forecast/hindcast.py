@@ -343,7 +343,7 @@ def run_hindcasts(
     data = Dataset(workspace, store=data_store)
     try:
         matches = data.matches()
-        observations = data.process()
+        observations = data.xg_observations()
         sanctions = load_registry(data)
         names = {r["team_id"]: r["name"] for r in data.rows("SELECT * FROM teams")}
     finally:

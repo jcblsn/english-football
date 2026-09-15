@@ -108,6 +108,11 @@ def information_fingerprint(data, competition_id: str):
             f"WHERE competition_id IN ({placeholders}) ORDER BY ALL",
             training,
         ),
+        "team_statistics": (
+            "SELECT DISTINCT match_id, team_id, expected_goals FROM team_statistics "
+            f"WHERE expected_goals IS NOT NULL AND competition_id IN ({placeholders}) ORDER BY ALL",
+            training,
+        ),
         "odds": (
             "SELECT DISTINCT match_id, family, home_odds, draw_odds, away_odds FROM odds "
             "WHERE competition_id=? AND season_id=(SELECT max(season_id) FROM fixtures "
