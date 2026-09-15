@@ -61,6 +61,33 @@ def test_final_fixture_capture_has_bounded_correction_checkpoints():
     assert fixture_details_due(fixtures, records(169), kickoff + timedelta(days=30)) == []
 
 
+def test_fixture_details_capture_lineups_before_kickoff():
+    from datetime import timedelta
+
+    from epl_forecast.data.collect import fixture_details_due
+
+    kickoff = datetime(2026, 9, 19, 14, tzinfo=UTC)
+    fixtures = [{"fixture": {"id": 10, "date": kickoff.isoformat(), "status": {"short": "NS"}}}]
+
+    def records(minutes):
+        return [
+            {
+                "provider": "api_football",
+                "context": {"endpoint": "fixtures", "ids": "10"},
+                "retrieved_at": (kickoff + timedelta(minutes=minutes)).isoformat(),
+            }
+        ]
+
+    assert fixture_details_due(fixtures, [], kickoff - timedelta(minutes=80)) == []
+    assert fixture_details_due(fixtures, [], kickoff - timedelta(minutes=70)) == [10]
+    assert fixture_details_due(fixtures, records(-70), kickoff - timedelta(minutes=65)) == []
+    assert fixture_details_due(fixtures, records(-70), kickoff - timedelta(minutes=60)) == [10]
+    assert fixture_details_due(fixtures, records(-10), kickoff - timedelta(minutes=1)) == [10]
+    fixtures[0]["fixture"]["status"]["short"] = "2H"
+    assert fixture_details_due(fixtures, records(-1), kickoff + timedelta(minutes=50)) == []
+    assert fixture_details_due(fixtures, records(-1), kickoff + timedelta(minutes=70)) == [10]
+
+
 def test_market_snapshot_changes_forecast_fingerprint(tmp_path):
     from epl_forecast.datasets import Dataset
 
