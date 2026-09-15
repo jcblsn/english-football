@@ -158,11 +158,63 @@ RECORD_KEYS = {
     "unsettled",
     "updated_at",
 }
+HINDCAST_KEYS = {
+    "assumptions",
+    "competition_id",
+    "competition_name",
+    "events",
+    "hindcast_id",
+    "model",
+    "model_results_cutoff",
+    "name",
+    "notice",
+    "origin_at",
+    "played_matches",
+    "points_distribution",
+    "position_probabilities",
+    "product",
+    "remaining_matches",
+    "retrospective",
+    "schema_version",
+    "season_id",
+    "simulations",
+    "state_uncertainty",
+    "teams",
+    "version",
+    *TEAM_FIELDS,
+}
+HINDCAST_SERIES_KEYS = HINDCAST_KEYS | {"href", "origins"}
+HINDCAST_INDEX_KEYS = {
+    "competition_id",
+    "competition_name",
+    "first_origin_at",
+    "href",
+    "last_origin_at",
+    "model_version",
+    "notice",
+    "origin_count",
+    "product",
+    "retrospective",
+    "schema_version",
+    "season_id",
+    "seasons",
+    "updated_at",
+}
 CONTRACT_KEYS = {
     "forecast": FORECAST_KEYS,
     "current": POINTER_KEYS,
     "archive": POINTER_KEYS,
     "record": RECORD_KEYS,
+    "hindcast": HINDCAST_KEYS,
+    "hindcast_series": HINDCAST_SERIES_KEYS,
+    "hindcast_index": HINDCAST_INDEX_KEYS,
+}
+# A hindcast is retrospective. Its documents stay under their own prefix, so no live pointer can name one.
+NAMESPACES = {
+    "current": "forecasts/",
+    "archive": "forecasts/",
+    "hindcast_series": "hindcasts/",
+    "hindcast_index": "hindcasts/",
 }
 
 
@@ -182,6 +234,14 @@ def load_policy(path: Path = POLICY_PATH) -> dict:
 
 
 def document_kind(document: dict) -> str:
+    if document.get("product") == "hindcast":
+        if "origins" in document:
+            return "hindcast_series"
+        if "teams" in document:
+            return "hindcast"
+        if "seasons" in document:
+            return "hindcast_index"
+        raise ValueError("Unknown hindcast document type")
     if "teams" in document:
         return "forecast"
     if "forecasts" in document:
@@ -192,7 +252,8 @@ def document_kind(document: dict) -> str:
 
 
 def check_publishable(document, policy: dict, kind: str | None = None) -> None:
-    allowed = CONTRACT_KEYS[kind or document_kind(document)]
+    kind = kind or document_kind(document)
+    allowed = CONTRACT_KEYS[kind]
     forbidden = policy["boundary"]["forbidden_key_substrings"]
     patterns = [re.compile(p) for p in policy["boundary"]["forbidden_value_patterns"]]
 
@@ -202,8 +263,14 @@ def check_publishable(document, policy: dict, kind: str | None = None) -> None:
                 if any(substring in name for substring in forbidden):
                     raise ValueError(f"Private key on the published surface: {trail}.{name}")
                 if name not in allowed and not _is_open_map(trail):
+                    raise ValueError(f"Key is not in the {kind} contract: {trail}.{name}")
+                if (
+                    name == "href"
+                    and kind in NAMESPACES
+                    and not str(value).startswith(NAMESPACES[kind])
+                ):
                     raise ValueError(
-                        f"Key is not in the {kind or document_kind(document)} contract: {trail}.{name}"
+                        f"A {kind} document can only link under {NAMESPACES[kind]}: {trail}.{name}"
                     )
                 walk(value, f"{trail}.{name}", name)
         elif isinstance(node, list):
@@ -389,6 +456,24 @@ def update_impact_state(document: dict, state: dict) -> dict:
     return {**document, "impact": {**impact, "fixtures": fixtures}}
 
 
+def season_team_rows(rows: list[dict], names: dict) -> list[dict]:
+    """The published season estimates of each club, in expected table order."""
+    return [
+        {
+            **{field: _compact(row[field]) for field in TEAM_FIELDS},
+            "name": names.get(row["team_id"], row["team_id"]),
+            "position_probabilities": [probability(p) for p in row["position_probabilities"]],
+            "points_distribution": _distribution(row["points_distribution"]),
+            "events": {
+                key: probability(value)
+                for key, value in sorted(row.items())
+                if key.endswith("_probability")
+            },
+        }
+        for row in sorted(rows, key=lambda row: row["mean_position"])
+    ]
+
+
 def derive_forecast(
     forecast: dict,
     forecast_id: str,
@@ -404,22 +489,7 @@ def derive_forecast(
         raise ValueError(
             f"Refusing to publish {simulation['simulations']} simulated paths; the product floor is {MINIMUM_SIMULATIONS}"
         )
-    names = forecast["team_names"]
-    teams = []
-    for row in sorted(simulation["teams"], key=lambda row: row["mean_position"]):
-        teams.append(
-            {
-                **{field: _compact(row[field]) for field in TEAM_FIELDS},
-                "name": names.get(row["team_id"], row["team_id"]),
-                "position_probabilities": [probability(p) for p in row["position_probabilities"]],
-                "points_distribution": _distribution(row["points_distribution"]),
-                "events": {
-                    key: probability(value)
-                    for key, value in sorted(row.items())
-                    if key.endswith("_probability")
-                },
-            }
-        )
+    teams = season_team_rows(simulation["teams"], forecast["team_names"])
     matches = []
     horizon = timestamp(forecast["generated_at"]) + timedelta(days=horizon_days)
     for row in forecast["matches"]:
@@ -554,6 +624,8 @@ def publish_documents(store, documents: list[dict], policy: dict) -> dict:
     latest = {row["competition_id"]: row for row in current["forecasts"]}
     archives = {}
     for document in documents:
+        if document.get("product") == "hindcast":
+            raise ValueError("A hindcast cannot enter the live forecast pointers")
         check_publishable(document, policy, "forecast")
         pointer = forecast_pointer(document)
         store.put_json(pointer["href"], document, immutable=True)
@@ -589,7 +661,9 @@ def archive_documents(store, competition_id: str):
         yield store.get_json(entry["href"])
 
 
-def materialize_publication(store, site: Path, archive_competitions: tuple[str, ...] = ()) -> dict:
+def materialize_publication(
+    store, site: Path, archive_competitions: tuple[str, ...] = (), hindcasts: bool = False
+) -> dict:
     site = Path(site)
     site.mkdir(parents=True, exist_ok=True)
     target = site / "data"
@@ -618,6 +692,21 @@ def materialize_publication(store, site: Path, archive_competitions: tuple[str, 
             write_json(data / key, archive)
             for entry in archive["forecasts"]:
                 materialize(entry)
+        hindcast_documents = 0
+        if hindcasts:
+            index = store.get_json("hindcasts/index.json")
+            if index is not None:
+                check_publishable(index, policy, "hindcast_index")
+                write_json(data / "hindcasts/index.json", index)
+                for season in index["seasons"]:
+                    series = store.get_json(season["href"])
+                    check_publishable(series, policy, "hindcast_series")
+                    write_json(data / season["href"], series)
+                    for origin in series["origins"]:
+                        document = store.get_json(origin["href"])
+                        check_publishable(document, policy, "hindcast")
+                        write_json(data / origin["href"], document)
+                        hindcast_documents += 1
         record = store.get_json("record.json")
         if record is not None:
             check_publishable(record, policy, "record")
@@ -628,5 +717,6 @@ def materialize_publication(store, site: Path, archive_competitions: tuple[str, 
     return {
         "documents": len(written),
         "archives": len(archive_competitions),
+        "hindcasts": hindcast_documents,
         "record": record is not None,
     }

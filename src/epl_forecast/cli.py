@@ -234,7 +234,26 @@ def materialize_command(args) -> None:
     from epl_forecast.storage import R2Store
 
     result = materialize_publication(
-        R2Store.from_environment("R2_PUBLISH_BUCKET"), args.site, tuple(args.archive)
+        R2Store.from_environment("R2_PUBLISH_BUCKET"),
+        args.site,
+        tuple(args.archive),
+        args.hindcasts,
+    )
+    print(json.dumps(result, indent=2))
+
+
+def hindcast_command(args) -> None:
+    from epl_forecast.hindcast import run_hindcasts
+    from epl_forecast.storage import R2Store
+
+    result = run_hindcasts(
+        R2Store.from_environment("R2_DATA_BUCKET"),
+        R2Store.from_environment("R2_PUBLISH_BUCKET"),
+        args.data,
+        tuple(args.competition or COMPETITION_IDS),
+        tuple(args.seasons),
+        args.simulations,
+        args.workers,
     )
     print(json.dumps(result, indent=2))
 
@@ -295,7 +314,26 @@ def parser() -> argparse.ArgumentParser:
         default=[],
         help="Also materialize one competition archive",
     )
+    materialize.add_argument(
+        "--hindcasts",
+        action="store_true",
+        help="Also materialize the hindcast index, season series and weekly documents",
+    )
     materialize.set_defaults(func=materialize_command)
+    hindcast = commands.add_parser(
+        "hindcast", help="Make and publish weekly retrospective hindcasts of completed seasons"
+    )
+    hindcast.add_argument("--competition", action="append", choices=COMPETITION_IDS)
+    hindcast.add_argument("--seasons", nargs="+", type=int, default=list(range(2021, 2026)))
+    hindcast.add_argument(
+        "--data",
+        type=Path,
+        default=Path("runs/hindcast-workspace"),
+        help="An empty workspace; the history comes from page324-data",
+    )
+    hindcast.add_argument("--simulations", type=int, default=10000)
+    hindcast.add_argument("--workers", type=int, default=4)
+    hindcast.set_defaults(func=hindcast_command)
     evaluate = commands.add_parser(
         "evaluate", help="Score rolling historical match forecasts for M7 and M2"
     )

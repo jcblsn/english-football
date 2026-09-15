@@ -264,13 +264,13 @@ def test_current_advances_each_division_independently_and_materializes_only_curr
     stale.parent.mkdir(parents=True)
     stale.write_text("stale")
     result = materialize_publication(store, tmp_path)
-    assert result == {"documents": 2, "archives": 0, "record": False}
+    assert result == {"documents": 2, "archives": 0, "hindcasts": 0, "record": False}
     assert json.loads((tmp_path / "data/current.json").read_text()) == current
     assert not stale.exists()
     assert not (tmp_path / "data/forecasts/eng-premier-league/archive.json").exists()
 
     archived = materialize_publication(store, tmp_path, ("eng-premier-league",))
-    assert archived == {"documents": 3, "archives": 1, "record": False}
+    assert archived == {"documents": 3, "archives": 1, "hindcasts": 0, "record": False}
     archive = json.loads((tmp_path / "data/forecasts/eng-premier-league/archive.json").read_text())
     assert archive == store.objects["forecasts/eng-premier-league/archive.json"]
     assert [row["forecast_id"] for row in archive["forecasts"]] == [

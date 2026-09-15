@@ -183,12 +183,16 @@ MODEL_CODE = (
 )
 
 
-def production_fingerprint(data_fingerprint: str, model_version: str) -> str:
-    """A public model version change makes every division due, so no forecast keeps the old label."""
+def model_code_hashes() -> dict[str, str]:
     paths = []
     for path in MODEL_CODE:
         paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
-    code = {str(path): file_hash(path) for path in paths}
+    return {str(path): file_hash(path) for path in paths}
+
+
+def production_fingerprint(data_fingerprint: str, model_version: str) -> str:
+    """A public model version change makes every division due, so no forecast keeps the old label."""
+    code = model_code_hashes()
     return sha256_bytes(
         json_bytes(
             {"data": data_fingerprint, "forecast_code": code, "model_version": model_version}
