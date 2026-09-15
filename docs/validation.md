@@ -181,6 +181,15 @@ Both results are exposed to selection. The matchday-squad representation was cho
 
 In the development matches of 9–15 September 2026, before the release, the cutoff-safe estimator tracked the realized D_away − D_home with correlation 0.84 at 3 days (15 fixtures), 0.88 at 24 hours (20) and 0.92 at 90 minutes (23). No 6-day fixture was finished. These samples are too small for a forecast score.
 
+### Production checks
+
+At one cutoff on 15 September 2026, from an empty workspace against R2, the v0.2 forecast passes every product check: 1,181 in the Premier League and 1,599 in the Championship. The checks include the new personnel checks: each record is for a fixture in the next six days, each team sheet was captured before the cutoff, and each shift is κ(D_away − D_home) with both clubs within the unresolved limit.
+
+- Premier League: all 10 fixtures in the horizon have a shift, from −0.054 to +0.081. Availability came from FPL, because API-Football had not yet published the injury lists of the next round.
+- Championship: 9 of 12 fixtures in the horizon have a shift, from −0.068 to +0.032. Bolton Wanderers, Cardiff City and Lincoln City have fewer than eight previous matches with complete lineup minutes, so their fixtures have no shift. The largest unresolved weight of a club is 0.092.
+
+A Premier League hindcast origin on 20 October 2025 adjusts 6 fixtures, and one on 5 January 2026 adjusts 10.
+
 ### Prospective evaluation
 
 The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with the structural M7 control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.
