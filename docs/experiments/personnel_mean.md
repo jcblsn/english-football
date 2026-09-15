@@ -70,3 +70,67 @@ Track the fitted kappa, its earlier-season support, applied log-rate shifts and 
 Stop this representation if kappa is frequently zero or unstable in sign before the nonnegative constraint, if the pooled chronological score NLL does not improve, if the candidate loses in both competitions, or if any gain comes only from one narrow post hoc population. Do not build deployable availability from a failed oracle mapping.
 
 If the oracle mapping improves score NLL with a stable direction and without material H/D/A or calibration harm, the next stage is a separately specified deployable test. It must calculate D from timestamped availability evidence and archive control, candidate and later realized lineups prospectively. Historical injury rows captured after the event cannot provide strict out-of-sample validation.
+
+## Oracle result
+
+The current-main replay covers 8,388 Premier League and Championship matches in 2017/18–2025/26. Complete recent minutes and target starting XIs are available for 8,073. The chronological scored period has 5,450 matches in 2020/21–2025/26 and 12 competition-season clusters.
+
+Kappa is stable and positive. It is 0.283 for the first scored season, 0.269 for the second and then increases from 0.282 to 0.345. Every unconstrained fit has the same positive value as its constrained fit. No fit reaches a bound.
+
+Candidate minus control. Negative is better.
+
+| Scope | Matches | H/D/A log loss | Brier | Score NLL | Team-goal NLL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| All | 5,450 | −0.00192 | −0.00127 | −0.00232 | −0.00117 |
+| Premier League | 2,280 | −0.00330 | −0.00219 | −0.00298 | −0.00150 |
+| Championship | 3,170 | −0.00093 | −0.00061 | −0.00185 | −0.00093 |
+| Opening five | 577 | −0.00014 | +0.00012 | +0.00032 | +0.00016 |
+| Promoted-club fixtures | 1,299 | −0.00312 | −0.00192 | −0.00231 | −0.00116 |
+| Relegated-club fixtures | 763 | −0.00006 | −0.00012 | −0.00355 | −0.00178 |
+| Absolute D difference at least 0.20 | 558 | −0.01216 | −0.00824 | −0.01568 | −0.00787 |
+
+Score NLL improves in 11 of 12 competition-seasons. The exception is the 2025/26 Premier League at +0.00229. H/D/A log loss improves in 10 of 12. The two Championship losses are small: +0.00027 in 2022/23 and +0.00017 in 2025/26. Pooled 2025/26 score NLL is worse by +0.00024. The whole-competition-season resampled score-NLL interval is [−0.00360, −0.00118]. With only 12 clusters and a hypothesis identified from these seasons, this interval is descriptive development evidence.
+
+The classwise calibration error falls from 0.01439 to 0.01171. The median absolute log-rate shift is 0.025 and the maximum is 0.199. The adjustment changes almost nothing when the teams have similar continuity. It improves score NLL by 0.01568 on the prespecified D-imbalance slice of at least 0.20. The largest 5% of absolute case changes account for 88% of the total score-NLL gain. This concentration follows the mechanism, but it also makes the historical result fragile. The opening-five slice does not improve score NLL.
+
+### Oracle decision
+
+This representation passes the oracle gate. The direction is stable, both competitions improve, all pooled proper scores improve and calibration does not degrade. The result supports a temporary relative Quality effect. It does not show that a pre-match availability feed can estimate realized starting-XI continuity.
+
+Do not change M7 from this historical result. Proceed to a cutoff-safe prospective availability stage. The prospective record must decide deployment because the target starting XI is unavailable before kickoff and the hypothesis was identified from the same historical seasons used here.
+
+## Prospective availability protocol
+
+The first deployable stage uses the fixed eight-match window, the fixed temporary Quality mapping and one kappa fitted from all complete oracle seasons before 2026/27. It does not refit on prospective outcomes.
+
+For each target fixture, use only provider observations captured before the archive cutoff:
+
+- Use the latest complete API-Football squad capture for each team. A recent player outside that squad has availability zero. A squad capture with fewer than 18 identified players is insufficient, and D is missing.
+- Use an API-Football injury row for the exact target fixture. `unavailable` gives probability zero and `doubtful` gives 0.5. An unknown status makes the player's availability missing.
+- In the Premier League, use the latest FPL playing chance for the next round. If no numerical chance exists, `a` gives one, `d` gives 0.5 and `i`, `s` or `u` gives zero.
+- When two positive observations for the same player and target disagree, mark the player's availability unknown and surface both observations. Do not select the more favorable value.
+- A current squad member without contrary evidence has availability one. A newcomer has no recent-minute weight.
+
+The first archive covers the next scheduled fixture of each Premier League and Championship team. It saves each player's recent weight, estimated availability, evidence basis and timestamp; team D; the control and candidate match distributions; and the later realized starting XI when it becomes available. Only a fixture archived before kickoff is a prospective case.
+
+A material case has an absolute home-away D difference of at least 0.10 or a change of at least 0.05 from the prior archive. Keep nonmaterial cases as controls. Track missing teams, provider conflicts and false alarms. Do not tune the thresholds, probability mapping or kappa from named injuries.
+
+## Retained artifacts
+
+- Current-main oracle forecasts: `research/evidence/personnel-mean/9f2203f/forecasts` in `page324-data`. Forecast code commit `9e67d85`.
+- Chronological report: `research/evidence/personnel-mean/9f2203f/report` in `page324-data`. Report code commit `9f2203f`.
+
+Reproduce with a new empty workspace:
+
+```sh
+uv run python scripts/research/personnel_mean.py predict --data runs/ws-personnel-mean --output runs/personnel-mean-forecasts
+uv run python scripts/research/personnel_mean.py report --forecasts runs/personnel-mean-forecasts/oracle_forecasts.csv --output runs/personnel-mean-report
+```
+
+### Limitations
+
+- The oracle uses realized starting XIs. It is not a forecast.
+- The mean hypothesis was identified from the earlier pooled oracle on these seasons. The chronological mapping prevents target-season fitting but does not create a fresh confirmation sample.
+- The scalar continuity measure assigns the same availability effect to every recent minute. It does not estimate player value.
+- Most of the gain comes from the largest forecast changes, and 2025/26 does not improve in pooled score NLL.
+- Historical lineups before 2026/27 cover only the Premier League and Championship.
