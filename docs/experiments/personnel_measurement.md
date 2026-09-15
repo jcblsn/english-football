@@ -178,7 +178,71 @@ Unknown membership or unknown availability makes the player unresolved. An unres
 
 ## 4. Confirmed-XI prospective archive
 
+### Collection
+
+The prospective test needs official starting XIs that were captured before kickoff. On 15 September 2026, the store had such a capture for only 1 of 121 Premier League and Championship fixtures in 2026/27. The production workflow woke each hour, but GitHub ran only 4 scheduled runs on 15 September. Match details were due every 15 minutes from 90 minutes before kickoff.
+
+Pull request [#2](https://github.com/jcblsn/english-football/pull/2) changes only collection. Production wakes every 10 minutes, match details are due every 9 minutes in the 75 minutes before kickoff and each hour during the match. M7 and the forecast fingerprint rules do not change. The pull request passed its checks but is not merged. Until it is merged, the confirmed-XI arm gets almost no eligible fixtures.
+
+### Archive design
+
+`scripts/research/personnel_prospective.py archive` makes three arms for each Premier League and Championship regular-season fixture in 2026/27:
+
+| Arm | Personnel cutoff | Personnel input |
+| --- | --- | --- |
+| `confirmed-xi` | The later of the latest captures before kickoff with 11 starters for each club | Official starting XIs and recent minutes |
+| `expected-24h` | 24 hours before kickoff | Expected-continuity estimator |
+| `expected-90m` | 90 minutes before kickoff | Expected-continuity estimator |
+
+Rules:
+
+- A fixture enters the confirmed-XI arm only when both starting XIs were captured before kickoff. A lineup first captured at or after kickoff is never used.
+- The confirmed D is the historical feature. The only difference is that the target XI comes from a capture before kickoff.
+- The candidate uses the frozen κ = 0.26883582806934564. The runner never fits κ.
+- The control is the structural product M7. It is fitted from data retrieved before the London day of the cutoff, with that day as the training cutoff. Control and candidate in one arm use the same fit. Market prices do not enter either forecast.
+- Each record keeps the arm, kickoff, personnel cutoff, lineup retrieval times, M7 information cutoff, the latest squad, injury and FPL retrieval times, the eight reference matches and recent minutes of each club, the starters with identity provenance, home and away D, the log-rate shifts, and the control and candidate H/D/A probabilities, expected goals, 16×16 score grid and probability outside the grid.
+- A fixture that kicks off from 17 September 2026 00:00 UTC is prospective. The code, the propensity table and κ were committed before the first such fixture. Earlier 2026/27 fixtures are development cases, and the doubtful mapping used their captures.
+- Every provider row keeps its retrieval time, so the runner rebuilds each arm from the observations retrieved by its cutoff. The manifest records the archive time. An archive made after kickoff therefore uses the same inputs as an archive made at the cutoff, but it is not an observed forecast publication.
+- `evaluate` scores finished fixtures, and compares each estimate with the realized starting-XI D. The realized D uses the same recent minutes as the archived arm.
+
+Archives go to `research/evidence/personnel-measurement/<commit>/<run>/` in `page324-data`.
+
 ## 5. Expected-continuity estimator
+
+### Definition
+
+For club i, target fixture f and cutoff c, with recent minutes w_j from the same eight-match window as the historical feature:
+
+```text
+E[D] = 1 − Σ w_j p_j / Σ w_j, over resolved players j
+```
+
+- p_j = 0 when the player is departed at the cutoff.
+- p_j = a_j × s(k_j, l_j) when the player is a member. a_j is the availability from section 3. k_j is the number of starts in the eight window matches, and l_j shows whether the player started the last window match.
+- The player is unresolved when membership or availability is unknown.
+- A candidate is made only when both clubs have at most 25% unresolved recent weight.
+
+Because the Quality correction is linear in D, E[D] enters the frozen mapping directly. The estimator does not predict a coherent XI. It has no formation, no player interactions, no player values and no constraint that the probabilities add up to 11.
+
+### Start propensity
+
+`scripts/research/start_propensity.py` estimated s(k, l) once from Premier League and Championship matches in 2021/22–2025/26. The population is players with minutes in the eight previous matches. Players listed by API-Football for the target fixture (19,643) and players with later evidence that they left the club (11,446) are excluded. The table is `src/epl_forecast/research/start_propensity.json`.
+
+| Starts in last eight | Did not start last match | Started last match |
+| ---: | ---: | ---: |
+| 0 | 0.128 | — |
+| 1 | 0.176 | 0.617 |
+| 2 | 0.246 | 0.654 |
+| 3 | 0.297 | 0.705 |
+| 4 | 0.347 | 0.734 |
+| 5 | 0.425 | 0.775 |
+| 6 | 0.483 | 0.811 |
+| 7 | 0.591 | 0.858 |
+| 8 | — | 0.922 |
+
+Each cell has at least 3,186 player-matches. The last start is strongly informative: a player with seven starts who did not start the last match starts next with probability 0.59, and with 0.86 if the player did.
+
+The historical injury records are final provider records, not captures before kickoff. They are used only to remove listed players from this table.
 
 ## 6. Expected versus realized continuity
 
