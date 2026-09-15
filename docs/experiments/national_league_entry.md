@@ -94,3 +94,7 @@ The first pair has the cutoff 2026-09-15T05:45:07Z. It is at `research/evidence/
 - Paired season report: `research/evidence/national-league-entry/0729098/season-report` in `page324-data`.
 
 Reproduce the source acquisition and match evaluation with the research runners. Reproduce the season forecasts with `scripts/evaluate_seasons.py`, using `eng-league-one eng-league-two` for the control training set and adding `eng-national-league` for the candidate. Use the seasons, 10,000 simulations and seed recorded in the retained manifests.
+
+## Production outcome
+
+The change reached main in v0.1 on 15 September 2026 (main commit `080f799`), together with API-Football xG. The matched prospective control archive was not continued after the first pair. The live product record is the prospective evidence.
