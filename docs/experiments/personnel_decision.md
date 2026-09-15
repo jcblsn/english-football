@@ -32,3 +32,27 @@ These changes do not change any forecast.
 
 - Pull request #2 is open, and its latest checks passed. The Batch 1 report said in one place that it was closed. That text is corrected.
 - The `checks` workflow now also runs on a push to a `research-*` branch, so the research head has a recorded GitHub check run.
+
+## 2. Frozen Batch 1 specification
+
+| Item | Frozen value |
+| --- | --- |
+| Feature | D_squad = 1 − Σ_j w_j I(j in target matchday squad) / Σ_j w_j |
+| Recent weights | Minutes, capped at 90, in the previous eight completed club matches. Each window match needs at least 700 recorded minutes. |
+| Mapping | Δ = κ(D_a − D_h). +Δ on the home log rate and −Δ on the away log rate. Persistent M7 state does not change. |
+| κ | 0.43161578781583126, fitted once on all 8,073 realized oracle matches before 2026/27 |
+| Expected D_squad | Cutoff-safe membership, availability and matchday-squad propensity q(m, n), as in section 10 of the Batch 1 report |
+| Availability | API-Football unavailable and FPL i, s, n or u give 0. Doubtful and FPL d give 0.3. FPL a and no contrary evidence give 1. Two providers that give 0 and 1 make the player unresolved. |
+| Unresolved limit | No candidate when more than 25% of the recent weight of a club is unresolved |
+| Observed D_squad | A team sheet captured before the cutoff with 11 starters and at least 7 substitutes |
+| Starting-XI estimator | Diagnostic only, κ = 0.26883582806934564 |
+| Control | Structural product M7, fitted from data retrieved before the London day of the cutoff. No market input. |
+
+## 3. Prospective protocol
+
+- Population: Premier League and Championship regular-season fixtures in 2026/27 that kick off from 17 September 2026 00:00 UTC.
+- Checkpoints: 6 days, 3 days, 24 hours and 90 minutes before kickoff. No horizon is preferred before the evidence.
+- Each snapshot is rebuilt from the observations retrieved by its cutoff with the freeze commit. Runs go to `research/evidence/personnel-measurement/<commit>/<run>/` in `page324-data`.
+- Measurement comes first: bias, mean absolute error, correlation, sign behaviour, false and missed large signals, unresolved weight and revision, for club D_squad and for D_a − D_h against the final matchday squad. Horizons are compared on matched fixtures.
+- Forecast value is separate: candidate minus control and realized-squad oracle minus control in score NLL, H/D/A log loss and Brier, by round, with whole-round resampling.
+- The 2026/27 calendar gives Premier League round 5 and Championship round 8 on 18–20 September, then an international break. League play starts again on 9 October.
