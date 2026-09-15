@@ -1,7 +1,9 @@
 name: pages
 
 # This workflow materializes the sanitized publication bucket into the Pages artifact.
+# The production workflow calls it after a run that publishes a new forecast.
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:

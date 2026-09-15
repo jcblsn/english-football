@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import tomllib
 from datetime import UTC, date, datetime
@@ -204,6 +205,9 @@ def operate_command(args) -> None:
         collect_first=not args.no_collect,
     )
     print(json.dumps({k: v for k, v in result.items() if k != "collection"}, indent=2))
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a") as stream:
+            stream.write(f"published={len(result['published'])}\n")
     if result["status"] in ("failed", "skipped"):
         raise SystemExit(1)
 

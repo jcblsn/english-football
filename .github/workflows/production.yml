@@ -22,6 +22,8 @@ jobs:
   forecast:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      published: ${{ steps.operate.outputs.published }}
     env:
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
       R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
@@ -37,8 +39,20 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - name: Collect, forecast and publish
+        id: operate
         run: >-
           uv run epl-forecast operate
           --data "${RUNNER_TEMP}/data"
           --runs "${RUNNER_TEMP}/runs"
           ${{ inputs.force && '--force' || '' }}
+
+  # Deploy the site only after a run that published a new forecast.
+  pages:
+    needs: forecast
+    if: fromJSON(needs.forecast.outputs.published || '0') > 0
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    secrets: inherit
