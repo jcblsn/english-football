@@ -38,7 +38,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run epl-forecast materialize --site site
+      - run: uv run epl-forecast materialize --site site --hindcasts
       - run: uv run python scripts/check_publishable.py --site site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

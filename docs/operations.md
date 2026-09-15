@@ -135,11 +135,11 @@ uv run epl-forecast materialize --site site
 uv run python -m http.server -d site 8000
 ```
 
-The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
+The viewer shows each division's table, position matrix, club distributions, upcoming fixtures, conditional effects and forecast record. Its Hindcasts view shows the weekly hindcast series of one club, season and estimate as a line chart and a table, with the retrospective notice and the information rules. The club page ranks the matches of the week by their effect on that club. It also identifies postponed or undated fixtures.
 
 The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts or hindcasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build. Add `--hindcasts` to get the hindcast index, each season series and each weekly hindcast document.
 
-Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, checks the boundary and deploys the site. Both R2 buckets stay private.
+Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, with `--hindcasts`, checks the boundary and deploys the site. The hindcast documents add approximately one minute to the materialization. Both R2 buckets stay private.
 
 The production workflow calls the Pages workflow after a run that publishes at least one forecast. An hourly run that publishes nothing does not deploy. You can also start the Pages workflow manually.
 

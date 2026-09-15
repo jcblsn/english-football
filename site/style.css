@@ -25,3 +25,17 @@ select, button { font: inherit; }
 .about { max-width: 680px; margin: 48px auto; overflow-x: visible; font-size: 16px; line-height: 1.6; }
 .about h1 { margin: 0 0 24px; font-size: 24px; line-height: 1.2; }
 .about p { margin: 0 0 18px; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.chart { position: relative; max-width: 900px; margin: 4px 0 12px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg:focus-visible { outline: 2px solid #4477cc; outline-offset: 2px; }
+.grid-line { stroke: #8883; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.crosshair { stroke: #8889; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.axis, .end-label { fill: currentColor; font-size: 11px; font-variant-numeric: tabular-nums; }
+.axis { opacity: 0.6; }
+.series-line { fill: none; stroke: #4477cc; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.series-dot { fill: #4477cc; stroke: Canvas; stroke-width: 2; }
+.tooltip { position: absolute; transform: translate(-50%, calc(-100% - 12px)); pointer-events: none; padding: 4px 8px; background: Canvas; border: 1px solid #8886; box-shadow: 0 1px 4px #0003; white-space: nowrap; }
+.tooltip strong { display: block; font-size: 14px; }
+.tooltip span { opacity: 0.7; }
+details { margin: 0 0 12px; max-width: 900px; }
