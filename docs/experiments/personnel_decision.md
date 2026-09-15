@@ -6,7 +6,7 @@
 | --- | --- |
 | Branch | `research-personnel-measurement` |
 | Batch 1 report | [personnel measurement](personnel_measurement.md) |
-| Status | Entry step in progress |
+| Status | Decided on 15 September 2026: release v0.2 on retrospective evidence. The prospective archive continues as the post-release monitor. |
 | Authoritative data | Private R2 bucket `page324-data`, read through new empty workspaces under `runs/` |
 
 This batch uses the frozen Batch 1 specification to decide whether the next `v0.*` structural model includes a temporary matchday-squad continuity adjustment. It is a prospective validation, not a new personnel search.
@@ -82,3 +82,63 @@ This rule was written before any prospective outcome. It uses the same archive a
   - Forecast value: at 90 minutes, the whole-round 95% interval of candidate minus control in score NLL is entirely above zero.
 - Remove or correct the adjustment at once when an audited case shows a semantic or data error: a wrong club, a truncated squad, an identity split or an observation after the cutoff.
 - A review that meets neither condition keeps the adjustment. It does not re-estimate κ or change the estimator.
+
+The owner also decided that the release is a permanent change. A rollback, if a review point needs one, uses the Git history. The release keeps no parallel model track and no compatibility path.
+
+## 5. Integration
+
+The release is one pull request from `main` on the branch `personnel-squad-continuity`. It contains no research runner, report or parameter search.
+
+```text
+persistent M7 state
+        +
+temporary matchday-squad continuity adjustment
+        ->
+fixture structural rates
+```
+
+- `src/epl_forecast/personnel.py` holds the frozen specification of section 2 for the matchday squad only. The starting-XI estimator, both representation tables and the research κ for the starting XI are not in the product.
+- The shift enters the match forecast and the season paths of the same fixture. The fitted filter, its likelihood and its sampled states do not change.
+- The public model version is v0.2. The production fingerprint includes the personnel records of the fixtures in the horizon and the code of `personnel.py`, so a new squad, injury, FPL or team-sheet capture that changes a record makes a new forecast.
+- Verification checks that each record is for a fixture in the horizon, that each team sheet was captured before the cutoff, and that each shift equals κ(D_a − D_h) with both clubs within the unresolved limit. The existing check that simulated frequencies agree with the published match probabilities also covers the shift.
+- The public match document gives the discontinuity of each club and the home log-rate shift. It does not give player records.
+- One rule is new in the product module: before any squad capture or FPL snapshot exists at a cutoff, a recent player without contrary dated evidence stays a member. This is the rule of the history-only hindcast (section 11 of the Batch 1 report). It cannot change a prospective snapshot, because squads and FPL were captured from 8 and 9 September 2026.
+
+## 6. Season simulation
+
+- Only a Premier League or Championship fixture that kicks off in the six days after the cutoff gets the shift. Six days is the longest checkpoint of the prospective protocol.
+- A later fixture uses the persistent state only. The squad and availability evidence at a cutoff does not describe a fixture several weeks away, so the current personnel state is not carried through the season.
+- The shift does not change the sampled team states, so it does not carry forward on a path. Playoff matches do not get it.
+- Hindcasts use the same rule with history-only evidence: a matchday squad is known from the London day after its match and a transfer from its date. They use no injury lists, squad captures, FPL statuses or team sheets.
+- The horizon rule was chosen before any prospective measurement. The prospective measurement at 6 days can support it or show that a shorter horizon is necessary. A change needs its own evidence.
+
+## 7. Markets
+
+- The shift enters the structural probabilities before market assistance. κ, q(m, n) and the availability values were not fitted to odds, and market prices do not enter the personnel evidence.
+- The market-pool weight is 1.0, so the market-assisted probability does not change.
+- The personnel contribution stays visible in the public document as the discontinuity of each club and the shift.
+
+## 8. Operational findings
+
+- Team sheets before kickoff are rare. 1 of 121 fixtures in 2026/27 before 15 September had one. Pull request #2 (collection every 9 minutes before kickoff) is open. Until it is merged, the observed D_squad is seldom available, and the 90-minute forecast mostly uses the expected D_squad.
+- GitHub ran 4 scheduled production runs on 15 September 2026. Evidence at a cutoff can be older than its refresh interval.
+- Bolton Wanderers, Cardiff City and Lincoln City have no adjustment until they have eight Championship matches with complete lineup minutes.
+- Section 9 records the production checks of the release branch.
+
+## 9. Post-release monitoring
+
+- The research archive of section 3 continues for fixtures from 17 September 2026 with the freeze commit. It compares the released candidate with the structural M7 control and the realized-squad oracle.
+- The review points and conditions of section 4 stay. At a review point, a failed condition is a reason to remove the adjustment with a new version.
+
+## 10. Deliverable status
+
+| Deliverable | Status |
+| --- | --- |
+| Frozen Batch 1 specification | Section 2 |
+| Entry-step corrections and verification | Section 1. Freeze commit `6fc7d81`, GitHub checks passed. |
+| Prospective measurement results | Not available at the decision. The first prospective fixtures are on 18 September 2026. |
+| Prospective candidate, control and oracle results | Not available at the decision |
+| Informative case audits | The evaluator writes `cases.csv`. 14 development snapshots were flagged. Prospective cases follow each archive run. |
+| Operational findings | Section 8 |
+| Season-simulation treatment | Section 6 |
+| Release decision | Section 4: release on retrospective evidence, recorded as mechanism supported retrospectively, measurement supported in development only, product released without the prospective gate |
