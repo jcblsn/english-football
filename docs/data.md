@@ -6,9 +6,10 @@ The product uses provider data that stays in the private `page324-data` R2 bucke
 
 | Provider | What the product uses | Divisions |
 | --- | --- | --- |
-| API-Football | Fixtures, schedules, status, teams and league standings | All four |
+| API-Football | Fixtures, schedules, status, teams, league standings and team xG | All four |
 | Football-Data | Results and average pre-closing and closing odds | All four forecast divisions; National League results as entry-prior evidence only |
-| Understat | Team xG for each match | Premier League only |
+| API-Football xG | Team xG for each match, from the first match with xG in each division | All four |
+| Understat | Team xG for each match before API-Football xG starts | Premier League only |
 | FPL | Nothing in M7; captured for research | Premier League |
 
 The collector also captures squads, players, lineups, transfers, injuries and match statistics. M7 does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They support research on the [research branch](research.md).
@@ -42,7 +43,7 @@ DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secre
 
 ## Canonical tables
 
-`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds` and `team_process` (xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`.
+`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`.
 
 Each row keeps its provider, its actual retrieval time, its evidence basis and the hash of its raw response. `Dataset(root, cutoff)` shows only the evidence retrieved by the cutoff. `Dataset.fixtures()` joins the providers and refuses contradictory identities, dates and scores.
 

@@ -12,7 +12,7 @@ Read the forecasts with these limits in mind.
 
 ## Inputs
 
-- Only the Premier League has xG. The other three divisions use goals only.
+- API-Football xG starts in January 2023 in the Premier League, August 2023 in the Championship and August 2026 in League One and League Two. The League One and League Two xG has no historical evaluation. A match without xG updates the state on goals only.
 - M7 does not use lineups, injuries, suspensions or transfers.
 - The production workflow wakes each hour. Fixture lists are eligible each hour, and match details are eligible every 15 minutes around kickoff. An hourly wake can still miss very late team news.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.

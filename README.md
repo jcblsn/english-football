@@ -21,7 +21,7 @@ The forecasts also show how much each fixture in the next seven days can move ea
 
 ## Model
 
-One model, M7, makes every published forecast. M7 gives each club a latent strength and a latent openness. These change over time. Goals and, in the Premier League, expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
+One model, M7, makes every published forecast. M7 gives each club a latent strength and a latent openness. These change over time. Goals and expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
 
 See the [methodology](docs/methodology.md) and the [season simulation rules](docs/simulation.md).
 
@@ -60,7 +60,7 @@ The [validation summary](docs/validation.md) gives the results and the commands 
 
 ## Limitations
 
-- Only the Premier League has xG. The other divisions use goals only.
+- xG comes from API-Football. It starts in 2023 in the Premier League and the Championship and in August 2026 in League One and League Two. A match without xG updates the model on goals only.
 - The model does not use lineups, injuries or transfers.
 - The historical evaluation is retrospective, and it covers only nine to eleven seasons in each division.
 - Some playoff and scheduling details are explicit approximations.
