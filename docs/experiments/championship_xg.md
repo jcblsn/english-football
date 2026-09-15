@@ -94,3 +94,40 @@ uv run python scripts/research/archive_prospective_pair.py --experiment champion
 ```
 
 The first pair has the cutoff 2026-09-15T06:06:21Z and code commit `a7e5403`. It is at `research/evidence/championship-xg/prospective/eng-championship/20260915T060621Z` in `page324-data`. Both archives pass 1,582 of 1,582 product checks. The control filter uses no xG, because the Championship filter updates only from Championship matches. The candidate admits 1,721 API xG matches with a calibrated scale of 0.968. Across 471 remaining matches, the median largest H/D/A probability change is 0.030 and the maximum is 0.115. Make one pair before each Championship match round. Score the pairs on the prespecified slices after the results.
+
+## Season panel
+
+The panel forecasts the Championship seasons 2023/24, 2024/25 and 2025/26 from five origins with product M7 and with `M7-API-XG`. Both models use the same code commit `4c38c5e`, origins, schedules, seed 20260908, 10,000 paths and rules. `M7-API-XG` is product M7 with calibrated API Championship xG. 72 club-seasons are scored at each origin.
+
+Candidate minus control. Negative is better.
+
+| Season | Origin | Rank RPS | Points CRPS |
+| --- | --- | ---: | ---: |
+| 2023/24 | preseason | 0.00000 | 0.000 |
+| 2023/24 | MW6 | 0.00000 | 0.000 |
+| 2023/24 | MW12 | +0.00041 | −0.342 |
+| 2023/24 | MW19 | +0.00024 | −0.286 |
+| 2023/24 | MW30 | −0.00171 | −0.314 |
+| 2024/25 | preseason | −0.01225 | −0.570 |
+| 2024/25 | MW6 | −0.00850 | −0.041 |
+| 2024/25 | MW12 | −0.00989 | −0.198 |
+| 2024/25 | MW19 | −0.00763 | −0.168 |
+| 2024/25 | MW30 | −0.00280 | +0.054 |
+| 2025/26 | preseason | −0.00423 | −0.134 |
+| 2025/26 | MW6 | −0.01558 | −0.621 |
+| 2025/26 | MW12 | −0.01514 | −0.577 |
+| 2025/26 | MW19 | +0.00437 | +0.200 |
+| 2025/26 | MW30 | −0.00423 | −0.198 |
+
+The 2023/24 preseason and MW6 forecasts are identical, because fewer than 100 earlier API xG matches were available. This is the expected chronology.
+
+Pooled over the three seasons, the candidate has lower rank RPS at every origin: −0.0055 at preseason, −0.0080 at MW6, −0.0082 at MW12, −0.0010 at MW19 and −0.0029 at MW30. Points CRPS is lower at every origin, from −0.08 at MW19 to −0.37 at MW12. The report also gives whole-season resampled intervals. With three season clusters, and one season with no change at two origins, these intervals are not useful inference and this record does not use them.
+
+The candidate intervals are narrower. The 90% points width decreases by 0.4 to 1.5 points. Points coverage changes by origin: 80% coverage decreases at MW6 (0.806 to 0.778), MW12 (0.792 to 0.750) and MW30 (0.819 to 0.778), and 90% coverage increases at MW12 (0.889 to 0.944), MW19 (0.917 to 0.931) and MW30 (0.847 to 0.875). Relegation Brier is lower at every origin. Promotion Brier is lower at preseason, MW6, MW12 and MW19 and higher at MW30 (+0.0027).
+
+The panel is at `research/evidence/championship-xg/4c38c5e/season-panel` in `page324-data`. Reproduce with an empty workspace:
+
+```sh
+uv run python scripts/evaluate_seasons.py --data runs/ws-xg-panel --competition eng-championship --models M7 M7-API-XG --seasons 2023 2024 2025 --output runs/xg-season-panel
+uv run python scripts/report_seasons.py --evaluation runs/xg-season-panel --output runs/xg-season-panel/report --baseline M7
+```
