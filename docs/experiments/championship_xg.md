@@ -54,3 +54,33 @@ Few Championship seasons have full API xG coverage. Show each season, pooled mat
 ### Redirect or stop rule
 
 Stop the Championship comparison if the semantic checks fail or if the Premier League positive control cannot be explained. A failed raw API candidate does not show that xG is useless. A failed calibrated observation model is evidence against that representation. Park the channel only if credible representations fail both the positive control and the Championship high-information test.
+
+## Coverage audit
+
+`scripts/research/audit_xg_coverage.py` counts finished regular-season matches with API team xG for both teams. It reads R2 through an empty workspace. The result on 15 September 2026:
+
+| Competition | Season | Matches with API xG | Evidence basis |
+| --- | --- | ---: | --- |
+| Premier League | 2022/23 | 193 of 380 | retrospective |
+| Premier League | 2023/24–2025/26 | 380 of 380 in each season | retrospective |
+| Premier League | 2026/27 | 30 of 40 | retrospective and captured |
+| Championship | 2023/24 | 550 of 552 | retrospective |
+| Championship | 2024/25–2025/26 | 552 of 552 in each season | retrospective |
+| Championship | 2026/27 | 67 of 81 | retrospective and captured |
+| League One | 2026/27 | 47 of 71 | captured |
+| League Two | 2026/27 | 47 of 72 | captured |
+
+There is no API xG before 2022/23 in any division, and no historical API xG in League One or League Two. The National League has none. The Championship has three fully covered seasons. The calibrated candidate needs 100 earlier API matches before it admits xG, so it starts in the autumn of 2023/24. The chronological Championship comparison therefore has two full seasons, 2024/25 and 2025/26, and one partial season, 2023/24. League One and League Two can only be evaluated prospectively.
+
+## Semantic and synthetic checks
+
+The tests on this branch pass:
+
+- With s = 1, the likelihood, score and curvature are identical to the current M7 likelihood.
+- A scaled observation equals the unit-scale likelihood at x / s, less a constant log s per observation. The constant is the same for each noise member, so the member weights do not change.
+- The scaled joint density integrates to the Poisson goal marginal.
+- Samples from the scaled model have E[X] = s × rate, and the calibrated estimator recovers s = 0.8 from simulated matches.
+- A calibrated provider with fewer than the minimum earlier matches gives the goals-only filter exactly.
+- The calibrated scale uses only observations available at the cutoff. A changed future xG value does not change the forecast.
+- An incremental fit filters again from the start when the scale changes, and it agrees with a batch fit.
+- Higher provider xG raises the attacking log rate of the team.
