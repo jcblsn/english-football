@@ -19,3 +19,5 @@ data/audits/
 data/*.lock
 data/.normalize-*/
 site/data/
+evidence/*
+!evidence/README.md

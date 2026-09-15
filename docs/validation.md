@@ -7,7 +7,7 @@ Four kinds of evidence support M7. This page gives the results and the commands 
 3. A match scoreboard in the Premier League.
 4. The prospective forecast record.
 
-All historical forecasts on this page were made by code commit `fc94353` with the product configuration. The compact results are in [`evidence/`](../evidence/README.md).
+All historical forecasts on this page were made by code commit `fc94353` with the product configuration. The [evidence guide](../evidence/README.md) identifies the generated files in private R2 storage.
 
 ## Product checks
 
@@ -68,7 +68,7 @@ In the Premier League, no interval on rank RPS or points CRPS excludes zero. The
 | MW19 | 0.0966 | 0.0942 | −0.0024 [−0.0056, +0.0009] | 4.73 | 4.61 | −0.13 [−0.29, +0.04] | 82.9% / 90.3% |
 | MW30 | 0.0687 | 0.0679 | −0.0008 [−0.0026, +0.0009] | 3.42 | 3.38 | −0.04 [−0.15, +0.06] | 86.1% / 89.8% |
 
-Each file `evidence/season_panels/<division>/paired_comparisons.csv` holds every comparison, including each event Brier score. Each `summary.csv` holds the 50%, 80%, 90% and 95% coverage and width of the points and rank intervals.
+Each private `research/evidence/fc94353/season_panels/<division>/paired_comparisons.csv` object holds every comparison, including each event Brier score. Each `summary.csv` object holds the 50%, 80%, 90% and 95% coverage and width of the points and rank intervals.
 
 ## Match scoreboard
 
@@ -109,10 +109,10 @@ Match scores are only a part of the case for M7. The difference between the mode
 
 ## Reproduce
 
-Without provider data, rescore a committed season panel:
+Without provider data, download a private season panel to `runs/evidence/` and rescore it:
 
 ```sh
-uv run python scripts/rescore_seasons.py --archive evidence/season_panels/eng-league-one/forecast_marginals.json.gz --output runs/rescore-league-one
+uv run python scripts/rescore_seasons.py --archive runs/evidence/eng-league-one/forecast_marginals.json.gz --output runs/rescore-league-one
 uv run python scripts/report_seasons.py --evaluation runs/rescore-league-one --output runs/rescore-league-one/report
 ```
 
@@ -120,7 +120,7 @@ With the local data archive, run a season panel again and archive it:
 
 ```sh
 OPENBLAS_NUM_THREADS=1 uv run python scripts/evaluate_seasons.py --competition eng-league-one --models M2 M7 --seasons 2015 2016 2017 2018 2021 2022 2023 2024 2025 --output runs/panel-league-one
-uv run python scripts/archive_seasons.py --evaluation runs/panel-league-one --output evidence/season_panels/eng-league-one/forecast_marginals.json.gz
+uv run python scripts/archive_seasons.py --evaluation runs/panel-league-one --output runs/evidence/eng-league-one/forecast_marginals.json.gz
 ```
 
 The Premier League and the Championship use the default seasons, 2015/16–2025/26. League One and League Two leave out 2019/20 and 2020/21, because the curtailed 2019/20 season has no complete table.
