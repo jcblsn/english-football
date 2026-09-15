@@ -122,6 +122,10 @@ In the Championship, M7 had no xG before this change. On 1,656 matches in 2023/2
 
 League One and League Two have API-Football xG only from August 2026, so this change has no historical evaluation there.
 
+### Production checks
+
+At one cutoff on 15 September 2026, the forecast of each division passes every product check: 1,151 in the Premier League, 1,582 in the Championship, 1,602 in League One and 1,599 in League Two. The filters use 4,590, 1,721, 47 and 47 xG matches. Each derived public document has model version `v0.1` and passes the publication boundary.
+
 The market pool was fitted again on the API-Football xG predictions of the 1,140 Premier League matches. It gives a market weight of 1.0 and reproduces `configs/market_pool.json` exactly, so the market-assisted probability does not change.
 
 ## Prospective record
