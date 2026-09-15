@@ -3,7 +3,6 @@
 import argparse
 import csv
 import json
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -100,7 +99,9 @@ def source_context(matches, complete_seasons, selected_seasons):
 
 
 def paired_rows(control, candidate, context):
-    key = lambda row: (row["season_id"], row["origin"], row["team_id"])
+    def key(row):
+        return row["season_id"], row["origin"], row["team_id"]
+
     left, right = ({key(row): row for row in rows} for rows in (control, candidate))
     if left.keys() != right.keys():
         raise ValueError("Control and candidate season-panel cases differ")
