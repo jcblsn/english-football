@@ -186,3 +186,7 @@ The match run is at `research/evidence/championship-xg/77b685e/match` and the co
 uv run python scripts/research/evaluate_xg_observation.py predict --competition eng-championship --arm api-calibrated --data runs/ws-xg-championship-api-calibrated --output runs/xg-match/eng-championship
 uv run python scripts/research/evaluate_xg_observation.py report --competition eng-championship --data runs/ws-xg-report --output runs/xg-match/eng-championship
 ```
+
+## Production outcome
+
+On 15 September 2026, the product owner chose a simpler representation for v0.1 than this experiment's calibrated candidate. Main commit `080f799` uses API-Football team xG in every division with no provider scale, from the first match with API-Football xG in each division, and Understat only for Premier League matches before that date. The raw arm of this experiment (s = 1) gave the same Championship match results as the calibrated arm, and the product M7 gives the same Championship match probabilities as the raw arm to within 3e-16. The matched prospective control archive was not continued. The product validation is in `docs/validation.md` on main.
