@@ -14,6 +14,7 @@ This directory documents the evidence behind [validation](../docs/validation.md)
 | `research/evidence/national-league-entry/28c0f5d/season-candidate/` | Matched M7 season forecasts with complete National League source seasons available. |
 | `research/evidence/national-league-entry/0729098/season-report/` | Paired entrant and whole-League-Two season results. |
 | `research/evidence/api-football-xg/862a1c4/match-validation/` and `match-holdout/` | Premier League match scoreboard with API-Football xG. |
+| `research/evidence/api-football-xg/862a1c4/market-pool/` | Market pool fitted again on the API-Football xG predictions. |
 | `research/evidence/championship-xg/77b685e/match/eng-championship/` | Championship goals-only and API-Football xG match forecasts; the `api-raw` arm is the product rule. |
 
 Code commit `fc94353` made all these forecasts, with the product configuration.

@@ -122,6 +122,8 @@ In the Championship, M7 had no xG before this change. On 1,656 matches in 2023/2
 
 League One and League Two have API-Football xG only from August 2026, so this change has no historical evaluation there.
 
+The market pool was fitted again on the API-Football xG predictions of the 1,140 Premier League matches. It gives a market weight of 1.0 and reproduces `configs/market_pool.json` exactly, so the market-assisted probability does not change.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.
