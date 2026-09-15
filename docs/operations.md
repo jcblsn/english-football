@@ -34,6 +34,8 @@ A failed or unverified division does not publish. Other verified divisions in th
 
 Fixture lists are eligible each hour. Match details are eligible every 15 minutes near kickoff and have bounded correction checks after full time. Other sources keep their own intervals.
 
+Each collection run that sends requests to API-Football writes one usage record to `audits/api_football/<UTC timestamp>.json` in `page324-data`. The record has the number of requests and the last daily limit and remaining values from the provider. `audits/collection.json` shows the same values for the most recent run. Use these records to see the real usage over a week.
+
 A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because M7 does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
 
 Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. The script compacts from an empty workspace, so local files do not enter the R2 history. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance. Later routine runs add only new batches to the compact catalog. Compaction does not delete earlier R2 objects.
