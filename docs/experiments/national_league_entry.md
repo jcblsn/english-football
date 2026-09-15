@@ -94,8 +94,3 @@ The first pair has the cutoff 2026-09-15T05:45:07Z. It is at `research/evidence/
 - Paired season report: `research/evidence/national-league-entry/0729098/season-report` in `page324-data`.
 
 Reproduce the source acquisition and match evaluation with the research runners. Reproduce the season forecasts with `scripts/evaluate_seasons.py`, using `eng-league-one eng-league-two` for the control training set and adding `eng-national-league` for the candidate. Use the seasons, 10,000 simulations and seed recorded in the retained manifests.
-
-
-### Schedule
-
-A per-user launchd agent on the operator Mac runs the pair runner once each 24 hours from this worktree, and once when it is loaded. The data come from R2 and the forecasts use the product freshness check, so a pair is made before the next match round. Logs are in `runs/prospective/` of the worktree. The job was installed on 15 September 2026 with `epl_forecast.pipeline.install_launch_agent`. Remove it with `launchctl bootout gui/$(id -u)/org.epl-forecast.prospective-national-league` and delete `~/Library/LaunchAgents/org.epl-forecast.prospective-national-league.plist`.
