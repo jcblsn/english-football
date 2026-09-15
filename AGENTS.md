@@ -25,4 +25,5 @@ Ruff E501 is disabled, so the formatter owns line length in Python. Do not hand-
 - Fetch through `src/epl_forecast/data/capture.py`, never a web-reader tool. Football-Data 503s through readers and on the `www` host.
 - Retained Understat payloads are gzip; decompress on the `\x1f\x8b` magic byte. Legacy FPL archives (2016–19) are Latin-1, not UTF-8.
 - Team identity comes from `data/teams.csv` verbatim — extend the reviewed registry rather than inventing a slug.
+- The private R2 bucket `page324-data` is the authoritative history. Generate hindcasts, season panels and other historical runs from R2 with an empty or ephemeral `--data` workspace, for example a new directory under `runs/`. Do not use the contents of the repository `data/` directory as input: it can be stale and incomplete. `configs/product.toml` sets the M7 `data_root` to `data`, so a runner must replace it with its workspace.
 - Preserve raw provider evidence. When a source is internally inconsistent, mark the field unknown and surface it in the audit; do not normalize it away.

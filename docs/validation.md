@@ -116,20 +116,20 @@ uv run python scripts/rescore_seasons.py --archive runs/evidence/eng-league-one/
 uv run python scripts/report_seasons.py --evaluation runs/rescore-league-one --output runs/rescore-league-one/report
 ```
 
-With the local data archive, run a season panel again and archive it:
+With access to `page324-data`, run a season panel again and archive it. The history comes from R2. The `--data` directory must be a new, empty workspace, not the repository `data/` directory:
 
 ```sh
-OPENBLAS_NUM_THREADS=1 uv run python scripts/evaluate_seasons.py --competition eng-league-one --models M2 M7 --seasons 2015 2016 2017 2018 2021 2022 2023 2024 2025 --output runs/panel-league-one
-uv run python scripts/archive_seasons.py --evaluation runs/panel-league-one --output runs/evidence/eng-league-one/forecast_marginals.json.gz
+OPENBLAS_NUM_THREADS=1 uv run python scripts/evaluate_seasons.py --data runs/workspace-panel --competition eng-league-one --models M2 M7 --seasons 2015 2016 2017 2018 2021 2022 2023 2024 2025 --output runs/panel-league-one
+uv run python scripts/archive_seasons.py --data runs/workspace-panel --evaluation runs/panel-league-one --output runs/evidence/eng-league-one/forecast_marginals.json.gz
 ```
 
 The Premier League and the Championship use the default seasons, 2015/16–2025/26. League One and League Two leave out 2019/20 and 2020/21, because the curtailed 2019/20 season has no complete table.
 
-With the local data archive, run the match scoreboard and refit the market pool:
+With access to `page324-data` and an empty workspace, run the match scoreboard and refit the market pool:
 
 ```sh
-uv run epl-forecast evaluate --split validation --output runs/match-validation
-uv run epl-forecast evaluate --split holdout --output runs/match-holdout
+uv run epl-forecast evaluate --data runs/workspace-scoreboard --split validation --output runs/match-validation
+uv run epl-forecast evaluate --data runs/workspace-scoreboard --split holdout --output runs/match-holdout
 uv run python scripts/fit_market_pool.py --predictions <predictions> --markets <market predictions> --output runs/market-pool
 ```
 

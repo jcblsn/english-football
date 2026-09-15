@@ -51,6 +51,9 @@ def save_rows(path: Path, rows: list[dict]) -> None:
 
 def evaluate_command(args) -> None:
     config = load_config(args.config)
+    for spec in config["models"]:
+        if "data_root" in spec["parameters"]:
+            spec["parameters"]["data_root"] = str(args.data)
     matches, odds, manifest = load_dataset(args.data)
     start = date.fromisoformat(config[f"{args.split}_start"])
     end = date.fromisoformat(config[f"{args.split}_end"])

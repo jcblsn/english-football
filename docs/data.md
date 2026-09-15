@@ -19,7 +19,9 @@ Set `API_FOOTBALL_KEY` and the R2 settings in the environment or in an ignored `
 
 ## Storage
 
-R2 is the durable store. A run uses `data/` only as an ephemeral workspace.
+R2 is the durable store and the authoritative history. A run uses `data/` only as an ephemeral workspace.
+
+A historical run, for example a hindcast or a season panel, must read the canonical history from `page324-data`. Give it an empty workspace, such as a new directory under `runs/`. Do not use files that an earlier run left in the repository `data/` directory as input. `Dataset` reads local manifests together with the R2 catalog, so an old local workspace can change the history that a run sees.
 
 | R2 key | Content |
 | --- | --- |
