@@ -166,3 +166,49 @@ def test_incremental_fit_filters_again_when_the_calibrated_scale_changes(small_h
     assert model.scales == batch.scales
     np.testing.assert_allclose(model.mean, batch.mean, atol=1e-10)
     np.testing.assert_allclose(model.covariance, batch.covariance, atol=1e-10)
+
+
+def test_calibrated_scale_recovers_a_known_provider_scale():
+    from datetime import date
+
+    from epl_forecast.models.xg_observation import ChanceObservation, chance_rows
+    from epl_forecast.models.xg_quality_tilt import calibrated_scale
+
+    rng = np.random.default_rng(411)
+    log_rates = np.log(rng.uniform(0.6, 2.2, size=(4000, 2)))
+    goals, xg = ChanceObservation([], [], 0.2, provider_scale=0.8).sample(log_rates, rng)
+    rows = chance_rows(
+        {
+            "match_id": f"m{i}",
+            "provider": "api_football",
+            "match_date": "2024-01-01",
+            "available_on": "2024-01-02",
+            "home_goals": int(goals[i, 0]),
+            "away_goals": int(goals[i, 1]),
+            "home_xg": float(xg[i, 0]),
+            "away_xg": float(xg[i, 1]),
+        }
+        for i in range(len(goals))
+        if not np.any((xg[i] == 0) & (goals[i] > 0))
+    )
+    estimate = calibrated_scale(rows, "api_football", date(2024, 1, 2))
+    assert estimate == pytest.approx(0.8, abs=0.03)
+    assert calibrated_scale(rows, "api_football", date(2024, 1, 1)) is None
+
+
+def test_higher_xg_raises_the_attacking_rate_in_the_calibrated_filter(small_history):
+    cutoff = small_history[-1].available_on
+    settings = {"provider_scales": {"api_football": "calibrated"}, "calibration_matches": 1}
+    low = [{**r, "provider": "api_football"} for r in observations(small_history, 0.9, 0.9)]
+    high = [{**r, "home_xg": 2.5} if i % 2 == 0 else r for i, r in enumerate(low)]
+    base = XGQualityTiltFilter(low, **settings).fit(small_history, cutoff)
+    lifted = XGQualityTiltFilter(high, **settings).fit(small_history, cutoff)
+    team = small_history[0].fixture.home_team_id
+    season = small_history[-1].fixture.season_id
+    lifted_home = [m for i, m in enumerate(small_history) if i % 2 == 0]
+    teams = {m.fixture.home_team_id for m in lifted_home}
+    assert team in teams
+    assert (
+        lifted.team_summary(team, season)["attack_log_rate"]
+        > base.team_summary(team, season)["attack_log_rate"]
+    )
