@@ -213,34 +213,43 @@ Unknown membership or unknown availability makes the player unresolved. An unres
 
 `tests/test_personnel_semantics.py` covers the batch invariants. An observation after the cutoff cannot change a feature. Substitutes do not enter confirmed-XI continuity, and the confirmed D equals the historical feature. A lineup captured after kickoff is not used. Identity is not membership. Availability is scoped to club and fixture. A new-club FPL status cannot restore a player to the former club. Unresolved players cannot create a large shock. Equal continuity gives zero adjustment. κ = 0 gives the control exactly. The adjustment does not change the fitted model. Odds in the store do not change the personnel evidence, and the control is the structural M7 specification.
 
-## 4. Confirmed-XI prospective archive
+## 4. One personnel-aware forecast observed at fixed horizons
 
-### Collection
+### Product direction
 
-The prospective test needs official starting XIs that were captured before kickoff. On 15 September 2026, the store had such a capture for only 1 of 121 Premier League and Championship fixtures in 2026/27. The production workflow woke each hour, but GitHub ran only 4 scheduled runs on 15 September. Match details were due every 15 minutes from 90 minutes before kickoff.
+The target is one structural forecast that is updated continuously: the persistent M7 state plus the latest cutoff-safe expected personnel adjustment. There is no separate pre-lineup product and no separate confirmed-XI product. The horizons below are research evaluation checkpoints of the same algorithm, not model identities.
 
-Pull request [#2](https://github.com/jcblsn/english-football/pull/2) changes only collection. Production wakes every 10 minutes, match details are due every 9 minutes in the 75 minutes before kickoff and each hour during the match. M7 and the forecast fingerprint rules do not change. The pull request passed its checks but is not merged. Until it is merged, the confirmed-XI arm gets almost no eligible fixtures.
+### Collection decision
+
+Pull request [#2](https://github.com/jcblsn/english-football/pull/2) proposed a 10-minute production schedule so that official starting XIs would be captured before kickoff. It was closed without merge on 15 September 2026.
+
+- No forecast now depends on an official XI captured before kickoff. The confirmed-XI arm was removed from the archive.
+- Official lineups are outcome labels. The existing captures after full time keep the final starting XI and the whole matchday squad, which is enough for every label in sections 6 and 7.
+- A tighter capture schedule would add collection complexity with no research or product need. It can be reconsidered if a specific diagnostic needs an XI captured before kickoff.
+
+The oracle candidate in the evaluation applies the frozen coefficient to the realized label after the match. It separates mechanism error from measurement error at no collection cost, and it is never an operational forecast.
 
 ### Archive design
 
-`scripts/research/personnel_prospective.py archive` makes three arms for each Premier League and Championship regular-season fixture in 2026/27:
+`scripts/research/personnel_prospective.py archive` runs the same estimator for each Premier League and Championship regular-season fixture in 2026/27 at four cutoffs: 6 days, 3 days, 24 hours and 90 minutes before kickoff. The grid was fixed before any horizon result and was not tuned. A snapshot is made only when its cutoff is on or after 9 September 2026, when all personnel sources were first captured.
 
-| Arm | Personnel cutoff | Personnel input |
-| --- | --- | --- |
-| `confirmed-xi` | The later of the latest captures before kickoff with 11 starters for each club | Official starting XIs and recent minutes |
-| `expected-24h` | 24 hours before kickoff | Expected-continuity estimator |
-| `expected-90m` | 90 minutes before kickoff | Expected-continuity estimator |
+Each snapshot keeps:
+
+- the horizon, kickoff, personnel cutoff and M7 information cutoff;
+- the latest squad, injury and FPL retrieval times;
+- for each club, the eight reference matches and recent minutes;
+- for each recent player, membership state, basis and conflicts, recent selection, availability for each representation, availability evidence and the probability for each representation;
+- for each club and representation, the expected D and unresolved weight;
+- the structural M7 control H/D/A probabilities, expected goals, 16×16 score grid, probability outside the grid and score-distribution parameters;
+- for each representation, the frozen κ, the applied log-rate shift and the candidate forecast.
 
 Rules:
 
-- A fixture enters the confirmed-XI arm only when both starting XIs were captured before kickoff. A lineup first captured at or after kickoff is never used.
-- The confirmed D is the historical feature. The only difference is that the target XI comes from a capture before kickoff.
-- The candidate uses the frozen κ = 0.26883582806934564. The runner never fits κ.
-- The control is the structural product M7. It is fitted from data retrieved before the London day of the cutoff, with that day as the training cutoff. Control and candidate in one arm use the same fit. Market prices do not enter either forecast.
-- Each record keeps the arm, kickoff, personnel cutoff, lineup retrieval times, M7 information cutoff, the latest squad, injury and FPL retrieval times, the eight reference matches and recent minutes of each club, the starters with identity provenance, home and away D, the log-rate shifts, and the control and candidate H/D/A probabilities, expected goals, 16×16 score grid and probability outside the grid.
-- A fixture that kicks off from 17 September 2026 00:00 UTC is prospective. The code, the propensity table and κ were committed before the first such fixture. Earlier 2026/27 fixtures are development cases, and the doubtful mapping used their captures.
-- Every provider row keeps its retrieval time, so the runner rebuilds each arm from the observations retrieved by its cutoff. The manifest records the archive time. An archive made after kickoff therefore uses the same inputs as an archive made at the cutoff, but it is not an observed forecast publication.
-- `evaluate` scores finished fixtures, and compares each estimate with the realized starting-XI D. The realized D uses the same recent minutes as the archived arm.
+- The control is the structural product M7, fitted from data retrieved before the London day of the cutoff. Market prices do not enter either forecast.
+- Each representation has one κ fitted once on all 8,073 oracle matches before 2026/27: 0.26883582806934564 for D_xi and 0.43161578781583126 for D_squad. The runner never fits κ.
+- A fixture that kicks off from 17 September 2026 00:00 UTC is prospective. The estimator, both propensity tables, both κ values and the horizon grid were committed before that time. Earlier 2026/27 fixtures are development cases, and the doubtful mapping used their captures.
+- The runner rebuilds each snapshot from the observations retrieved by its cutoff. An archive made later uses the same inputs, but it is not a publication at the cutoff.
+- `evaluate` attaches the realized labels to the same snapshots after the match. A label uses the eight matches before the target date and the final starting XI or matchday squad. It scores each snapshot, compares estimates between horizons and scores the oracle candidate.
 
 Archives go to `research/evidence/personnel-measurement/<commit>/<run>/` in `page324-data`.
 
@@ -265,14 +274,15 @@ The development archive and its evaluation are `research/evidence/personnel-meas
 
 ### Definition
 
-For club i, target fixture f and cutoff c, with recent minutes w_j from the same eight-match window as the historical feature:
+The estimator gives both representations from section 2. For club i, target fixture f and cutoff c, with recent minutes w_j from the same eight-match window as the historical feature:
 
 ```text
 E[D] = 1 − Σ w_j p_j / Σ w_j, over resolved players j
 ```
 
 - p_j = 0 when the player is departed at the cutoff.
-- p_j = a_j × s(k_j, l_j) when the player is a member. a_j is the availability from section 3. k_j is the number of starts in the eight window matches, and l_j shows whether the player started the last window match.
+- For D_xi, p_j = a_j × s(k_j, l_j) when the player is a member. a_j is the availability from section 3, with doubtful = 0.1. k_j is the number of starts in the eight window matches, and l_j shows whether the player started the last window match.
+- For D_squad, p_j = a_j × q(m_j, n_j) when the player is a member. Here doubtful = 0.3, because 25 of 87 doubtful players were in the matchday squad before 17 September 2026. m_j is the number of window matchday squads with the player, and n_j shows whether the player was in the last one.
 - The player is unresolved when membership or availability is unknown.
 - A candidate is made only when both clubs have at most 25% unresolved recent weight.
 
@@ -280,7 +290,7 @@ Because the Quality correction is linear in D, E[D] enters the frozen mapping di
 
 ### Start propensity
 
-`scripts/research/start_propensity.py` estimated s(k, l) once from Premier League and Championship matches in 2021/22–2025/26. The population is players with minutes in the eight previous matches. Players listed by API-Football for the target fixture (19,643) and players with later evidence that they left the club (11,446) are excluded. The table is `src/epl_forecast/research/start_propensity.json`.
+`scripts/research/start_propensity.py` estimated s(k, l) once from Premier League and Championship matches in 2021/22–2025/26. The population is players with minutes in the eight previous matches. Players listed by API-Football for the target fixture (19,643) and players with later evidence that they left the club (11,445) are excluded. The same run estimates q(m, n) from the same player-matches. The table is `src/epl_forecast/research/start_propensity.json`.
 
 | Starts in last eight | Did not start last match | Started last match |
 | ---: | ---: | ---: |
@@ -296,7 +306,22 @@ Because the Quality correction is linear in D, E[D] enters the frozen mapping di
 
 Each cell has at least 3,186 player-matches. The last start is strongly informative: a player with seven starts who did not start the last match starts next with probability 0.59, and with 0.86 if the player did.
 
-The historical injury records are final provider records, not captures before kickoff. They are used only to remove listed players from this table.
+Matchday-squad propensity q(m, n):
+
+| Squads in last eight | Not in last squad | In last squad |
+| ---: | ---: | ---: |
+| 1 | 0.297 | 0.917 |
+| 2 | 0.345 | 0.911 |
+| 3 | 0.397 | 0.909 |
+| 4 | 0.402 | 0.907 |
+| 5 | 0.474 | 0.914 |
+| 6 | 0.522 | 0.924 |
+| 7 | 0.628 | 0.939 |
+| 8 | — | 0.959 |
+
+Each cell has at least 1,657 player-matches. An available member who was in the last matchday squad is in the next one with probability 0.91–0.96, whatever the earlier selection. The squad quantity therefore depends mostly on membership and availability, and much less on selection.
+
+The historical injury records are final provider records, not captures before kickoff. They are used only to remove listed players from these tables.
 
 ### Coverage
 

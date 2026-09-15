@@ -51,7 +51,7 @@ COMPETITIONS = ("eng-premier-league", "eng-championship")
 SEASONS = ("2025-2026", "2026-2027")
 TARGET_SEASON = "2026-2027"
 # Fitted once on all 8,073 oracle matches before 2026/27. Never refit on 2026/27 outcomes.
-KAPPA = {"xi": 0.26883582806934564, "squad": None}
+KAPPA = {"xi": 0.26883582806934564, "squad": 0.43161578781583126}
 # Squads, injuries and FPL availability were all captured from this time.
 SOURCES_FROM = datetime(2026, 9, 9, tzinfo=UTC)
 # A fixture that kicks off from this time is prospective. Earlier fixtures are development cases.
