@@ -38,8 +38,18 @@ def manifest_state(manifests: list[dict]) -> dict:
     }
 
 
-def _upload_missing(store: R2Store, root: Path, paths: list[Path], existing: set[str]) -> int:
-    pending = [path for path in paths if path.relative_to(root).as_posix() not in existing]
+def _upload_missing(
+    store: R2Store, root: Path, paths: list[Path], existing: set[str] | None = None
+) -> int:
+    pending = [
+        path
+        for path in paths
+        if not (
+            path.relative_to(root).as_posix() in existing
+            if existing is not None
+            else store.exists(path.relative_to(root).as_posix())
+        )
+    ]
 
     def upload(path: Path) -> None:
         store.upload(path, path.relative_to(root).as_posix(), immutable=True)
@@ -49,21 +59,48 @@ def _upload_missing(store: R2Store, root: Path, paths: list[Path], existing: set
     return len(pending)
 
 
-def sync_data(root: Path, store: R2Store) -> dict:
+def sync_data(
+    root: Path,
+    store: R2Store,
+    *,
+    manifest_paths: list[Path] | None = None,
+    request_paths: list[Path] | None = None,
+) -> dict:
+    """Upload canonical objects, then advance their compact state pointers.
+
+    Routine callers pass the files created in the current collection. A migration can
+    omit them to scan the local archive once and skip keys that already exist remotely.
+    """
     root = Path(root)
-    existing = set(store.keys())
-    uploaded = 0
-    new_manifests = []
-    for directory in IMMUTABLE_DATA_DIRECTORIES:
-        paths = sorted(path for path in (root / directory).rglob("*") if path.is_file())
-        if directory == "manifests":
-            new_manifests = [
-                json.loads(path.read_text())
-                for path in paths
-                if path.relative_to(root).as_posix() not in existing
-            ]
-        uploaded += _upload_missing(store, root, paths, existing)
-        existing.update(path.relative_to(root).as_posix() for path in paths)
+    migration = manifest_paths is None or request_paths is None
+    if migration:
+        existing = set(store.keys())
+        manifest_paths = sorted((root / "manifests").glob("*.json"))
+        request_paths = sorted((root / "requests").glob("*.json"))
+        new_manifests = [
+            json.loads(path.read_text())
+            for path in manifest_paths
+            if path.relative_to(root).as_posix() not in existing
+        ]
+        new_requests = [json.loads(path.read_text()) for path in request_paths]
+        paths = [
+            path
+            for directory in IMMUTABLE_DATA_DIRECTORIES
+            for path in (root / directory).rglob("*")
+            if path.is_file()
+        ]
+    else:
+        existing = None
+        manifest_paths = sorted(Path(path) for path in manifest_paths)
+        request_paths = sorted(Path(path) for path in request_paths)
+        new_manifests = [json.loads(path.read_text()) for path in manifest_paths]
+        new_requests = [json.loads(path.read_text()) for path in request_paths]
+        paths = [*manifest_paths, *request_paths]
+        paths.extend(root / record["raw_path"] for record in new_requests)
+        paths.extend(
+            root / item["path"] for manifest in new_manifests for item in manifest["files"]
+        )
+    uploaded = _upload_missing(store, root, sorted(set(paths)), existing)
     audits = sorted(path for path in (root / "audits").glob("*.json") if path.is_file())
     for path in audits:
         store.upload(path, path.relative_to(root).as_posix())
@@ -72,7 +109,7 @@ def sync_data(root: Path, store: R2Store) -> dict:
         store.get_json("state/collection.json", {}).get("latest_by_url", {}).values()
     )
     manifests = manifest_state([*remote_manifests, *new_manifests])
-    requests = collection_state([*remote_requests, *read_requests(root)])
+    requests = collection_state([*remote_requests, *new_requests])
     store.put_json("state/manifests.json", manifests)
     store.put_json("state/collection.json", requests)
     return {
@@ -81,6 +118,12 @@ def sync_data(root: Path, store: R2Store) -> dict:
         "manifests": len(manifests["manifests"]),
         "request_urls": len(requests["latest_by_url"]),
     }
+
+
+def compaction_due(store: R2Store, max_incremental_batches: int = 250) -> bool:
+    manifests = store.get_json("state/manifests.json", {}).get("manifests", [])
+    incremental = sum(not manifest.get("covers_history") for manifest in manifests)
+    return incremental >= max_incremental_batches
 
 
 def sync_tree(root: Path, store: R2Store, prefix: str) -> dict:

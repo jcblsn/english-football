@@ -29,7 +29,7 @@ R2 is the durable store. A run uses `data/` only as an ephemeral workspace.
 | `manifests/` | Canonical manifests. A Parquet file is visible only after its manifest enters the compact state. |
 | `audits/` | Collection status and coverage audits. |
 | `state/collection.json` | The latest request for each URL. Routine collection reads this compact state instead of the full request archive. |
-| `state/manifests.json` | The canonical manifest catalog. |
+| `state/manifests.json` | The compact retained base and the canonical batches collected after it. |
 | `state/forecast.json` | The last published effective-input fingerprint for each division. |
 | `runs/forecasts/` | Private forecast archives, logs and verification reports. |
 
@@ -70,6 +70,8 @@ uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM fixtu
 ```
 
 `data normalize` replays every raw capture into a new local workspace. It replaces the local canonical files only after the new files pass their checks. Stop scheduled runs first.
+
+Routine synchronization uploads only objects from the current collection. It does not list the full bucket. Canonical compaction is a maintenance task, not part of each collection. Run `uv run python scripts/compact_r2.py` after the incremental-batch threshold is reached. The default threshold is 250 batches.
 
 A backfill of history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
 

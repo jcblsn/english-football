@@ -12,7 +12,7 @@ uv run epl-forecast operate
 
 1. It loads compact operational state from `page324-data`.
 2. It collects each data source when that source is eligible.
-3. It uploads raw payloads and canonical Parquet before it updates the state that makes them visible.
+3. It uploads only the raw payloads and canonical batches created in this run. It updates the state that makes them visible only after those objects exist.
 4. It calculates a fingerprint from the effective model inputs and the forecast code and configuration.
 5. It runs each division whose last successful fingerprint differs.
 6. It verifies each private forecast archive against the product contract.
@@ -35,6 +35,8 @@ A failed or unverified division does not publish. Other verified divisions in th
 Fixture lists are eligible each hour. Match details are eligible every 15 minutes near kickoff and have bounded correction checks after full time. Other sources keep their own intervals.
 
 A new forecast is due only when effective model inputs or forecast code and configuration change. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
+
+Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance.
 
 ## Single steps
 

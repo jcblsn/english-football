@@ -1,7 +1,13 @@
 import json
 from datetime import UTC, datetime
 
-from epl_forecast.cloud import collection_state, compact_canonical, manifest_state, sync_data
+from epl_forecast.cloud import (
+    collection_state,
+    compact_canonical,
+    compaction_due,
+    manifest_state,
+    sync_data,
+)
 from epl_forecast.datasets import Dataset, publish
 
 
@@ -12,6 +18,9 @@ class Store:
 
     def keys(self, prefix=""):
         return (key for key in self.objects if key.startswith(prefix))
+
+    def exists(self, key):
+        return key in self.objects
 
     def upload(self, source, key, immutable=False):
         payload = source.read_bytes()
@@ -105,6 +114,44 @@ def test_data_sync_does_not_expand_a_compact_catalog_with_cached_manifests(tmp_p
     assert result["uploaded"] == 0
     assert result["manifests"] == 1
     assert store.get_json("state/manifests.json") == manifest_state([compact])
+
+
+def test_routine_data_sync_reads_only_the_current_collection(tmp_path):
+    old = request("https://example.test/old", "2026-09-13T12:00:00+00:00")
+    current = request("https://example.test/current", "2026-09-14T12:00:00+00:00", "b")
+    paths = []
+    for name, record in (("old", old), ("current", current)):
+        raw = tmp_path / record["raw_path"]
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_bytes(name.encode())
+        path = tmp_path / "requests" / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record))
+        paths.append(path)
+    store = Store()
+
+    result = sync_data(tmp_path, store, manifest_paths=[], request_paths=[paths[1]])
+
+    assert result["uploaded"] == 2
+    assert "requests/current.json" in store.objects
+    assert "requests/old.json" not in store.objects
+    assert set(store.get_json("state/collection.json")["latest_by_url"]) == {current["url"]}
+
+
+def test_compaction_is_due_after_enough_incremental_batches():
+    store = Store()
+    store.put_json(
+        "state/manifests.json",
+        manifest_state(
+            [
+                {"batch_id": "base", "covers_history": True},
+                {"batch_id": "one"},
+                {"batch_id": "two"},
+            ]
+        ),
+    )
+    assert compaction_due(store, 2)
+    assert not compaction_due(store, 3)
 
 
 def test_compaction_preserves_row_level_cutoffs(tmp_path):

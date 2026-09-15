@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from epl_forecast.cloud import compact_canonical, sync_data, sync_tree
+from epl_forecast.cloud import sync_data, sync_tree
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError, writer_lock
 from epl_forecast.data.collect import collect
@@ -192,11 +192,18 @@ def operate(
     if collect_first:
         try:
             with writer_lock(data):
+                old_manifests = set((data / "manifests").glob("*.json"))
+                old_requests = set((data / "requests").glob("*.json"))
                 result["collection"] = collect(data, store=data_store)
                 if data_store:
-                    result["data_sync"] = sync_data(data, data_store)
-                    if result["data_sync"]["uploaded"]:
-                        result["compaction"] = compact_canonical(data, data_store)
+                    result["data_sync"] = sync_data(
+                        data,
+                        data_store,
+                        manifest_paths=list(
+                            set((data / "manifests").glob("*.json")) - old_manifests
+                        ),
+                        request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
+                    )
         except SourceAccessError as error:
             return {"status": "skipped", "reason": str(error)}
     now = datetime.now(UTC)
