@@ -67,6 +67,25 @@ In the 10,000-path season panel, the 16 source-conditioned entrant club-seasons 
 
 This historical result is development evidence, not fresh confirmation. It supports the approved structural correction because the candidate uses valid source evidence, passes the source-only invariants, improves all three first-10 match scores, and improves entrant preseason season scores without a material whole-league change. The mixed per-season and later-origin effects limit the claim. The 2026/27 prospective archive is the next confirmation sample.
 
+## Production checks
+
+These checks compare the production branch `national-league-entry` at `771f38a` with the main base `f3660fe`.
+
+- Format, lint and all 250 tests pass.
+- At one cutoff on 15 September 2026, the League Two control and candidate archives each pass all 1,599 product checks.
+- At one shared cutoff, the Premier League, Championship and League One forecasts of the branch are identical to main: match probabilities, score distributions, team strengths and simulations. Only League Two changes.
+- In the League Two pair, the largest match probability change is 0.034 for York City, the club promoted from the 2025/26 National League. All other League Two matches change by smaller amounts through the shared league state.
+
+## Prospective archive
+
+`scripts/research/archive_prospective_pair.py` makes a control and a candidate League Two forecast from one cutoff, with the same code, seed and path count. The control removes `eng-national-league` from the League Two training set. The runner verifies both archives and keeps them in R2 also if the candidate is later rejected.
+
+```sh
+uv run python scripts/research/archive_prospective_pair.py --experiment national-league-entry --competition eng-league-two --exclude eng-national-league
+```
+
+The first pair has the cutoff 2026-09-15T05:45:07Z. It is at `research/evidence/national-league-entry/prospective/eng-league-two/20260915T054507Z` in `page324-data`. Make one pair before each League Two match round. Score the pairs on the entrant first-10 slice and on all League Two matches after the results.
+
 ## Retained artifacts
 
 - Match evaluation: `research/evidence/national-league-entry/39bf554/match` in `page324-data`.
