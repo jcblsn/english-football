@@ -123,7 +123,7 @@ The 2023/24 preseason and MW6 forecasts are identical, because fewer than 100 ea
 
 Pooled over the three seasons, the candidate has lower rank RPS at every origin: −0.0055 at preseason, −0.0080 at MW6, −0.0082 at MW12, −0.0010 at MW19 and −0.0029 at MW30. Points CRPS is lower at every origin, from −0.08 at MW19 to −0.37 at MW12. The report also gives whole-season resampled intervals. With three season clusters, and one season with no change at two origins, these intervals are not useful inference and this record does not use them.
 
-The candidate intervals are narrower. The 90% points width decreases by 0.4 to 1.5 points. Points coverage changes by origin: 80% coverage decreases at MW6 (0.806 to 0.778), MW12 (0.792 to 0.750) and MW30 (0.819 to 0.778), and 90% coverage increases at MW12 (0.889 to 0.944), MW19 (0.917 to 0.931) and MW30 (0.847 to 0.875). Relegation Brier is lower at every origin. Promotion Brier is lower at preseason, MW6, MW12 and MW19 and higher at MW30 (+0.0027).
+The candidate intervals are narrower. The 90% points width decreases by 0.6 to 1.5 points. Points coverage changes by origin: 80% coverage decreases at preseason (0.819 to 0.806), MW6 (0.806 to 0.778), MW12 (0.792 to 0.750) and MW30 (0.819 to 0.778), and 90% coverage increases at MW12 (0.889 to 0.944), MW19 (0.917 to 0.931) and MW30 (0.847 to 0.875). Relegation Brier is lower at every origin. Promotion Brier is lower at preseason, MW6, MW12 and MW19 and higher at MW30 (+0.0027).
 
 The panel is at `research/evidence/championship-xg/4c38c5e/season-panel` in `page324-data`. Reproduce with an empty workspace:
 
