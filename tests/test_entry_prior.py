@@ -13,6 +13,7 @@ from epl_forecast.models.entry_prior import (
 from epl_forecast.models.promotion import CHAMPIONSHIP, PL, completed_seasons
 from epl_forecast.models.quality_tilt import QualityTiltFilter
 from epl_forecast.schema import Fixture, Match, fixture_id
+from epl_forecast.training import training_matches
 
 BASE, HOME, LEVEL = np.log(1.35), 0.24, -0.15
 LEAGUE_TWO = "eng-league-two"
@@ -135,6 +136,12 @@ def test_a_national_league_source_season_prevents_the_outside_fallback():
         fallback = club_features(without_source, LEAGUE_TWO, target, team)
         assert fallback["transition"] == transition_id(None, LEAGUE_TWO)
         assert fallback["source_attack"] is None
+        fallback_prior = EntryPriorModel(
+            without_source, LEAGUE_TWO, target, date(2025, 8, 1)
+        ).prior(team)
+        np.testing.assert_array_equal(fallback_prior.mean, np.zeros(2))
+        np.testing.assert_array_equal(fallback_prior.covariance, np.eye(2) * 0.4**2)
+        assert fallback_prior.source == "outside->eng-league-two population fallback"
 
 
 def test_a_complete_reviewed_23_team_source_season_is_available():
@@ -170,6 +177,38 @@ def test_national_league_matches_do_not_update_the_league_two_filter():
         assert model.team_state(team, target).source.startswith(
             transition_id(NATIONAL_LEAGUE, LEAGUE_TWO)
         )
+
+
+def test_future_national_league_results_cannot_change_an_earlier_filter():
+    matches, _, _ = national_league_history()
+    cutoff = date(2025, 8, 2)
+    future_fixture = Fixture(
+        fixture_id(NATIONAL_LEAGUE, "2025-2026", "national-2", "national-3"),
+        NATIONAL_LEAGUE,
+        "2025-2026",
+        date(2025, 8, 3),
+        "national-2",
+        "national-3",
+    )
+    future = Match(future_fixture, 9, 0)
+    config = {
+        "competition_id": LEAGUE_TWO,
+        "train_window_days": 1,
+        "min_train_matches": 1,
+    }
+    spec = {
+        "train_window_days": 0,
+        "train_competitions": [LEAGUE_TWO, NATIONAL_LEAGUE],
+    }
+    before = training_matches(matches, config, spec, cutoff)
+    after = training_matches([*matches, future], config, spec, cutoff)
+    assert before == after
+    left, right = QualityTiltFilter(), QualityTiltFilter()
+    left.primary_competition = right.primary_competition = LEAGUE_TWO
+    left.fit(before, cutoff)
+    right.fit(after, cutoff)
+    np.testing.assert_array_equal(left.mean, right.mean)
+    np.testing.assert_array_equal(left.covariance, right.covariance)
 
 
 def test_the_transition_prior_separates_relegated_clubs_from_outside_arrivals():

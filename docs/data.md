@@ -7,11 +7,13 @@ The product uses provider data that stays in the private `page324-data` R2 bucke
 | Provider | What the product uses | Divisions |
 | --- | --- | --- |
 | API-Football | Fixtures, schedules, status, teams and league standings | All four |
-| Football-Data | Results and average pre-closing and closing odds | All four |
+| Football-Data | Results and average pre-closing and closing odds | All four forecast divisions; National League results as entry-prior evidence only |
 | Understat | Team xG for each match | Premier League only |
 | FPL | Nothing in M7; captured for research | Premier League |
 
 The collector also captures squads, players, lineups, transfers, injuries and match statistics. M7 does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They support research on the [research branch](research.md).
+
+The National League is an entry-source competition. The collector retains its historical Football-Data results so that the generic entry-prior model can use a complete source season for a club promoted to League Two. National League matches do not update the League Two filter. The product does not forecast or publish the National League.
 
 ## Credentials and quota
 
@@ -65,7 +67,7 @@ A regular-season match ID is `competition:season:home:away`. A postponement does
 ## Commands
 
 ```sh
-uv run epl-forecast data collect      # capture due observations for all four divisions
+uv run epl-forecast data collect      # capture due forecast and entry-source observations
 uv run epl-forecast data audit        # check hashes and fixtures; write data/audits/coverage.json
 uv run epl-forecast data backfill --start 2010 --max-requests 200
 uv run epl-forecast data normalize    # rebuild the canonical store from raw captures

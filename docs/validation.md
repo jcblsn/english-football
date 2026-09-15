@@ -93,6 +93,16 @@ The calibration error of M7 is higher than that of M2. Both models are worse tha
 
 Match scores are only a part of the case for M7. The difference between the models is larger in the season panels, because the state uncertainty of M7 matters most for season distributions.
 
+## National League entry source
+
+The National League is source evidence for the League Two entry prior. It is not a forecast competition. This change was compared with the exact main base `f3660fe` and uses the same M7 model except for the available source season.
+
+The semantic checks show that a complete source season prevents an entrant from using the `outside` fallback. Withholding that season restores the fallback exactly. Future source results cannot affect an earlier forecast, and source matches do not update the League Two filter.
+
+This is retrospective development evidence. On 180 first-10 entrant appearances in nine seasons, candidate minus control was −0.00296 H/D/A log loss, −0.00252 Brier and −0.00526 score NLL. Five of nine season effects favored the candidate on all three scores. On all 5,960 matched League Two matches, the changes were −0.00009 log loss, −0.00007 Brier and +0.00015 score NLL.
+
+The matched 10,000-path season panel includes 16 source-conditioned entrant club-seasons in eight complete seasons. At preseason, candidate minus control was −0.00147 rank RPS and −0.175 points CRPS. The whole-season intervals include zero. Promotion Brier improved by 0.00442, relegation Brier worsened by 0.00082 and the 90% points interval became 0.44 points wider with unchanged coverage. Whole-League-Two effects were close to zero. The result supports the source-only correction, but the mixed season effects require prospective confirmation.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.
