@@ -43,7 +43,7 @@ The goals then have a Poisson(rate) marginal distribution. Thus score forecasts 
 
 The chance probability p controls how noisy xG is. M7 uses three values of p (0.1, 0.2 and 0.35) with equal prior weight. Each value gives one filter. The chronological evidence of each filter updates its weight. Forecasts use the weighted mixture of the three filters.
 
-Understat team xG exists only for the Premier League. A match without xG updates the state on goals only. Each division's filter updates only on the matches of that division. Thus xG enters only the Premier League forecast. The Championship, League One and League Two forecasts use goals only.
+M7 uses API-Football team xG from the first match with API-Football xG in each division: 18 January 2023 in the Premier League, 4 August 2023 in the Championship and 15 August 2026 in League One and League Two. Before that date, the Premier League uses Understat team xG. The two providers never measure the same match in M7. A match without xG updates the state on goals only. Each division's filter updates only on the matches of that division.
 
 ## Inference
 
