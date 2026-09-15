@@ -16,6 +16,7 @@ This directory documents the evidence behind [validation](../docs/validation.md)
 | `research/evidence/api-football-xg/862a1c4/match-validation/` and `match-holdout/` | Premier League match scoreboard with API-Football xG. |
 | `research/evidence/api-football-xg/862a1c4/market-pool/` | Market pool fitted again on the API-Football xG predictions. |
 | `research/evidence/api-football-xg/862a1c4/season-panel-championship/` | Championship M7 season forecasts with API-Football xG, 2023/24–2025/26. |
+| `research/evidence/api-football-xg/862a1c4/season-panel-premier-league/` and `f3660fe/season-panel-premier-league-before/` | Premier League M7 season forecasts with API-Football xG and with Understat xG, 2022/23–2025/26. |
 | `research/evidence/championship-xg/77b685e/match/eng-championship/` | Championship goals-only and API-Football xG match forecasts; the `api-raw` arm is the product rule. |
 
 Code commit `fc94353` made all these forecasts, with the product configuration.
