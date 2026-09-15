@@ -17,8 +17,14 @@ from epl_forecast.datasets import Dataset
 from epl_forecast.live import LONDON
 from epl_forecast.models.quality_tilt_scores import GammaPoissonMixture, ScoreMixture, joint_logpmf
 from epl_forecast.research.personnel_mean import shifted_scores
-from epl_forecast.research.roster import BENCHED, CLASSES, DEPARTED, RETAINED, UNRESOLVED
-from epl_forecast.research.roster import continuity_components
+from epl_forecast.research.roster import (
+    BENCHED,
+    CLASSES,
+    DEPARTED,
+    RETAINED,
+    UNRESOLVED,
+    continuity_components,
+)
 from epl_forecast.storage import load_environment, write_json
 
 _spec = importlib.util.spec_from_file_location(
