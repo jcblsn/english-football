@@ -228,6 +228,7 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
 
     monkeypatch.setattr(collection.api, "LEAGUES", {})
     monkeypatch.setattr(collection, "COMPETITIONS", {})
+    monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)
     monkeypatch.setattr(capture, "urlopen", lambda *args, **kwargs: Response(b"{}"))
@@ -274,6 +275,7 @@ def test_api_football_usage_records_only_runs_that_call_the_provider(tmp_path, m
     monkeypatch.setattr(capture.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(collection.api, "LEAGUES", {39: "eng-premier-league"})
     monkeypatch.setattr(collection, "COMPETITIONS", {})
+    monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)
     monkeypatch.setattr(capture, "urlopen", fetch)

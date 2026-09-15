@@ -19,7 +19,11 @@ REQUIRED_FIELDS = {"Div", "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"}
 
 
 def csv_rows(payload: bytes) -> tuple[list[str], list[tuple[int, dict[str, str]]]]:
-    reader = csv.DictReader(io.StringIO(payload.decode("utf-8-sig")))
+    try:
+        text = payload.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = payload.decode("cp1252")
+    reader = csv.DictReader(io.StringIO(text))
     fields = reader.fieldnames or []
     if not REQUIRED_FIELDS.issubset(fields):
         raise ValueError(f"Missing CSV fields: {sorted(REQUIRED_FIELDS - set(fields))}")
