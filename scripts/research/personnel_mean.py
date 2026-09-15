@@ -77,9 +77,11 @@ def scores_from_parameters(value):
 
 def marginal_log_probability(scores, side, goals):
     if isinstance(scores, ScoreMixture):
+        weights = np.full(len(scores.weights), -np.inf)
+        np.log(scores.weights, out=weights, where=scores.weights > 0)
         return float(
             logsumexp(
-                np.log(scores.weights)
+                weights
                 + [
                     marginal_log_probability(component, side, goals)
                     for component in scores.components
