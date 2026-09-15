@@ -6,7 +6,7 @@
 | --- | --- |
 | Main base SHA | `080f7998f45da59ffebf73beb807d70cebef2d04` |
 | Branch | `research-personnel-measurement` |
-| Status | Measurement layer built. One estimator is archived at four horizons. Not a production proposal. |
+| Status | Batch 1 complete. D_squad, its coefficient and the prospective protocol are frozen (section 10). Not a production proposal. |
 | Evidence label | Historical results are retrospective development evidence. 2026/27 fixtures before 17 September 2026 are development cases. Fixtures from 17 September 2026 are prospective. |
 | Authoritative data | Private R2 bucket `page324-data`, read through new empty workspaces under `runs/` |
 | Frozen coefficients | κ = 0.26883582806934564 for starting-XI continuity and κ = 0.43161578781583126 for matchday-squad continuity, each fitted once on all 8,073 oracle matches before 2026/27 |
@@ -457,6 +457,8 @@ Model interpretation:
 - The roster decomposition shows where the signal is. A recent regular on the bench carries little of it. A recent regular who is absent from the matchday squad, departed or unresolved carries most of it. Permanent departures do not cause the opening-five loss.
 - Matchday-squad discontinuity uses this directly. On the same chronological protocol it improves every proper score in all 12 competition-seasons, removes the opening-five loss and improves 2025/26. It is better than starting-XI discontinuity by −0.00174 score NLL [−0.00311, −0.00033].
 - These are retrospective results on the seasons that suggested the hypotheses. The matchday-squad comparison was chosen after the decomposition, so it has more selection exposure than the retained feature.
+- The history-only chronological hindcast (section 11) keeps 42% of the realized-squad oracle gain in score NLL: −0.00152 [−0.00232, −0.00077] against −0.00365 for the oracle. It improves every season and 11 of 12 competition-seasons. It uses no injury records, so it misses many absences that are only known close to the match.
+- The squad-native audit of the largest historical adjustments found no semantic or data failure.
 
 ### Measurement
 
@@ -473,10 +475,20 @@ Model interpretation:
 
 ### Product implication
 
-- The evidence supports the matchday-squad representation over the starting-XI representation: historically on every competition-season, and in measurement accuracy in the development week. The current mechanism does not need a detailed start-probability model. The start estimator stays as a prespecified baseline in the archive.
+- D_squad is the frozen representation. The evidence supports it over the starting-XI representation historically, in the history-only hindcast and in measurement accuracy in the development week. The current mechanism does not need a detailed start-probability model. The start estimator stays only as a recorded baseline in the archive.
+- Realistic historical measurement without injury information keeps a positive but reduced gain. Fixture-specific availability evidence, which the prospective estimator uses, is the part that the hindcast cannot test.
 - The earliest useful horizon is not established. There is no evidence yet for a horizon gate, and no evidence that 24 hours is necessary.
 - Batch 2 should decide from the prospective archive, using the frozen κ values: the measurement accuracy of D_squad at each horizon on the same fixtures, and the candidate minus control scores at each horizon.
 - Batch 1 makes no production choice.
+
+### Batch 1 completion
+
+| Criterion | Status |
+| --- | --- |
+| History-only chronological D_squad hindcast against M7 and the realized-squad oracle | Done. Section 11. |
+| Squad-native extreme-case diagnostics | Done. No material semantic failure. Section 2. |
+| Prospective archive and evidence semantics cutoff-safe | Done. Sections 3 and 4, with tests. |
+| Representation, coefficient and prospective protocol frozen | Done. Section 10. |
 
 ## 10. Frozen specification and prospective protocol
 
@@ -511,3 +523,90 @@ This section freezes the representation, the coefficient and the prospective eva
 - A retrospective evaluation of this model version uses the history-only hindcast of section 11: preceding matches and minutes, preceding matchday squads, dated departures and the rolling M7 state. It does not use final injury records whose publication time is unknown.
 - Propensity tables and coefficients for a target season come from earlier seasons only.
 - A replay with the current frozen specification is a diagnostic. It is not out-of-sample evidence.
+
+## 11. History-only chronological hindcast
+
+### Design
+
+This is the standard retrospective evaluation for the personnel-aware M7. It estimates D_squad before each historical match day from information that history itself dates:
+
+- the minutes of the eight preceding matches of the club;
+- the matchday squads of those matches, as m (squads with the player) and n (in the last squad);
+- departure before the match day: a dated transfer from the club after the last matchday squad of the player for the club, without a later return, or a matchday squad of another club;
+- the rolling M7 state of the retained oracle forecasts, which uses results before the match day.
+
+It uses no API-Football injury records, no squad captures and no FPL data. Without contrary dated evidence, a recent player is a member. The transfer rows were captured in September 2026, but each row has a provider date before the match. This is the defensible dating of membership that history allows.
+
+For each target season from 2020/21:
+
+- q(m, n) is estimated from all team-matches in earlier seasons, over players who had not departed.
+- The hindcast uses κ fitted on earlier seasons of the realized-squad oracle, the same coefficient as the oracle arm. This matches the prospective design, where an oracle coefficient is applied to an estimate.
+- A refit arm uses κ fitted on the earlier-season estimates instead. It checks attenuation only.
+
+The run is `scripts/research/personnel_hindcast.py` on the same 8,073 matches and control forecasts as section 1, scored on 5,450 matches in 2020/21–2025/26. The report checks that the realized D_squad of every team-match equals the D_squad of section 2.
+
+### Coefficients
+
+| Target season | κ from earlier oracle seasons | κ from earlier estimates |
+| --- | ---: | ---: |
+| 2020/21 | 0.3228 | 0.2036 |
+| 2021/22 | 0.3339 | 0.2169 |
+| 2022/23 | 0.4051 | 0.2553 |
+| 2023/24 | 0.4298 | 0.3270 |
+| 2024/25 | 0.4441 | 0.3708 |
+| 2025/26 | 0.4363 | 0.3906 |
+
+The q(m, n) tables are stable between seasons. For example, q(8, in last squad) is 0.934–0.936, and q(1, not in last squad) is 0.145–0.149.
+
+### Forecast results
+
+Candidate minus control. Negative is better.
+
+| Scope | Matches | Oracle H/D/A log loss | Oracle score NLL | Hindcast H/D/A log loss | Hindcast Brier | Hindcast score NLL | Share of oracle score-NLL gain | Refit score NLL |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All | 5,450 | −0.00266 | −0.00365 | −0.00126 | −0.00081 | −0.00152 | 42% | −0.00133 |
+| Premier League | 2,280 | −0.00472 | −0.00497 | −0.00167 | −0.00102 | −0.00145 | 29% | −0.00120 |
+| Championship | 3,170 | −0.00117 | −0.00271 | −0.00097 | −0.00065 | −0.00158 | 58% | −0.00142 |
+| Opening five | 577 | −0.00100 | −0.00126 | −0.00048 | −0.00016 | −0.00116 | 92% | −0.00189 |
+| After opening five | 4,873 | −0.00286 | −0.00394 | −0.00136 | −0.00088 | −0.00157 | 40% | −0.00126 |
+| 2020/21 | 909 | −0.00079 | −0.00200 | −0.00022 | −0.00021 | −0.00028 | 14% | −0.00028 |
+| 2021/22 | 908 | −0.00229 | −0.00550 | −0.00054 | −0.00033 | −0.00076 | 14% | −0.00063 |
+| 2022/23 | 909 | −0.00255 | −0.00428 | −0.00158 | −0.00115 | −0.00206 | 48% | −0.00152 |
+| 2023/24 | 909 | −0.00517 | −0.00496 | −0.00214 | −0.00122 | −0.00210 | 42% | −0.00183 |
+| 2024/25 | 908 | −0.00360 | −0.00256 | −0.00232 | −0.00154 | −0.00172 | 67% | −0.00161 |
+| 2025/26 | 907 | −0.00155 | −0.00261 | −0.00078 | −0.00039 | −0.00223 | 85% | −0.00210 |
+| Realized absolute D_squad difference below 0.05 | 1,963 | −0.00012 | −0.00013 | +0.00054 | +0.00049 | +0.00144 | — | +0.00101 |
+| 0.05–0.10 | 1,487 | −0.00085 | −0.00050 | −0.00086 | −0.00045 | −0.00060 | 120% | −0.00055 |
+| 0.10–0.20 | 1,597 | −0.00296 | −0.00343 | −0.00159 | −0.00107 | −0.00218 | 64% | −0.00192 |
+| at least 0.20 | 403 | −0.02047 | −0.03332 | −0.01025 | −0.00741 | −0.01677 | 50% | −0.01323 |
+
+Season-clustered 95% intervals with 12 competition-season clusters:
+
+| Comparison | H/D/A log loss | Brier | Score NLL | Clusters below zero in score NLL |
+| --- | --- | --- | --- | ---: |
+| Oracle − control | [−0.00415, −0.00137] | [−0.00284, −0.00093] | [−0.00509, −0.00244] | 12 |
+| Hindcast − control | [−0.00193, −0.00066] | [−0.00125, −0.00041] | [−0.00232, −0.00077] | 11 |
+| Refit − control | [−0.00162, −0.00060] | [−0.00106, −0.00037] | [−0.00209, −0.00070] | 11 |
+| Hindcast − oracle | [+0.00042, +0.00259] | [+0.00030, +0.00176] | [+0.00099, +0.00330] | 2 |
+
+### Measurement
+
+| Measure | Value |
+| --- | ---: |
+| Club D_squad: bias / mean absolute error / correlation | +0.009 / 0.052 / 0.74 |
+| Club D_squad in the opening five: bias / mean absolute error / correlation | −0.004 / 0.052 / 0.83 |
+| D_a − D_h: bias / mean absolute error / correlation | −0.005 / 0.069 / 0.61 |
+| Sign agreement when the realized absolute difference is at least 0.10 | 1,673 of 2,000 |
+| Estimate at least 0.10 but realized below 0.05 | 71 |
+| Realized at least 0.10 but estimate below 0.05 | 853 |
+
+### Interpretation
+
+- About two fifths of the oracle score-NLL gain survives history-only measurement. The gain is positive in every season, in both divisions and in the opening five, and 11 of 12 competition-season effects are below zero.
+- The history-only estimate follows departures and recent selection well. Its correlation with the realized value is highest in the opening five (0.83), where departures give most of the absence. It cannot see a new injury or suspension, so it misses 853 of 2,000 fixtures with a large realized imbalance. It also adds a small loss where the realized imbalance is below 0.05.
+- The coefficient from the oracle seasons does better than a coefficient fitted to the noisier estimates. The measurement error does not call for a larger coefficient.
+- The share of the oracle gain is higher in 2024/25 and 2025/26 than in 2020/21 and 2021/22. The reason was not examined.
+- The prospective estimator also uses fixture injury lists, FPL status and team sheets. The hindcast cannot show how much of the remaining gap these recover. Only the prospective archive can.
+- D_squad was selected with these seasons. This hindcast shows robustness and measurement plausibility. It is not out-of-sample evidence.
+
+Retained artifacts: `research/evidence/personnel-measurement/d21ec18/pm-hindcast-features`, `d21ec18/pm-squad-audit` and `68cba95/pm-hindcast-report` in `page324-data`.
