@@ -17,6 +17,10 @@ UNRESOLVED = "unresolved"
 CLASSES = (DEPARTED, BENCHED, RETAINED, UNRESOLVED)
 
 
+def first(item):
+    return item[0]
+
+
 class RosterEvidence:
     """Dated matchday-squad appearances and provider transfers for each player."""
 
@@ -24,7 +28,7 @@ class RosterEvidence:
         spells = defaultdict(list)
         for row in squad_rows:
             spells[row["player_id"]].append((row["match_date"], row["team_id"], row["season_id"]))
-        self.spells = {player: sorted(rows) for player, rows in spells.items()}
+        self.spells = {player: sorted(rows, key=first) for player, rows in spells.items()}
         self.spell_days = {player: [row[0] for row in rows] for player, rows in self.spells.items()}
         transfers = defaultdict(list)
         for row in transfer_rows:
@@ -32,7 +36,7 @@ class RosterEvidence:
                 transfers[row["player_id"]].append(
                     (row["transfer_date"], row["from_team_id"], row["to_team_id"])
                 )
-        self.transfers = {player: sorted(rows) for player, rows in transfers.items()}
+        self.transfers = {player: sorted(rows, key=first) for player, rows in transfers.items()}
 
     def _spells_between(self, player, start, end):
         days = self.spell_days.get(player, [])
@@ -61,7 +65,7 @@ class RosterEvidence:
             if other != team
         )
         left = False
-        for _, out, back in sorted(events):
+        for _, out, back in sorted(events, key=first):
             left = (left or out) and not back
         return left
 

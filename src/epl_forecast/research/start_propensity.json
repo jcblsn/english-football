@@ -1,0 +1,197 @@
+{
+  "competitions": [
+    "eng-premier-league",
+    "eng-championship"
+  ],
+  "excluded": {
+    "departed": 11446,
+    "listed injured or doubtful": 19643
+  },
+  "execution": {
+    "argv": [
+      "scripts/research/start_propensity.py",
+      "--data",
+      "runs/ws-pm-propensity",
+      "--output",
+      "runs/pm-start-propensity"
+    ],
+    "commit": "f9b3052474c7eb86d52c87fd86c59990bc5337e7",
+    "dependencies": {
+      "Pygments": "2.21.0",
+      "boto3": "1.43.94",
+      "botocore": "1.43.94",
+      "contourpy": "1.3.3",
+      "cycler": "0.12.1",
+      "duckdb": "1.5.5",
+      "epl-forecast": "0.1.0",
+      "fonttools": "4.64.0",
+      "iniconfig": "2.3.0",
+      "jmespath": "1.1.0",
+      "kiwisolver": "1.5.1",
+      "matplotlib": "3.11.1",
+      "numpy": "2.5.2",
+      "packaging": "26.3",
+      "pillow": "12.3.0",
+      "pluggy": "1.6.0",
+      "pyparsing": "3.3.2",
+      "pytest": "9.1.1",
+      "python-dateutil": "2.9.0.post0",
+      "pytz": "2026.3.post1",
+      "ruff": "0.16.6",
+      "s3transfer": "0.19.2",
+      "scipy": "1.18.1",
+      "six": "1.17.0",
+      "urllib3": "2.7.0"
+    },
+    "dirty": true,
+    "execution_files": {
+      "pyproject.toml": "74c14bff0e74819133e3b37efc7fb8d50ec3b34c76c4fd22d9caf1e972ef1bf3",
+      "scripts/archive_seasons.py": "08af419fa158f3c7086f0e43cd37809960e5a0f6f755912f3fbc5d8d9709ee91",
+      "scripts/check_publishable.py": "05992dbb75888f03ba92a2ad6c2163739ebd6ce5200d1a5485161a5aef9a363b",
+      "scripts/compact_r2.py": "5b45b27cbc538f575f51383985a102da73109985e6f0ac2a73fc2494c5f4918a",
+      "scripts/evaluate_seasons.py": "0b29a81af1695e00c5709b0a9182818c44506160825f691338264d0549045167",
+      "scripts/fit_market_pool.py": "b291a9c5d5ad3133bfca6b7de46c1f73dcae5da122f180bacddb034a3fb287bb",
+      "scripts/report_seasons.py": "bf23b9142ec90034fee39e223440a4756289253b999fa0e221cf21b3d6b3b1ea",
+      "scripts/rescore_seasons.py": "5bd5f6222f2e04b853e5a48982c965f6cb3361e4b76a3c2e89d8e8a4bd9e6e51",
+      "uv.lock": "4df03e176048ac00c4feb43e167dbd99759bf30b2735cc2f2ca757db3430b9d7"
+    },
+    "git_status": " M src/epl_forecast/research/roster.py\n?? scripts/research/start_propensity.py\n?? src/epl_forecast/research/personnel.py",
+    "interpreter_argv": [
+      "/Users/jacobeliason/Files/code/english-football/.venv/bin/python3",
+      "scripts/research/start_propensity.py",
+      "--data",
+      "runs/ws-pm-propensity",
+      "--output",
+      "runs/pm-start-propensity"
+    ],
+    "invoked_file_sha256": "6051861b093623d8c49d1b6162ed5fc88c874389774a826c6fec38ac5ce56081",
+    "lockfile_sha256": "4df03e176048ac00c4feb43e167dbd99759bf30b2735cc2f2ca757db3430b9d7",
+    "package_code_sha256": "52fc52c068fc2102eb60aa6d2118ba26543790e16c3411b5c970ed1c3ba6df53",
+    "python": "3.12.7",
+    "python_executable": "/Users/jacobeliason/Files/code/english-football/.venv/bin/python3",
+    "working_directory": "/Users/jacobeliason/Files/code/english-football"
+  },
+  "population": "players with minutes in the previous eight matches, excluding players listed by API-Football for the target fixture and players with later evidence that they left the club",
+  "seasons": [
+    "2021-2022",
+    "2022-2023",
+    "2023-2024",
+    "2024-2025",
+    "2025-2026"
+  ],
+  "table": [
+    {
+      "players": 27219,
+      "rate": 0.127704912009993,
+      "started": 3476,
+      "started_last": false,
+      "starts": 0
+    },
+    {
+      "players": 14389,
+      "rate": 0.17589825561192576,
+      "started": 2531,
+      "started_last": false,
+      "starts": 1
+    },
+    {
+      "players": 5637,
+      "rate": 0.6168174560936669,
+      "started": 3477,
+      "started_last": true,
+      "starts": 1
+    },
+    {
+      "players": 10155,
+      "rate": 0.24608567208271787,
+      "started": 2499,
+      "started_last": false,
+      "starts": 2
+    },
+    {
+      "players": 6467,
+      "rate": 0.6540899953610638,
+      "started": 4230,
+      "started_last": true,
+      "starts": 2
+    },
+    {
+      "players": 8052,
+      "rate": 0.29719324391455537,
+      "started": 2393,
+      "started_last": false,
+      "starts": 3
+    },
+    {
+      "players": 7430,
+      "rate": 0.7047106325706595,
+      "started": 5236,
+      "started_last": true,
+      "starts": 3
+    },
+    {
+      "players": 6574,
+      "rate": 0.34697292363857624,
+      "started": 2281,
+      "started_last": false,
+      "starts": 4
+    },
+    {
+      "players": 8211,
+      "rate": 0.7338935574229691,
+      "started": 6026,
+      "started_last": true,
+      "starts": 4
+    },
+    {
+      "players": 5385,
+      "rate": 0.4245125348189415,
+      "started": 2286,
+      "started_last": false,
+      "starts": 5
+    },
+    {
+      "players": 9750,
+      "rate": 0.7745641025641026,
+      "started": 7552,
+      "started_last": true,
+      "starts": 5
+    },
+    {
+      "players": 4317,
+      "rate": 0.4834375723882326,
+      "started": 2087,
+      "started_last": false,
+      "starts": 6
+    },
+    {
+      "players": 11425,
+      "rate": 0.8106783369803063,
+      "started": 9262,
+      "started_last": true,
+      "starts": 6
+    },
+    {
+      "players": 3186,
+      "rate": 0.591337099811676,
+      "started": 1884,
+      "started_last": false,
+      "starts": 7
+    },
+    {
+      "players": 16236,
+      "rate": 0.8578467602857847,
+      "started": 13928,
+      "started_last": true,
+      "starts": 7
+    },
+    {
+      "players": 32646,
+      "rate": 0.9222263064387674,
+      "started": 30107,
+      "started_last": true,
+      "starts": 8
+    }
+  ],
+  "window": 8
+}
