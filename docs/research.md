@@ -26,7 +26,11 @@ git switch research
 
 ## Rules for new research
 
-1. Do broad model research on the `research` branch or on a temporary branch.
-2. Measure a candidate with the checks in [validation](validation.md).
-3. Move an improvement to `main` as one focused pull request.
-4. Do not merge the whole `research` branch into `main`.
+The `research` branch and the `research-anchor` tag are an archive. They are not the base for new work. Current `main` is the code and evaluation baseline.
+
+1. For each workstream, make a new `research-<topic>` branch from current `main`. Git cannot keep a `research/<topic>` branch next to the `research` branch.
+2. Before implementation, record the main base SHA, the hypothesis and mechanism, the structural comparator, the information cutoff, the primary metrics and slices, and the result that will stop or redirect the work. See [research principles](research_principles.md).
+3. Port only the specific old code or ideas that the experiment needs. Keep experiment runners and artifacts out of the production path.
+4. Compare each candidate with the current main M7 on matched fixtures, origins, seeds and path counts. Rebase on `main` while the experiment is active.
+5. Measure a candidate with the checks in [validation](validation.md) and the [smoke tests](smoke_tests.md). Label historical results as retrospective development evidence. Archive matched prospective control and candidate forecasts when the mechanism depends on live information.
+6. Move an accepted improvement to `main` as one focused pull request. Do not merge the whole `research` branch or an old research architecture into `main`.
