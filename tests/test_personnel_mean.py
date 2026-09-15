@@ -5,6 +5,7 @@ import pytest
 
 from epl_forecast.models.poisson import PoissonMixture
 from epl_forecast.research.personnel_mean import (
+    lineup_minutes,
     quality_shift,
     realized_continuity,
     shifted_scores,
@@ -27,6 +28,26 @@ def test_zero_shift_recovers_scores_without_mutation():
     assert shifted.log_probability(2, 1) == pytest.approx(scores.log_probability(2, 1))
     assert scores.home_rates == pytest.approx(before[0])
     assert scores.away_rates == pytest.approx(before[1])
+
+
+def test_target_lineup_excludes_substitutes():
+    rows = [
+        {
+            "match_id": "match",
+            "team_id": "team",
+            "player_id": "starter",
+            "minutes": 60,
+            "starts": True,
+        },
+        {
+            "match_id": "match",
+            "team_id": "team",
+            "player_id": "substitute",
+            "minutes": 30,
+            "starts": False,
+        },
+    ]
+    assert lineup_minutes(rows, starters=True) == {("match", "team"): {"starter": 90}}
 
 
 def test_future_lineup_does_not_change_earlier_continuity():

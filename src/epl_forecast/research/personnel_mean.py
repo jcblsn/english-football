@@ -16,10 +16,10 @@ FULL_STARTING_MINUTES = 990
 def lineup_minutes(rows, starters=False):
     values = defaultdict(dict)
     for row in rows:
+        if starters and not row["starts"]:
+            continue
         players = values[row["match_id"], row["team_id"]]
-        value = REFERENCE_MINUTES if starters and row["starts"] else 0
-        if not starters:
-            value = min(int(row["minutes"]), REFERENCE_MINUTES)
+        value = REFERENCE_MINUTES if starters else min(int(row["minutes"]), REFERENCE_MINUTES)
         players[row["player_id"]] = players.get(row["player_id"], 0) + value
     return values
 
