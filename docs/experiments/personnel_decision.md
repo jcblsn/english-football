@@ -123,7 +123,9 @@ fixture structural rates
 - Team sheets before kickoff are rare. 1 of 121 fixtures in 2026/27 before 15 September had one. Pull request #2 (collection every 9 minutes before kickoff) is open. Until it is merged, the observed D_squad is seldom available, and the 90-minute forecast mostly uses the expected D_squad.
 - GitHub ran 4 scheduled production runs on 15 September 2026. Evidence at a cutoff can be older than its refresh interval.
 - Bolton Wanderers, Cardiff City and Lincoln City have no adjustment until they have eight Championship matches with complete lineup minutes.
-- Section 9 records the production checks of the release branch.
+- API-Football publishes the injury list of a fixture only a short time before the match. At the release check on 15 September 2026 at 21:30 UTC, the latest injury captures covered Premier League fixtures up to 14 September and Championship fixtures up to 15 September. The 10 Premier League fixtures of 18–20 September had no API-Football availability evidence. Their availability came from FPL (406 available, 38 injured, 15 doubtful, 4 suspended and 1 unavailable), and their membership from squad captures, FPL clubs, transfers and matchday squads. 3 of 598 recent players had unknown membership. Early Championship adjustments have no availability evidence, because FPL covers only the Premier League.
+- On the same check, the 10 Premier League shifts were between −0.054 and +0.081. The largest was Leeds United against Crystal Palace, where most of the absent Crystal Palace weight is departed players and members with availability 0.
+- The validation page of the release branch records the production checks of v0.2. The Premier League forecast passed all 1,181 checks.
 
 ## 9. Post-release monitoring
 
