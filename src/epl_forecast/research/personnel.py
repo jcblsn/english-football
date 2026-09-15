@@ -1,10 +1,13 @@
-"""Cutoff-safe personnel evidence for the starting-XI continuity experiment.
+"""Cutoff-safe expected personnel continuity for one structural forecast.
 
 Three concepts stay separate:
 
 - identity: the canonical player ID of a provider record;
 - membership: the club of a player at the forecast cutoff;
-- fixture representation: the evidence that a player starts the target fixture.
+- fixture representation: the evidence that a player is in the target matchday team.
+
+The same estimator runs at any cutoff. It gives two representations of the recent personnel
+that the target fixture keeps: the starting XI and the matchday squad.
 """
 
 import copy
@@ -24,12 +27,11 @@ from epl_forecast.research.personnel_mean import (
 MEMBER = "member"
 DEPARTED = "departed"
 UNKNOWN = "unknown"
-STARTING_XI = 11
-# Before kickoff in September 2026, 7 of 74 API-Football doubtful players and 1 of 15 FPL
-# doubtful players started. A doubtful listing is therefore weak evidence of a start.
-DOUBTFUL = 0.1
-FPL_STATUS = {"a": 1.0, "d": DOUBTFUL, "i": 0.0, "s": 0.0, "n": 0.0, "u": 0.0}
-API_STATUS = {"unavailable": 0.0, "doubtful": DOUBTFUL}
+REPRESENTATIONS = ("xi", "squad")
+# Before kickoff in September 2026, doubtful players started 8 of 87 times and were in the
+# matchday squad 25 of 87 times (API-Football and FPL together).
+DOUBTFUL = {"xi": 0.1, "squad": 0.3}
+FPL_UNAVAILABLE = ("i", "s", "n", "u")
 # An estimate with more unresolved recent weight than this is not used for a candidate.
 MAX_UNRESOLVED = 0.25
 PROPENSITY_FILE = Path(__file__).with_name("start_propensity.json")
@@ -59,21 +61,17 @@ class Evidence:
 
     def __init__(self, cutoff, *, appearances=(), squads=(), transfers=(), injuries=(), fpl=()):
         self.cutoff = cutoff
-        visible = [row for row in appearances if row["retrieved_at"] <= cutoff]
         self.played = defaultdict(dict)
         self.started = defaultdict(set)
+        self.matchday = defaultdict(set)
         spells = defaultdict(set)
-        self.lineups = defaultdict(lambda: defaultdict(dict))
-        for row in visible:
+        for row in appearances:
             kickoff = row["kickoff_time"]
-            if kickoff is None:
+            if row["retrieved_at"] > cutoff or kickoff is None or kickoff >= cutoff:
                 continue
             key = row["match_id"], row["team_id"]
-            if row["retrieved_at"] < kickoff:
-                self.lineups[key][row["retrieved_at"]][row["player_id"]] = bool(row["starts"])
-            if kickoff >= cutoff:
-                continue
             spells[row["player_id"]].add((row["match_date"], row["team_id"]))
+            self.matchday[key].add(row["player_id"])
             if row["starts"]:
                 self.started[key].add(row["player_id"])
             if row["minutes"] is not None:
@@ -166,16 +164,26 @@ class Evidence:
             return Membership(UNKNOWN, (f"absent from latest captured squad of {team}",))
         return Membership(UNKNOWN, ("no membership evidence",))
 
-    def availability(self, player, team, match_id, competition_id):
-        """Probability that a club member is available to start this fixture for this club."""
+    def availability(self, player, team, match_id, competition_id, representation):
+        """Probability that a club member is available for this club, fixture and representation."""
         values, basis = [], []
         for row in self.injuries.get((match_id, team, player), ()):
-            values.append(API_STATUS.get(row["status"]))
+            values.append(
+                {"unavailable": 0.0, "doubtful": DOUBTFUL[representation]}.get(row["status"])
+            )
             basis.append(f"API-Football {row['status']}: {row['reason']}")
         fpl = self.fpl.get(player)
         if competition_id == "eng-premier-league" and fpl is not None and fpl["team_id"] == team:
-            values.append(FPL_STATUS.get(fpl["status"]))
-            basis.append(f"FPL {fpl['status']}: {fpl['reason']}")
+            status = fpl["status"]
+            if status == "a":
+                values.append(1.0)
+            elif status == "d":
+                values.append(DOUBTFUL[representation])
+            elif status in FPL_UNAVAILABLE:
+                values.append(0.0)
+            else:
+                values.append(None)
+            basis.append(f"FPL {status}: {fpl['reason']}")
         if any(value is None for value in values):
             return None, (*basis, "unknown provider status")
         if not values:
@@ -196,32 +204,33 @@ class Evidence:
                 weights[player] += minutes
         return dict(weights)
 
-    def starts(self, team, previous_matches, player, window=WINDOW):
-        """Recent starts of a player for this club, and whether the player started the last match."""
-        started = [
-            self.started.get((match_id, team), set()) for match_id in previous_matches[-window:]
-        ]
-        return sum(player in row for row in started), bool(started) and player in started[-1]
-
-    def confirmed_starters(self, match_id, team):
-        """The starting XI of the latest capture before kickoff, or None."""
-        captures = self.lineups.get((match_id, team), {})
-        for retrieved_at in sorted(captures, reverse=True):
-            starters = {player for player, starts in captures[retrieved_at].items() if starts}
-            if len(starters) == STARTING_XI:
-                return starters, retrieved_at
-        return None
+    def selection(self, team, previous_matches, player, window=WINDOW):
+        """Recent starts and matchday squads, each with inclusion in the last window match."""
+        previous = previous_matches[-window:]
+        result = {}
+        for representation, source in (("xi", self.started), ("squad", self.matchday)):
+            chosen = [source.get((match_id, team), set()) for match_id in previous]
+            result[representation] = (
+                sum(player in row for row in chosen),
+                bool(chosen) and player in chosen[-1],
+            )
+        return result
 
 
 def load_propensity(path=PROPENSITY_FILE):
-    table = json.loads(Path(path).read_text())["table"]
-    return {(row["starts"], row["started_last"]): row["rate"] for row in table}
+    data = json.loads(Path(path).read_text())
+    return {
+        "xi": {(row["starts"], row["started_last"]): row["rate"] for row in data["table"]},
+        "squad": {
+            (row["squads"], row["in_last_squad"]): row["rate"] for row in data["squad_table"]
+        },
+    }
 
 
-def confirmed_discontinuity(weights, starters):
-    """Starting-XI discontinuity. Substitutes and unused players are not represented."""
+def realized_discontinuity(weights, represented):
+    """Discontinuity for a realized set: the starting XI, or the whole matchday squad."""
     total = sum(weights.values())
-    return 1 - sum(weight for player, weight in weights.items() if player in starters) / total
+    return 1 - sum(weight for player, weight in weights.items() if player in represented) / total
 
 
 def expected_discontinuity(weights, probabilities):
@@ -235,55 +244,49 @@ def expected_discontinuity(weights, probabilities):
     return 1 - represented / sum(resolved.values()), unresolved
 
 
-def team_confirmed(evidence, team, match_id, previous_matches):
-    weights = evidence.recent_weights(team, previous_matches)
-    lineup = evidence.confirmed_starters(match_id, team)
-    if weights is None or lineup is None:
-        return None
-    starters, retrieved_at = lineup
-    return {
-        "d": confirmed_discontinuity(weights, starters),
-        "lineup_retrieved_at": retrieved_at,
-        "starters": sorted(starters),
-    }
-
-
 def team_expected(evidence, team, match_id, competition_id, previous_matches, propensity):
     weights = evidence.recent_weights(team, previous_matches)
     if weights is None:
         return None
     total = sum(weights.values())
-    probabilities, players = {}, []
+    probabilities = {representation: {} for representation in REPRESENTATIONS}
+    players = []
     for player, weight in sorted(weights.items(), key=lambda item: (-item[1], item[0])):
         membership = evidence.membership(player, team)
-        starts, last = evidence.starts(team, previous_matches, player)
-        availability, availability_basis, probability = None, (), None
-        if membership.state == DEPARTED:
-            probability = 0.0
-        elif membership.state == MEMBER:
-            availability, availability_basis = evidence.availability(
-                player, team, match_id, competition_id
-            )
-            if availability is not None:
-                probability = availability * propensity[starts, last]
-        probabilities[player] = probability
-        players.append(
-            {
-                "player_id": player,
-                "recent_minutes": weight,
-                "recent_weight": weight / total,
-                "recent_starts": starts,
-                "started_last": last,
-                "membership": membership.state,
-                "membership_basis": list(membership.basis),
-                "membership_conflicts": list(membership.conflicts),
-                "availability": availability,
-                "availability_basis": list(availability_basis),
-                "start_probability": probability,
-            }
-        )
-    d, unresolved = expected_discontinuity(weights, probabilities)
-    return {"d": d, "unresolved_weight": unresolved, "players": players}
+        selection = evidence.selection(team, previous_matches, player)
+        row = {
+            "player_id": player,
+            "recent_minutes": weight,
+            "recent_weight": weight / total,
+            "membership": membership.state,
+            "membership_basis": list(membership.basis),
+            "membership_conflicts": list(membership.conflicts),
+            "selection": {r: list(value) for r, value in selection.items()},
+            "availability": {},
+            "availability_basis": [],
+            "probability": {},
+        }
+        for representation in REPRESENTATIONS:
+            probability = None
+            if membership.state == DEPARTED:
+                probability = 0.0
+            elif membership.state == MEMBER:
+                availability, basis = evidence.availability(
+                    player, team, match_id, competition_id, representation
+                )
+                row["availability"][representation] = availability
+                row["availability_basis"] = list(basis)
+                if availability is not None:
+                    rate = propensity[representation][selection[representation]]
+                    probability = availability * rate
+            probabilities[representation][player] = probability
+            row["probability"][representation] = probability
+        players.append(row)
+    result = {"players": players}
+    for representation in REPRESENTATIONS:
+        d, unresolved = expected_discontinuity(weights, probabilities[representation])
+        result[representation] = {"d": d, "unresolved_weight": unresolved}
+    return result
 
 
 def candidate_shift(home, away, kappa):

@@ -1,4 +1,4 @@
-"""Calibrate recent starter propensity for available club members."""
+"""Calibrate recent start and matchday-squad propensity for available club members."""
 
 import argparse
 from collections import defaultdict
@@ -49,6 +49,9 @@ def main():
             dated.append({**row, "match_date": day})
     evidence = RosterEvidence(dated, transfers)
     listed = {(row["match_id"], row["team_id"], row["player_id"]) for row in injuries}
+    matchday = defaultdict(set)
+    for row in dated:
+        matchday[row["match_id"], row["team_id"]].add(row["player_id"])
     minutes = lineup_minutes(played)
     starters = lineup_minutes(played, starters=True)
     by_team = defaultdict(list)
@@ -56,6 +59,7 @@ def main():
         for team in (match.fixture.home_team_id, match.fixture.away_team_id):
             by_team[team].append(match)
     cells = defaultdict(lambda: [0, 0])
+    squad_cells = defaultdict(lambda: [0, 0])
     excluded = defaultdict(int)
     for team, games in by_team.items():
         for index, match in enumerate(games):
@@ -74,6 +78,8 @@ def main():
             ):
                 continue
             started = [set(starters.get((g.fixture.match_id, team), {})) for g in previous]
+            squads = [matchday.get((g.fixture.match_id, team), set()) for g in previous]
+            target_squad = matchday.get((fixture.match_id, team), set())
             for player in {player for row in histories for player in row}:
                 if (fixture.match_id, team, player) in listed:
                     excluded["listed injured or doubtful"] += 1
@@ -84,6 +90,9 @@ def main():
                 cell = cells[sum(player in row for row in started), player in started[-1]]
                 cell[0] += 1
                 cell[1] += player in target
+                cell = squad_cells[sum(player in row for row in squads), player in squads[-1]]
+                cell[0] += 1
+                cell[1] += player in target_squad
     table = [
         {
             "starts": starts,
@@ -93,6 +102,16 @@ def main():
             "rate": hits / count,
         }
         for (starts, last), (count, hits) in sorted(cells.items())
+    ]
+    squad_table = [
+        {
+            "squads": squads,
+            "in_last_squad": last,
+            "players": count,
+            "in_squad": hits,
+            "rate": hits / count,
+        }
+        for (squads, last), (count, hits) in sorted(squad_cells.items())
     ]
     result = {
         "execution": execution_provenance(),
@@ -104,9 +123,10 @@ def main():
         "they left the club",
         "excluded": dict(excluded),
         "table": table,
+        "squad_table": squad_table,
     }
     write_json(args.output / "start_propensity.json", result)
-    for row in table:
+    for row in table + squad_table:
         print(row)
     print(dict(excluded))
 

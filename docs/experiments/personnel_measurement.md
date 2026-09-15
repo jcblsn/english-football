@@ -120,7 +120,44 @@ A chronological fit with separate departed, benched-or-retained and unresolved c
 
 The distinction makes the opening-season result partly intelligible. The failure is not permanent departure. It is the temporary-absence part of D at the start of a season, when the eight-match window reaches back into the previous season. A player who remains at the club but loses a starting place to a summer signing or a new manager is not a temporary departure from the current personnel regime. The previous-season reference then does not describe that regime. The data do not identify a demotion directly, so this explanation is a hypothesis.
 
-Do not add a match-number switch. Do not add class coefficients from this diagnostic. The benched-versus-absent difference is the stronger finding. Batch 2 can test it as a prespecified representation.
+Do not add a match-number switch. Do not add class coefficients from this diagnostic.
+
+### Matchday-squad representation
+
+The decomposition suggests a simpler latent quantity: how much of the recent personnel is in the target matchday squad, not who starts. One bounded comparison tests this with the same oracle data. No other player-state definition was tried.
+
+- Starting-XI discontinuity D_xi is the recent minute share of players who do not start the target fixture. This is the retained feature.
+- Matchday-squad discontinuity D_squad is the recent minute share of players who are not in the target matchday squad. It is D_xi minus the benched weight.
+
+Each representation uses the same one-coefficient mapping κ(D_a − D_h) and the same chronological protocol as section 1. The home-away imbalances of the two representations have correlation 0.61. The all-history κ is 0.2688 for D_xi and 0.4317 for D_squad (grid fit).
+
+Candidate minus control on the same 5,450 matches. Negative is better.
+
+| Scope | Matches | D_xi H/D/A log loss | D_xi score NLL | D_squad H/D/A log loss | D_squad Brier | D_squad score NLL | D_squad − D_xi score NLL |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All | 5,450 | −0.00154 | −0.00191 | −0.00266 | −0.00182 | −0.00365 | −0.00174 |
+| Premier League | 2,280 | −0.00254 | −0.00183 | −0.00472 | −0.00320 | −0.00497 | −0.00314 |
+| Championship | 3,170 | −0.00082 | −0.00197 | −0.00117 | −0.00082 | −0.00271 | −0.00074 |
+| Opening five | 577 | +0.00191 | +0.00218 | −0.00100 | −0.00046 | −0.00126 | −0.00344 |
+| After opening five | 4,873 | −0.00195 | −0.00239 | −0.00286 | −0.00198 | −0.00394 | −0.00154 |
+| 2025/26 | 907 | +0.00093 | +0.00126 | −0.00155 | −0.00077 | −0.00261 | −0.00388 |
+| Absolute D_xi difference below 0.05 | 1,646 | −0.00012 | −0.00011 | −0.00029 | −0.00008 | +0.00055 | +0.00066 |
+| Absolute D_xi difference 0.10–0.20 | 1,691 | −0.00145 | −0.00224 | −0.00453 | −0.00317 | −0.00687 | −0.00464 |
+| Absolute D_xi difference at least 0.20 | 686 | −0.00787 | −0.00951 | −0.00863 | −0.00609 | −0.01253 | −0.00302 |
+
+Season-clustered 95% intervals with 12 competition-season clusters:
+
+| Comparison | H/D/A log loss | Score NLL | Clusters below zero in score NLL |
+| --- | --- | --- | ---: |
+| D_xi − control | [−0.00280, −0.00045] | [−0.00328, −0.00038] | 10 |
+| D_squad − control | [−0.00422, −0.00141] | [−0.00506, −0.00244] | 12 |
+| D_squad − D_xi | [−0.00194, −0.00031] | [−0.00311, −0.00033] | 9 |
+
+D_squad improves every proper score in all 12 competition-seasons. It has no opening-five loss and it improves 2025/26. The chronological κ for D_squad is 0.32, 0.33, 0.41, 0.43, 0.44 and 0.44. The largest 5% of case changes give 74% of its score-NLL gain, so the gain is still concentrated.
+
+The matchday-squad representation captures the historical signal better than the starting-XI representation. It also needs an easier estimate: whether a recent player is available and selected for the matchday squad, not whether the player starts.
+
+This comparison was chosen after the decomposition on the same seasons. It is retrospective development evidence and it is more exposed to selection than the retained D_xi result.
 
 ## 3. Data, identity and membership audit
 

@@ -4,18 +4,18 @@
     "eng-championship"
   ],
   "excluded": {
-    "departed": 11446,
+    "departed": 11445,
     "listed injured or doubtful": 19643
   },
   "execution": {
     "argv": [
       "scripts/research/start_propensity.py",
       "--data",
-      "runs/ws-pm-propensity",
+      "runs/ws-pm-propensity2",
       "--output",
-      "runs/pm-start-propensity"
+      "runs/pm-propensity-v2"
     ],
-    "commit": "f9b3052474c7eb86d52c87fd86c59990bc5337e7",
+    "commit": "226e42e6f1580b38a0dd2aec7eb15da336bf7108",
     "dependencies": {
       "Pygments": "2.21.0",
       "boto3": "1.43.94",
@@ -55,18 +55,18 @@
       "scripts/rescore_seasons.py": "5bd5f6222f2e04b853e5a48982c965f6cb3361e4b76a3c2e89d8e8a4bd9e6e51",
       "uv.lock": "4df03e176048ac00c4feb43e167dbd99759bf30b2735cc2f2ca757db3430b9d7"
     },
-    "git_status": " M src/epl_forecast/research/roster.py\n?? scripts/research/start_propensity.py\n?? src/epl_forecast/research/personnel.py",
+    "git_status": " M scripts/research/start_propensity.py\n?? scripts/research/personnel_representation.py",
     "interpreter_argv": [
       "/Users/jacobeliason/Files/code/english-football/.venv/bin/python3",
       "scripts/research/start_propensity.py",
       "--data",
-      "runs/ws-pm-propensity",
+      "runs/ws-pm-propensity2",
       "--output",
-      "runs/pm-start-propensity"
+      "runs/pm-propensity-v2"
     ],
-    "invoked_file_sha256": "6051861b093623d8c49d1b6162ed5fc88c874389774a826c6fec38ac5ce56081",
+    "invoked_file_sha256": "d01db4aa93bb83f263e9b38aacaaafc0966ef1aa94f7fc9f4d41bd06a82722f8",
     "lockfile_sha256": "4df03e176048ac00c4feb43e167dbd99759bf30b2735cc2f2ca757db3430b9d7",
-    "package_code_sha256": "52fc52c068fc2102eb60aa6d2118ba26543790e16c3411b5c970ed1c3ba6df53",
+    "package_code_sha256": "ba6f3e6a0f7d3357322ff8db4c89dca319c75add9e3940bc5bed080e40c40aca",
     "python": "3.12.7",
     "python_executable": "/Users/jacobeliason/Files/code/english-football/.venv/bin/python3",
     "working_directory": "/Users/jacobeliason/Files/code/english-football"
@@ -78,6 +78,113 @@
     "2023-2024",
     "2024-2025",
     "2025-2026"
+  ],
+  "squad_table": [
+    {
+      "in_last_squad": false,
+      "in_squad": 492,
+      "players": 1657,
+      "rate": 0.29692214846107423,
+      "squads": 1
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 2665,
+      "players": 2905,
+      "rate": 0.9173838209982789,
+      "squads": 1
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 725,
+      "players": 2101,
+      "rate": 0.3450737743931461,
+      "squads": 2
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 3816,
+      "players": 4190,
+      "rate": 0.9107398568019093,
+      "squads": 2
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 924,
+      "players": 2328,
+      "rate": 0.39690721649484534,
+      "squads": 3
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 4873,
+      "players": 5362,
+      "rate": 0.9088026855650877,
+      "squads": 3
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 1141,
+      "players": 2835,
+      "rate": 0.4024691358024691,
+      "squads": 4
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 6167,
+      "players": 6798,
+      "rate": 0.9071785819358635,
+      "squads": 4
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 1445,
+      "players": 3050,
+      "rate": 0.4737704918032787,
+      "squads": 5
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 8472,
+      "players": 9268,
+      "rate": 0.9141130772550712,
+      "squads": 5
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 1782,
+      "players": 3414,
+      "rate": 0.5219683655536028,
+      "squads": 6
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 11819,
+      "players": 12796,
+      "rate": 0.923648015004689,
+      "squads": 6
+    },
+    {
+      "in_last_squad": false,
+      "in_squad": 2648,
+      "players": 4216,
+      "rate": 0.6280834914611005,
+      "squads": 7
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 21608,
+      "players": 23007,
+      "rate": 0.9391924196983527,
+      "squads": 7
+    },
+    {
+      "in_last_squad": true,
+      "in_squad": 89298,
+      "players": 93153,
+      "rate": 0.9586164696789153,
+      "squads": 8
+    }
   ],
   "table": [
     {
@@ -179,9 +286,9 @@
       "starts": 7
     },
     {
-      "players": 16236,
-      "rate": 0.8578467602857847,
-      "started": 13928,
+      "players": 16237,
+      "rate": 0.8578555151813758,
+      "started": 13929,
       "started_last": true,
       "starts": 7
     },
