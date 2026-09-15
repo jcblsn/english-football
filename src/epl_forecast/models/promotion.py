@@ -8,7 +8,7 @@ from numpy.polynomial.legendre import leggauss
 from scipy.linalg import cho_factor, cho_solve
 from scipy.special import logsumexp
 
-from epl_forecast.competitions import ENTRY_SOURCE_COMPETITIONS
+from epl_forecast.competitions import ENTRY_SOURCE_COMPETITIONS, entry_source_team_count
 from epl_forecast.models.baselines import AttackDefensePoisson
 from epl_forecast.schema import Match
 
@@ -83,7 +83,7 @@ def completed_seasons(
             groups[match.fixture.competition_id, match.fixture.season_id].append(match)
     result = {}
     for (competition, season), rows in groups.items():
-        n = FIELD_SIZES[competition]
+        n = entry_source_team_count(competition, season)
         pairs = {(m.fixture.home_team_id, m.fixture.away_team_id) for m in rows}
         teams = {t for pair in pairs for t in pair}
         if len(rows) == len(pairs) == n * (n - 1) and len(teams) == n:

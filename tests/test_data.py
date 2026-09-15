@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from epl_forecast.data.football_data import normalize_rows, parse_date
-from epl_forecast.data.sources import source_url
+from epl_forecast.data.sources import csv_rows, source_url
 from epl_forecast.storage import sha256_bytes
 
 HEADER = "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR,B365H,B365D,B365A\n"
@@ -43,6 +43,15 @@ def test_dates_availability_and_provenance():
 
 def test_national_league_has_a_historical_result_source():
     assert source_url(2025, "EC") == "https://football-data.co.uk/mmz4281/2526/EC.csv"
+
+
+def test_football_data_accepts_retained_windows_names():
+    _, rows = csv_rows(
+        "Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,FTR\nEC,01/08/2010,King’s Lynn,York,1,0,H\n".encode(
+            "cp1252"
+        )
+    )
+    assert rows[0][1]["HomeTeam"] == "King’s Lynn"
 
 
 @pytest.mark.parametrize(
