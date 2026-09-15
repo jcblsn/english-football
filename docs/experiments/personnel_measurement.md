@@ -249,3 +249,25 @@ The historical injury records are final provider records, not captures before ki
 ## 7. Early prospective forecast results
 
 ## 8. Unresolved issues
+
+Collection and operation:
+
+- Pull request #2 is not merged. Without it, the confirmed-XI arm and the realized-versus-expected comparison stay very small.
+- GitHub can delay or skip scheduled runs. A 10-minute schedule gives more chances, but it does not guarantee a capture in the hour before kickoff. If the capture rate stays low after the merge, a reliable external trigger for `workflow_dispatch` is the next option. It needs a token and a decision by the owner.
+- The archive is rebuilt from retrieval times after the fixtures. No scheduled research job publishes it at the cutoff, because a scheduled workflow must be on `main`.
+- The M7 control uses data retrieved before the London day of the cutoff, not all data retrieved before the personnel cutoff. This is the product match-day convention.
+
+Measurement semantics:
+
+- The doubtful value 0.1 comes from 89 development observations before 17 September 2026. The FPL chance of playing is not used, and FPL next-round and this-round fields are not mapped to fixtures.
+- Transfer records have dates but no times. A transfer dated on the match day is treated as known on that day.
+- Absence from a captured squad without other evidence stays unknown. The 25% unresolved-weight limit was set before the prospective results and was not tuned.
+- The FPL ingest does not record which identity rule matched. Reep can audit the map but is not part of the pipeline.
+- The start-propensity table is one pooled table. It is not different for division, club, season stage or manager change.
+- A club promoted from League One has no lineup minutes before 2026/27, so it has no D until it has eight complete Championship matches.
+
+Model interpretation:
+
+- The historical κ mixes a weak benched effect and a stronger absent-from-squad effect. The confirmed-XI and expected arms both use the single frozen κ, so a prospective loss can come from this mixture as well as from measurement.
+- The opening-season loss probably comes from a stale reference window after the summer, not from permanent departures. The data do not show demotions directly.
+- The historical gain is concentrated in a few high-imbalance fixtures. A few prospective weeks cannot confirm or reject it.
