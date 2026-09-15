@@ -30,31 +30,49 @@ SEED = 20260915
 COMPETITIONS = ("eng-premier-league", "eng-championship")
 
 
-def lineups(rows):
+def lineups(rows, starters=False):
+    """Capped minutes by player. With `starters`, a starter counts as a full reference match."""
     minutes = defaultdict(dict)
     for row in rows:
         players = minutes[row["match_id"], row["team_id"]]
-        players[row["player_id"]] = players.get(row["player_id"], 0) + min(
-            int(row["minutes"]), REFERENCE_MINUTES
-        )
+        if starters:
+            value = REFERENCE_MINUTES if row["starts"] else 0
+        else:
+            value = min(int(row["minutes"]), REFERENCE_MINUTES)
+        players[row["player_id"]] = players.get(row["player_id"], 0) + value
     return minutes
 
 
-def continuity(matches, minutes, window=WINDOW):
+def starter_continuity(matches, rows):
+    """Recent weights from minutes; target availability from the starting XI only."""
+    recent, target = lineups(rows), lineups(rows, starters=True)
+    merged = {
+        key: {"recent": players, "target": target.get(key, {})} for key, players in recent.items()
+    }
+    return continuity(matches, merged, target_key="target", recent_key="recent")
+
+
+def continuity(matches, minutes, window=WINDOW, target_key=None, recent_key=None):
     """Continuity loss D for each (match, team); None when a lineup is missing or incomplete."""
     by_team = defaultdict(list)
     for match in sorted(matches, key=lambda m: (m.fixture.match_date, m.fixture.match_id)):
         for team in (match.fixture.home_team_id, match.fixture.away_team_id):
             by_team[team].append(match)
+    recent_minutes = {k: v[recent_key] for k, v in minutes.items()} if recent_key else minutes
+    target_minutes = {k: v[target_key] for k, v in minutes.items()} if target_key else minutes
     complete = {
         key: players
-        for key, players in minutes.items()
+        for key, players in recent_minutes.items()
         if sum(players.values()) >= FULL_LINEUP_MINUTES
     }
     result = {}
     for team, games in by_team.items():
         for index, match in enumerate(games):
-            target = complete.get((match.fixture.match_id, team))
+            target = (
+                target_minutes.get((match.fixture.match_id, team))
+                if (match.fixture.match_id, team) in complete
+                else None
+            )
             previous = [
                 g for g in games[:index] if g.fixture.match_date < match.fixture.match_date
             ][-window:]
@@ -238,12 +256,29 @@ def deciles(rows):
     return result
 
 
+def mean_adjusted(rows):
+    """z2 after the linear mean shift in D is removed. Added after the primary result."""
+    usable = [r for r in rows if r["d_own"] is not None and r["d_opponent"] is not None]
+    x = np.array([[1.0, r["d_own"], r["d_opponent"]] for r in usable])
+    y = np.array([r["residual"] for r in usable])
+    beta = np.linalg.lstsq(x, y, rcond=None)[0]
+    for row in rows:
+        row["z2_mean_adjusted"] = None
+    for row, shift in zip(usable, x @ beta - beta[0], strict=True):
+        row["z2_mean_adjusted"] = (row["residual"] - shift) ** 2 / row["predictive_variance"]
+    return beta.tolist()
+
+
 def analyze(rows, samples):
     rng = np.random.default_rng(SEED)
     for row in rows:
         row["uncovered_80"] = None if row["covered_80"] is None else float(not row["covered_80"])
-    outcomes = ("z2", "goal_nll", "uncovered_80", "residual", "log_xg_z2")
-    summary = {"pooled": [cluster_slopes(rows, o, samples, rng) for o in outcomes]}
+    mean_shift = mean_adjusted(rows)
+    outcomes = ("z2", "goal_nll", "uncovered_80", "residual", "log_xg_z2", "z2_mean_adjusted")
+    summary = {
+        "mean_shift_by_d": mean_shift,
+        "pooled": [cluster_slopes(rows, o, samples, rng) for o in outcomes],
+    }
     for competition in COMPETITIONS:
         selected = [r for r in rows if r["competition_id"] == competition]
         if selected:
@@ -272,7 +307,13 @@ def main():
     parser.add_argument("--end", type=date.fromisoformat, default=date(2026, 7, 1))
     parser.add_argument("--competitions", nargs="+", default=list(COMPETITIONS))
     parser.add_argument("--bootstrap", type=int, default=2000)
+    parser.add_argument(
+        "--rows", type=Path, help="Reuse saved team_matches.csv and add the starter sensitivity"
+    )
     args = parser.parse_args()
+    if args.rows:
+        sensitivity(args)
+        return
     new_run_directory(args.output)
     data = Dataset(args.data)
     try:
@@ -317,6 +358,48 @@ def main():
         },
     )
     print(json.dumps({k: v for k, v in summary.items() if k == "pooled"}, indent=1)[:4000])
+
+
+def read_rows(path):
+    import csv
+
+    numeric = {"goals", "predictive_mean", "predictive_variance", "residual", "z2", "goal_nll"}
+    numeric |= {"pit", "log_rate_mean", "log_rate_variance", "xg", "log_xg_z2", "d_own"}
+    numeric |= {"d_opponent", "score_nll", "hda_abs_error", "hda_log_loss", "brier"}
+    rows = []
+    with path.open() as stream:
+        for row in csv.DictReader(stream):
+            for key in numeric:
+                row[key] = None if row[key] in ("", "None") else float(row[key])
+            row["covered_80"] = row["covered_80"] == "True"
+            rows.append(row)
+    return rows
+
+
+def sensitivity(args):
+    """Primary analysis with the added diagnostics, then the same with starter-based D."""
+    new_run_directory(args.output)
+    rows = read_rows(args.rows)
+    write_json(args.output / "summary_minutes.json", analyze(rows, args.bootstrap))
+    data = Dataset(args.data)
+    try:
+        matches, history = data.matches(), data.player_history()
+    finally:
+        data.close()
+    starter = starter_continuity(matches, history)
+    for row in rows:
+        row["d_own"] = starter.get((row["match_id"], row["team_id"]))
+        row["d_opponent"] = starter.get((row["match_id"], row["opponent_id"]))
+    write_json(args.output / "summary_starters.json", analyze(rows, args.bootstrap))
+    save_rows(args.output / "deciles_starters.csv", deciles(rows))
+    write_json(
+        args.output / "manifest.json",
+        {
+            "execution": execution_provenance(),
+            "rows": str(args.rows),
+            "added_after_primary_result": ["z2_mean_adjusted", "starter-based target availability"],
+        },
+    )
 
 
 if __name__ == "__main__":
