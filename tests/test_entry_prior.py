@@ -89,9 +89,7 @@ def national_league_history(seed=9):
     ]
     target = "2025-2026"
     target_teams = [*league_two[:-2], *national[:2]]
-    matches.extend(
-        play(rng, LEAGUE_TWO, target, target_teams, quality, 0, date(2025, 8, 1))[:1]
-    )
+    matches.extend(play(rng, LEAGUE_TWO, target, target_teams, quality, 0, date(2025, 8, 1))[:1])
     return matches, target, national[:2]
 
 
@@ -139,6 +137,23 @@ def test_a_national_league_source_season_prevents_the_outside_fallback():
         assert fallback["source_attack"] is None
 
 
+def test_a_complete_reviewed_23_team_source_season_is_available():
+    rng = np.random.default_rng(11)
+    teams = [f"national-{index}" for index in range(23)]
+    quality = dict.fromkeys(teams, 0.0)
+    matches = play(
+        rng,
+        NATIONAL_LEAGUE,
+        "2021-2022",
+        teams,
+        quality,
+        0,
+        date(2021, 8, 1),
+    )
+    seasons = completed_seasons(matches, date(2022, 8, 1))
+    assert (NATIONAL_LEAGUE, "2021-2022") in seasons
+
+
 def test_national_league_matches_do_not_update_the_league_two_filter():
     matches, target, entrants = national_league_history()
     cutoff = date(2025, 8, 2)
@@ -147,9 +162,7 @@ def test_national_league_matches_do_not_update_the_league_two_filter():
     model.primary_competition = LEAGUE_TWO
     model.fit(eligible, cutoff)
     league_two_dates = {
-        match.fixture.match_date
-        for match in eligible
-        if match.fixture.competition_id == LEAGUE_TWO
+        match.fixture.match_date for match in eligible if match.fixture.competition_id == LEAGUE_TWO
     }
     assert model.updates == len(league_two_dates)
     assert not (set(model.team_index) & {f"national-{index}" for index in range(2, 24)})

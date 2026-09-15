@@ -685,8 +685,7 @@ def audit(root):
             "count(*) FILTER (WHERE stage='regular') AS regular_fixtures, "
             "CASE competition_id "
             + " ".join(
-                f"WHEN '{c['id']}' THEN {c['matches']}"
-                for c in ENTRY_SOURCE_COMPETITIONS.values()
+                f"WHEN '{c['id']}' THEN {c['matches']}" for c in ENTRY_SOURCE_COMPETITIONS.values()
             )
             + " END AS expected_regular, "
             "count(*) FILTER (WHERE stage<>'regular') AS playoff_fixtures, "

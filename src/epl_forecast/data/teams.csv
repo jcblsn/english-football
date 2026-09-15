@@ -1,18 +1,26 @@
 source_name,team_id,team_name
+AFC Telford United,afc-telford-united,AFC Telford United
 AFC Wimbledon,afc-wimbledon,AFC Wimbledon
 Accrington,accrington-stanley,Accrington Stanley
 Aldershot,aldershot-town,Aldershot Town
+Alfreton Town,alfreton-town,Alfreton Town
+Altrincham,altrincham,Altrincham
 Arsenal,arsenal,Arsenal
 Aston Villa,aston-villa,Aston Villa
 Barnet,barnet,Barnet
 Barnsley,barnsley,Barnsley
 Barrow,barrow,Barrow
+Bath City,bath-city,Bath City
 Birmingham,birmingham-city,Birmingham City
 Blackburn,blackburn-rovers,Blackburn Rovers
 Blackpool,blackpool,Blackpool
 Bolton,bolton-wanderers,Bolton Wanderers
+Boreham Wood,boreham-wood,Boreham Wood
+Boston Utd,boston-united,Boston United
 Bournemouth,bournemouth,AFC Bournemouth
+Brackley Town,brackley-town,Brackley Town
 Bradford,bradford-city,Bradford City
+Braintree Town,braintree-town,Braintree Town
 Brentford,brentford,Brentford
 Brighton,brighton-hove-albion,Brighton and Hove Albion
 Bristol City,bristol-city,Bristol City
@@ -27,28 +35,49 @@ Carlisle,carlisle-united,Carlisle United
 Charlton,charlton-athletic,Charlton Athletic
 Chelsea,chelsea,Chelsea
 Cheltenham,cheltenham-town,Cheltenham Town
+Chester,chester,Chester
 Chesterfield,chesterfield,Chesterfield
+Chorley,chorley,Chorley
 Colchester,colchester-united,Colchester United
 Coventry,coventry-city,Coventry City
 Crawley Town,crawley-town,Crawley Town
 Crewe,crewe-alexandra,Crewe Alexandra
 Crystal Palace,crystal-palace,Crystal Palace
 Dag and Red,dagenham-redbridge,Dagenham and Redbridge
+Darlington,darlington,Darlington
+Dartford,dartford,Dartford
 Derby,derby-county,Derby County
 Doncaster,doncaster-rovers,Doncaster Rovers
+Dorking,dorking-wanderers,Dorking Wanderers
+Dover Athletic,dover-athletic,Dover Athletic
+Eastbourne Borough,eastbourne-borough,Eastbourne Borough
+Eastleigh,eastleigh,Eastleigh
+Ebbsfleet,ebbsfleet-united,Ebbsfleet United
 Everton,everton,Everton
 Exeter,exeter-city,Exeter City
 Fleetwood Town,fleetwood-town,Fleetwood Town
 Forest Green,forest-green-rovers,Forest Green Rovers
 Fulham,fulham,Fulham
+Fylde,afc-fylde,AFC Fylde
+Gateshead,gateshead,Gateshead
 Gillingham,gillingham,Gillingham
 Grimsby,grimsby-town,Grimsby Town
+Guiseley,guiseley,Guiseley
+Halifax,fc-halifax-town,FC Halifax Town
 Harrogate,harrogate-town,Harrogate Town
 Hartlepool,hartlepool-united,Hartlepool United
+Havant & Waterlooville,havant-waterlooville,Havant and Waterlooville
+Hayes & Yeading,hayes-yeading-united,Hayes and Yeading United
 Hereford,hereford-united,Hereford United
+Histon,histon,Histon
+Hornchurch,hornchurch,Hornchurch
 Huddersfield,huddersfield-town,Huddersfield Town
 Hull,hull-city,Hull City
+Hyde United,hyde-united,Hyde United
 Ipswich,ipswich-town,Ipswich Town
+Kettering Town,kettering-town,Kettering Town
+Kidderminster,kidderminster-harriers,Kidderminster Harriers
+King’s Lynn,kings-lynn-town,King's Lynn Town
 Leeds,leeds-united,Leeds United
 Leicester,leicester-city,Leicester City
 Leyton Orient,leyton-orient,Leyton Orient
@@ -56,6 +85,8 @@ Lincoln,lincoln-city,Lincoln City
 Liverpool,liverpool,Liverpool
 Luton,luton-town,Luton Town
 Macclesfield,macclesfield-town,Macclesfield Town
+Maidenhead,maidenhead-united,Maidenhead United
+Maidstone,maidstone-united,Maidstone United
 Man City,manchester-city,Manchester City
 Man United,manchester-united,Manchester United
 Mansfield,mansfield-town,Mansfield Town
@@ -65,12 +96,15 @@ Milton Keynes Dons,milton-keynes-dons,Milton Keynes Dons
 Morecambe,morecambe,Morecambe
 Newcastle,newcastle-united,Newcastle United
 Newport County,newport-county,Newport County
+North Ferriby,north-ferriby-united,North Ferriby United
 Northampton,northampton-town,Northampton Town
 Norwich,norwich-city,Norwich City
 Nott'm Forest,nottingham-forest,Nottingham Forest
 Notts County,notts-county,Notts County
+Nuneaton Town,nuneaton-town,Nuneaton Town
 Oldham,oldham-athletic,Oldham Athletic
 Oxford,oxford-united,Oxford United
+Oxford City,oxford-city,Oxford City
 Peterboro,peterborough-united,Peterborough United
 Plymouth,plymouth-argyle,Plymouth Argyle
 Port Vale,port-vale,Port Vale
@@ -80,13 +114,17 @@ QPR,queens-park-rangers,Queens Park Rangers
 Reading,reading,Reading
 Rochdale,rochdale,Rochdale
 Rotherham,rotherham-united,Rotherham United
+Rushden & D,rushden-diamonds,Rushden and Diamonds
+Salisbury,salisbury-city,Salisbury City
 Salford,salford-city,Salford City
 Scunthorpe,scunthorpe-united,Scunthorpe United
 Sheffield United,sheffield-united,Sheffield United
 Sheffield Weds,sheffield-wednesday,Sheffield Wednesday
 Shrewsbury,shrewsbury-town,Shrewsbury Town
+Solihull,solihull-moors,Solihull Moors
 Southampton,southampton,Southampton
 Southend,southend-united,Southend United
+Southport,southport,Southport
 Stevenage,stevenage,Stevenage
 Stockport,stockport-county,Stockport County
 Stoke,stoke-city,Stoke City
@@ -94,15 +132,23 @@ Sunderland,sunderland,Sunderland
 Sutton,sutton-united,Sutton United
 Swansea,swansea-city,Swansea City
 Swindon,swindon-town,Swindon Town
+Tamworth,tamworth,Tamworth
+Telford United,afc-telford-united,AFC Telford United
 Tottenham,tottenham-hotspur,Tottenham Hotspur
 Torquay,torquay-united,Torquay United
 Tranmere,tranmere-rovers,Tranmere Rovers
+Truro,truro-city,Truro City
 Walsall,walsall,Walsall
 Watford,watford,Watford
+Wealdstone,wealdstone,Wealdstone
+Welling United,welling-united,Welling United
 West Brom,west-bromwich-albion,West Bromwich Albion
 West Ham,west-ham-united,West Ham United
+Weymouth,weymouth,Weymouth
 Wigan,wigan-athletic,Wigan Athletic
+Woking,woking,Woking
 Wolves,wolverhampton-wanderers,Wolverhampton Wanderers
+Worthing,worthing,Worthing
 Wrexham,wrexham,Wrexham
 Wycombe,wycombe-wanderers,Wycombe Wanderers
 Yeovil,yeovil-town,Yeovil Town
