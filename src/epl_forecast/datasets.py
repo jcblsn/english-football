@@ -348,72 +348,19 @@ class Dataset:
             if r["status"] == "finished" and r["stage"] == "regular"
         ]
 
-    def process(self):
-        observations = {
-            (r["match_id"], r["team_id"]): r
-            for r in self.rows("SELECT * FROM team_process WHERE xg IS NOT NULL")
-        }
-        result = []
-        for match in self.matches():
-            f = match.fixture
-            h, a = (observations.get((f.match_id, t)) for t in (f.home_team_id, f.away_team_id))
-            if h is None or a is None:
-                continue
-            result.append(
-                {
-                    "match_id": f.match_id,
-                    "season_id": f.season_id,
-                    "match_date": str(f.match_date),
-                    "home_team_id": f.home_team_id,
-                    "away_team_id": f.away_team_id,
-                    "home_goals": match.home_goals,
-                    "away_goals": match.away_goals,
-                    "home_xg": h["xg"],
-                    "away_xg": a["xg"],
-                    "source_sha256": h["source_sha256"],
-                    "available_on": str(match.available_on),
-                    "availability_basis": h["evidence_basis"],
-                }
-            )
-        return result
-
-    def api_xg_process(self):
-        """API-Football team xG in the format of `process`, with the same next-day availability."""
-        observations = {
-            (r["match_id"], r["team_id"]): r
-            for r in self.rows(
-                "SELECT * FROM team_statistics WHERE expected_goals IS NOT NULL "
-                "QUALIFY row_number() OVER (PARTITION BY match_id, team_id ORDER BY retrieved_at DESC)=1"
-            )
-        }
-        result = []
-        for match in self.matches():
-            f = match.fixture
-            h, a = (observations.get((f.match_id, t)) for t in (f.home_team_id, f.away_team_id))
-            if h is None or a is None:
-                continue
-            result.append(
-                {
-                    "match_id": f.match_id,
-                    "season_id": f.season_id,
-                    "match_date": str(f.match_date),
-                    "home_team_id": f.home_team_id,
-                    "away_team_id": f.away_team_id,
-                    "home_goals": match.home_goals,
-                    "away_goals": match.away_goals,
-                    "home_xg": float(h["expected_goals"]),
-                    "away_xg": float(a["expected_goals"]),
-                    "source_sha256": h["source_sha256"],
-                    "available_on": str(match.available_on),
-                    "availability_basis": h["evidence_basis"],
-                    "provider": "api_football",
-                }
-            )
-        return result
-
     def xg_observations(self):
-        """The team xG that M7 observes: API-Football, and Understat before API-Football coverage."""
-        return select_xg_observations(self.process(), self.api_xg_process())
+        """Team xG that M7 observes: API-Football, and Understat before API-Football coverage."""
+        understat = self.rows(
+            "SELECT match_id, team_id, xg, source_sha256, evidence_basis FROM team_process "
+            "WHERE xg IS NOT NULL"
+        )
+        api = self.rows(
+            "SELECT match_id, team_id, expected_goals AS xg, source_sha256, evidence_basis "
+            "FROM team_statistics WHERE expected_goals IS NOT NULL "
+            "QUALIFY row_number() OVER (PARTITION BY match_id, team_id ORDER BY retrieved_at DESC)=1"
+        )
+        matches = self.matches()
+        return select_xg_observations(match_xg(matches, understat), match_xg(matches, api))
 
     def player_history(self):
         return self.rows(
@@ -432,35 +379,52 @@ def load_dataset(directory=Path("data"), cutoff=None):
         data.close()
 
 
-def select_xg_observations(understat, api):
-    """Use API-Football xG from its first match date in a competition, and Understat before it.
+def match_xg(matches, rows):
+    """One observation for each match with xG for both teams."""
+    values = {(r["match_id"], r["team_id"]): r for r in rows}
+    result = []
+    for match in matches:
+        f = match.fixture
+        h, a = (values.get((f.match_id, t)) for t in (f.home_team_id, f.away_team_id))
+        if h is None or a is None:
+            continue
+        result.append(
+            {
+                "match_id": f.match_id,
+                "season_id": f.season_id,
+                "match_date": str(f.match_date),
+                "home_team_id": f.home_team_id,
+                "away_team_id": f.away_team_id,
+                "home_goals": match.home_goals,
+                "away_goals": match.away_goals,
+                "home_xg": float(h["xg"]),
+                "away_xg": float(a["xg"]),
+                "source_sha256": h["source_sha256"],
+                "available_on": str(match.available_on),
+                "availability_basis": h["evidence_basis"],
+            }
+        )
+    return result
 
-    A match without selected xG stays in the filter and updates the state on goals only.
+
+def select_xg_observations(understat, api):
+    """API-Football xG from its first match date in a competition, and Understat before it.
+
+    A match without xG stays in the filter and updates the state on goals only.
     """
     first = {}
     for row in api:
         competition = row["match_id"].split(":")[0]
         first[competition] = min(first.get(competition, row["match_date"]), row["match_date"])
-    earlier = [row for row in understat if competition_before(row, first)]
+    earlier = [
+        r for r in understat if r["match_date"] < first.get(r["match_id"].split(":")[0], "9")
+    ]
     return sorted([*earlier, *api], key=lambda row: (row["match_date"], row["match_id"]))
-
-
-def competition_before(row, first):
-    cutover = first.get(row["match_id"].split(":")[0])
-    return cutover is None or row["match_date"] < cutover
 
 
 def load_player_history(root=Path("data")):
     data = Dataset(root)
     try:
         return data.player_history()
-    finally:
-        data.close()
-
-
-def load_process(root=Path("data")):
-    data = Dataset(root)
-    try:
-        return data.process()
     finally:
         data.close()
