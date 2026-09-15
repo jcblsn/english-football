@@ -19,7 +19,11 @@ from epl_forecast.cli import load_config, save_rows
 from epl_forecast.datasets import Dataset
 from epl_forecast.models import make_model
 from epl_forecast.models.poisson import PoissonMixture
-from epl_forecast.models.quality_tilt_scores import GammaPoissonMixture, ScoreMixture
+from epl_forecast.models.quality_tilt_scores import (
+    GammaPoissonMixture,
+    ScoreMixture,
+    joint_logpmf,
+)
 from epl_forecast.research.personnel_mean import (
     FULL_RECENT_MINUTES,
     FULL_STARTING_MINUTES,
@@ -95,6 +99,28 @@ def marginal_log_probability(scores, side, goals):
         )
     else:
         values = poisson.logpmf(goals, rates)
+    return float(logsumexp(np.log(scores.weights) + values))
+
+
+def shifted_log_probability(scores, home_goals, away_goals, shift):
+    if isinstance(scores, ScoreMixture):
+        weights = np.full(len(scores.weights), -np.inf)
+        np.log(scores.weights, out=weights, where=scores.weights > 0)
+        return float(
+            logsumexp(
+                weights
+                + [
+                    shifted_log_probability(component, home_goals, away_goals, shift)
+                    for component in scores.components
+                ]
+            )
+        )
+    home_rates = scores.home_rates * np.exp(shift[0])
+    away_rates = scores.away_rates * np.exp(shift[1])
+    if isinstance(scores, GammaPoissonMixture):
+        values = joint_logpmf(home_goals, away_goals, home_rates, away_rates, scores.dispersion)
+    else:
+        values = poisson.logpmf(home_goals, home_rates) + poisson.logpmf(away_goals, away_rates)
     return float(logsumexp(np.log(scores.weights) + values))
 
 
@@ -217,15 +243,20 @@ def load_forecasts(path):
             for key, conversion in numeric.items():
                 row[key] = None if row[key] in ("", "None") else conversion(row[key])
             row["_scores"] = scores_from_parameters(row["score_parameters"])
+            probabilities = row["_scores"].outcome_probabilities()
+            stored = [row[f"control_p_{side}"] for side in ("home", "draw", "away")]
+            if not np.allclose(probabilities, stored, atol=1e-12, rtol=0):
+                raise ValueError(f"Stored score distribution does not recover {row['match_id']}")
+            recovered = row["_scores"].log_probability(row["home_goals"], row["away_goals"])
+            if not np.isclose(recovered, row["control_score_log_probability"], atol=1e-12):
+                raise ValueError(f"Stored score likelihood does not recover {row['match_id']}")
             rows.append(row)
     return rows
 
 
 def candidate_score_log_probability(row, kappa):
     shift = quality_shift(row["d_home"], row["d_away"], kappa)
-    return shifted_scores(row["_scores"], shift).log_probability(
-        row["home_goals"], row["away_goals"]
-    )
+    return shifted_log_probability(row["_scores"], row["home_goals"], row["away_goals"], shift)
 
 
 def fit_kappa(rows, bounds):
@@ -353,6 +384,10 @@ def report(rows, samples):
         training = [row for row in usable if row["season_id"] < season]
         constrained, training_nll = fit_kappa(training, (0.0, MAX_KAPPA))
         unconstrained, unconstrained_nll = fit_kappa(training, (-MAX_KAPPA, MAX_KAPPA))
+        print(
+            f"{season}: kappa={constrained:.4f}, unconstrained={unconstrained:.4f}",
+            flush=True,
+        )
         fits.append(
             {
                 "target_season": season,
@@ -399,6 +434,9 @@ def report(rows, samples):
     for season in target_seasons:
         selected = [row for row in scored if row["season_id"] == season]
         summaries.append(summarize(selected, season))
+        for competition in COMPETITIONS:
+            competition_season = [row for row in selected if row["competition_id"] == competition]
+            summaries.append(summarize(competition_season, f"{competition}/{season}"))
     slices = [
         ("opening-five", lambda row: min(row["home_match_number"], row["away_match_number"]) <= 5),
         ("promoted", lambda row: "promoted" in (row["home_entry"], row["away_entry"])),
