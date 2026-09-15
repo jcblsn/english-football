@@ -31,6 +31,6 @@ train_window_days = 0
 eng-premier-league = ["eng-premier-league", "eng-championship"]
 eng-championship = ["eng-premier-league", "eng-championship"]
 eng-league-one = ["eng-championship", "eng-league-one", "eng-league-two"]
-eng-league-two = ["eng-league-one", "eng-league-two"]
+eng-league-two = ["eng-league-one", "eng-league-two", "eng-national-league"]
 [models.parameters]
 data_root = "data"
