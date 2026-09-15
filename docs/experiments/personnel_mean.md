@@ -24,7 +24,7 @@ home log-rate shift = kappa * (D_a - D_h)
 away log-rate shift = kappa * (D_h - D_a)
 ```
 
-Kappa is nonnegative. This is the existing Quality geometry: lower continuity reduces the team's scoring rate and increases its opponent's scoring rate by the same amount. It does not update the persistent state, change Tilt or add variance. Kappa equal to zero exactly recovers M7.
+Kappa is one nonnegative coefficient shared by both competitions. Fit it by score likelihood within the fixed range 0 to 2. Also report the unconstrained fit from -2 to 2 as a direction check. A bound hit is a representation failure. This is the existing Quality geometry: lower continuity reduces the team's scoring rate and increases its opponent's scoring rate by the same amount. It does not update the persistent state, change Tilt or add variance. Kappa equal to zero exactly recovers M7.
 
 ### Structural comparator
 
