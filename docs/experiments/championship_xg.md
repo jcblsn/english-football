@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Main base SHA | `f3660fe78367243290706acb406055ca422f559c` |
-| Status | Coverage audit and observation model |
+| Status | Historical evidence favorable; prospective confirmation in progress; not on main |
 | Historical evidence label | Retrospective development evidence |
 | Authoritative data | Private R2 bucket `page324-data`, read through a new empty workspace under `runs/` |
 | Control | Championship M7 from the main base SHA, goals only |
@@ -130,4 +130,59 @@ The panel is at `research/evidence/championship-xg/4c38c5e/season-panel` in `pag
 ```sh
 uv run python scripts/evaluate_seasons.py --data runs/ws-xg-panel --competition eng-championship --models M7 M7-API-XG --seasons 2023 2024 2025 --output runs/xg-season-panel
 uv run python scripts/report_seasons.py --evaluation runs/xg-season-panel --output runs/xg-season-panel/report --baseline M7
+```
+
+## Match result
+
+All arms use code commit `77b685e`, daily refits with results and xG available on the next day, and identical matches. Negative differences favor the candidate. Log-loss intervals use paired 28-day blocks within seasons. They are descriptive, because the blocks come from three seasons.
+
+### Premier League positive control
+
+1,140 matched matches in 2023/24–2025/26. Each arm minus goals-only M7:
+
+| Arm | Log loss | 95% block interval | Brier | Score NLL | Classwise ECE |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Goals only | 0.98296 | — | 0.58536 | 2.97567 | 0.02729 |
+| Understat xG | −0.00439 | [−0.01060, +0.00198] | −0.00369 | −0.00289 | 0.03442 |
+| Raw API xG, s = 1 | −0.00530 | [−0.01197, +0.00146] | −0.00432 | −0.01288 | 0.03150 |
+| Calibrated API xG | −0.00516 | [−0.01174, +0.00153] | −0.00424 | −0.01168 | 0.03253 |
+
+Per season, calibrated API xG changes log loss by +0.00355, −0.01729 and −0.00172. Understat changes it by +0.00499, −0.01432 and −0.00383. API xG recovers the same direction and a similar size as Understat, so the observation architecture passes the positive control. The calibrated Premier League scale is 1.06 at the start of 2023/24 and 0.99 after 2024. Both xG channels reduce the mean Quality SD from about 0.092 to about 0.076.
+
+### Championship
+
+1,656 matched matches in 2023/24–2025/26. Each arm minus product M7:
+
+| Arm | Log loss | 95% block interval | Brier | Score NLL | Classwise ECE |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Product M7 | 1.04349 | — | 0.62788 | 2.83783 | 0.01408 |
+| Raw API xG, s = 1 | −0.00554 | [−0.00900, −0.00174] | −0.00382 | −0.01081 | 0.01446 |
+| Calibrated API xG | −0.00542 | [−0.00919, −0.00118] | −0.00381 | −0.00828 | 0.01648 |
+
+Calibrated API xG by season and slice:
+
+| Scope | Matches | Log loss | Brier | Score NLL |
+| --- | ---: | ---: | ---: | ---: |
+| 2023/24 | 552 | −0.00937 | −0.00691 | −0.01156 |
+| 2024/25 | 552 | −0.00263 | −0.00174 | −0.00672 |
+| 2025/26 | 552 | −0.00427 | −0.00279 | −0.00655 |
+| Opening five fixtures | 180 | +0.00347 | +0.00262 | +0.00503 |
+| Entrant clubs | 738 | −0.00694 | −0.00498 | −0.01400 |
+| After a goal/xG gap of at least 1.5 | 359 | −0.01289 | −0.00944 | −0.01844 |
+
+Every season improves on all three scores. The largest gain follows a large disagreement between goals and xG, which is where the mechanism says xG adds information. The opening five fixtures are slightly worse. The calibrated scale starts at 0.91 in December 2023 and increases to 0.96 by 2026. The mean Quality SD falls from about 0.092 to about 0.075. The median largest H/D/A probability change is small, and the mean absolute change in the two expected goals is 0.17.
+
+## Decision
+
+The mechanism checks pass. The Premier League positive control is interpretable. On chronological history, calibrated API xG improves Championship match log loss, Brier and score NLL in each of the three covered seasons, and it lowers pooled rank RPS and points CRPS at every season-panel origin.
+
+This is retrospective development evidence from three seasons. The API rows were captured after the seasons, so next-day availability is an assumption. Classwise ECE increases, the opening five fixtures are slightly worse, the 80% points coverage decreases at four of five origins and the MW30 promotion Brier is worse. Raw and calibrated API xG give similar results, so this evidence cannot separate the two representations. Calibration is kept because it is the coherent measurement model.
+
+Do not move the channel to `main` yet. Continue the prospective archive through 2026/27, with one pair before each Championship round, and score the prespecified slices. Move a focused production change only if the prospective record agrees with the historical direction without a material calibration loss. Evaluate League One and League Two API xG only prospectively, when enough captured rows exist.
+
+The match run is at `research/evidence/championship-xg/77b685e/match` and the coverage audit is at `research/evidence/championship-xg/77b685e/coverage-audit` in `page324-data`. Reproduce each arm with an empty workspace, then report:
+
+```sh
+uv run python scripts/research/evaluate_xg_observation.py predict --competition eng-championship --arm api-calibrated --data runs/ws-xg-championship-api-calibrated --output runs/xg-match/eng-championship
+uv run python scripts/research/evaluate_xg_observation.py report --competition eng-championship --data runs/ws-xg-report --output runs/xg-match/eng-championship
 ```
