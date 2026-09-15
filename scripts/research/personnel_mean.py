@@ -427,6 +427,22 @@ def report(rows, samples):
                     **{f"candidate_{key}": value for key, value in candidate.items()},
                 }
             )
+    prospective_kappa, prospective_nll = fit_kappa(usable, (0.0, MAX_KAPPA))
+    prospective_unconstrained, prospective_unconstrained_nll = fit_kappa(
+        usable, (-MAX_KAPPA, MAX_KAPPA)
+    )
+    prospective_fit = {
+        "target_season": "2026-2027",
+        "training_matches": len(usable),
+        "kappa": prospective_kappa,
+        "unconstrained_kappa": prospective_unconstrained,
+        "training_score_nll": prospective_nll,
+        "unconstrained_training_score_nll": prospective_unconstrained_nll,
+    }
+    print(
+        f"2026-2027: kappa={prospective_kappa:.4f}, unconstrained={prospective_unconstrained:.4f}",
+        flush=True,
+    )
     summaries = [summarize(scored, "all")]
     for competition in COMPETITIONS:
         selected = [row for row in scored if row["competition_id"] == competition]
@@ -486,6 +502,7 @@ def report(rows, samples):
     }
     return {
         "fits": fits,
+        "prospective_fit": prospective_fit,
         "scored": scored,
         "summaries": summaries,
         "calibration": calibration_rows,
