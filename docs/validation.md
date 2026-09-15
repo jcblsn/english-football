@@ -103,6 +103,25 @@ This is retrospective development evidence. On 180 first-10 entrant appearances 
 
 The matched 10,000-path season panel includes 16 source-conditioned entrant club-seasons in eight complete seasons. At preseason, candidate minus control was −0.00147 rank RPS and −0.175 points CRPS. The whole-season intervals include zero. Promotion Brier improved by 0.00442, relegation Brier worsened by 0.00082 and the 90% points interval became 0.44 points wider with unchanged coverage. Whole-League-Two effects were close to zero. The result supports the source-only correction, but the mixed season effects require prospective confirmation.
 
+## API-Football xG
+
+M7 uses API-Football team xG in every division from the first match with API-Football xG in that division. Before that date, the Premier League uses Understat xG. The xG enters the existing observation model unchanged. This change was compared with M7 before the change. All results are retrospective development evidence, and API-Football xG rows were captured after the seasons, so next-day availability is an assumption.
+
+### Match forecasts
+
+The Premier League scoreboard uses the same 1,140 matches in 2023/24–2025/26 as the table above.
+
+| M7 | H/D/A log loss | Brier | Classwise ECE | Score NLL |
+| --- | ---: | ---: | ---: | ---: |
+| Understat xG | 0.97857 | 0.58167 | 0.03442 | 2.97278 |
+| API-Football xG | 0.97830 | 0.58143 | 0.03205 | 2.96335 |
+
+API-Football minus Understat is −0.00027 log loss, with a 95% paired 28-day block interval of [−0.00250, +0.00199]. By season, the log-loss change is +0.00003, −0.00258 and +0.00174. The change is neutral on H/D/A scores, and it improves score NLL and calibration.
+
+In the Championship, M7 had no xG before this change. On 1,656 matches in 2023/24–2025/26, API-Football xG minus goals only is −0.00554 log loss [−0.00900, −0.00174], −0.00382 Brier and −0.01081 score NLL. Each of the three seasons improves on all three scores. Classwise ECE is 0.01408 before and 0.01446 after. The largest gain follows a match with a goal/xG gap of at least 1.5 (−0.01205 log loss), and the opening five fixtures of each club are slightly worse (+0.00122). These Championship forecasts come from the xG research run at commit `77b685e`. The product M7 of this change gives the same Championship match probabilities to within 3e-16.
+
+League One and League Two have API-Football xG only from August 2026, so this change has no historical evaluation there.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.
