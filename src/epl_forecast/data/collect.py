@@ -544,12 +544,24 @@ def collect(root=Path("data"), season=None, store=None):
             max_age=86400,
             context={"kind": "players", "match_id": match["match_id"]},
         )
+    usage = fetcher.usage()
     report = {
         "completed_at": datetime.now(UTC).isoformat(),
         "status": "partial" if errors else "complete",
         "errors": errors,
+        "api_football": usage,
     }
     write_json(Path(root) / "audits" / "collection.json", report)
+    if usage["calls"]:
+        write_json(
+            Path(root) / "audits" / "api_football" / f"{now:%Y%m%dT%H%M%SZ}.json",
+            {
+                "started_at": now.isoformat(),
+                "completed_at": report["completed_at"],
+                "status": report["status"],
+                **usage,
+            },
+        )
     return report
 
 

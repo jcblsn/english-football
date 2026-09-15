@@ -74,6 +74,8 @@ class Fetcher:
         self.last_call = 0.0
         self.interval = 0.26
         self.remaining = None
+        self.api_calls = 0
+        self.api_limit = self.api_remaining = self.api_observed_at = None
         local = [json.loads(p.read_text()) for p in (self.root / "requests").glob("*.json")]
         remote = (
             list(store.get_json("state/collection.json", {}).get("latest_by_url", {}).values())
@@ -98,6 +100,27 @@ class Fetcher:
             return False
         age = (datetime.now(UTC) - datetime.fromisoformat(old["retrieved_at"])).total_seconds()
         return historical or (max_age is not None and age < max_age)
+
+    def usage(self):
+        """API-Football requests sent by this fetcher and the last daily quota headers."""
+        return {
+            "calls": self.api_calls,
+            "daily_limit": self.api_limit,
+            "daily_remaining": self.api_remaining,
+            "observed_at": self.api_observed_at,
+        }
+
+    def observe(self, headers):
+        values = {k.lower(): v for k, v in (headers or {}).items()}
+        quota = {}
+        for name in ("limit", "remaining"):
+            try:
+                quota[name] = int(values[f"x-ratelimit-requests-{name}"])
+            except (KeyError, TypeError, ValueError):
+                quota[name] = None
+        if quota["limit"] is not None or quota["remaining"] is not None:
+            self.api_limit, self.api_remaining = quota["limit"], quota["remaining"]
+            self.api_observed_at = datetime.now(UTC).isoformat()
 
     def is_new(self, record):
         """True only for a response that this fetcher retrieved, not for retained evidence."""
@@ -126,11 +149,13 @@ class Fetcher:
                     raise QuotaReached("Daily backfill budget exhausted; resume after midnight UTC")
                 time.sleep(max(0, self.interval - (time.monotonic() - self.last_call)))
                 self.last_call = time.monotonic()
+                self.api_calls += 1
             try:
                 with urlopen(Request(url, headers=headers), timeout=45) as response:
                     payload = response.read()
                     limits = {k.lower(): v for k, v in response.headers.items()}
                     if api:
+                        self.observe(limits)
                         self.remaining = int(
                             limits.get("x-ratelimit-requests-remaining", self.remaining or 7500)
                         )
@@ -153,6 +178,8 @@ class Fetcher:
                         raise SourceAccessError(f"API-Football {url}: {message}")
                 break
             except HTTPError as error:
+                if api:
+                    self.observe(error.headers)
                 if error.code not in (429, 499, 500, 502, 503, 504) or attempt == 3:
                     raise SourceAccessError(f"HTTP {error.code}: {url}") from None
                 delay = min(60, max(2**attempt, float(error.headers.get("Retry-After", 0))))

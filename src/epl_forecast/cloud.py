@@ -74,6 +74,7 @@ def sync_data(
     paths = [*manifest_paths, *request_paths]
     paths.extend(root / record["raw_path"] for record in new_requests)
     paths.extend(root / item["path"] for manifest in new_manifests for item in manifest["files"])
+    paths.extend((root / "audits" / "api_football").glob("*.json"))
     uploaded = _upload_missing(store, root, sorted(set(paths)))
     changed = bool(new_manifests or new_requests)
     audits = [

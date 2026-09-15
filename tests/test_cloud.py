@@ -248,3 +248,58 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
     assert store.objects["state/manifests.json"] == catalog
     assert store.objects["state/collection.json"] == requests
     assert not compaction_due(store, 1)
+
+
+def test_api_football_usage_records_only_runs_that_call_the_provider(tmp_path, monkeypatch):
+    from epl_forecast.data import capture
+    from epl_forecast.data import collect as collection
+    from epl_forecast.pipeline import collect_and_sync
+
+    class Response(io.BytesIO):
+        headers = {"x-ratelimit-requests-limit": "7500", "x-ratelimit-requests-remaining": "7499"}
+
+    def ingest(root, record, payload):
+        request = {
+            key: record[key]
+            for key in ("provider", "retrieved_at", "evidence_basis", "source_sha256", "context")
+        }
+        publish(root, request, {"teams": [{"team_id": record["provider"], "name": record["url"]}]})
+
+    def fetch(request, **kwargs):
+        if request.full_url.startswith(collection.api.BASE):
+            return Response(b'{"errors":{"token":"invalid"},"response":[]}')
+        return Response(b"{}")
+
+    monkeypatch.setenv("API_FOOTBALL_KEY", "test-only-credential")
+    monkeypatch.setattr(capture.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(collection.api, "LEAGUES", {39: "eng-premier-league"})
+    monkeypatch.setattr(collection, "COMPETITIONS", {})
+    for module in (collection.fpl, collection.football_data, collection.understat_ingest):
+        monkeypatch.setattr(module, "ingest", ingest)
+    monkeypatch.setattr(capture, "urlopen", fetch)
+    store = Store(tmp_path / "remote")
+
+    report, _ = collect_and_sync(tmp_path / "calling", store)
+    records = [key for key in store.objects if key.startswith("audits/api_football/")]
+    assert report["api_football"]["calls"] == 1
+    assert len(records) == 1
+    usage = json.loads(store.objects[records[0]])
+    assert usage["calls"] == 1
+    assert (usage["daily_limit"], usage["daily_remaining"]) == (7500, 7499)
+    assert usage["status"] == "partial"
+
+    monkeypatch.setattr(collection.api, "LEAGUES", {})
+    report, synced = collect_and_sync(tmp_path / "quiet", store)
+    assert report["api_football"] == {
+        "calls": 0,
+        "daily_limit": None,
+        "daily_remaining": None,
+        "observed_at": None,
+    }
+    assert synced["uploaded"] == 0 and synced["audits"] == 1
+    assert not (tmp_path / "quiet" / "audits" / "api_football").exists()
+
+    before = dict(store.objects)
+    report, synced = collect_and_sync(tmp_path / "unchanged", store)
+    assert synced["uploaded"] == synced["audits"] == 0
+    assert store.objects == before
