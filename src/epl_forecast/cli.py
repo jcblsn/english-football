@@ -9,11 +9,12 @@ from pathlib import Path
 from epl_forecast.artifacts import new_run_directory, provenance, results_markdown, write_csv
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError
-from epl_forecast.datasets import load_dataset
+from epl_forecast.datasets import Dataset, load_dataset, timestamp
 from epl_forecast.evaluation import market_predictions, rolling_predictions, summarize
 from epl_forecast.live import LONDON, load_live_season
 from epl_forecast.live_forecast import check_freshness, export_forecast
 from epl_forecast.models import make_model
+from epl_forecast.personnel import current_adjustments
 from epl_forecast.sanctions import load_sanctions
 from epl_forecast.simulation import EuropeScenario
 from epl_forecast.storage import file_hash, write_json
@@ -106,6 +107,20 @@ def forecast_command(args) -> None:
     ] + live.played
     as_of = live.observed_at.astimezone(LONDON).date()
     model, spec, training = fitted_model(history, config, args.model, as_of)
+    data = Dataset(args.data, live.observed_at)
+    try:
+        personnel = current_adjustments(
+            data,
+            live.remaining,
+            {
+                match_id: timestamp(row["kickoff_time"])
+                for match_id, row in live.details.items()
+                if row["kickoff_time"]
+            },
+            live.observed_at,
+        )
+    finally:
+        data.close()
     europe = (
         EuropeScenario(**json.loads(args.europe_scenario.read_text()))
         if args.europe_scenario
@@ -155,6 +170,7 @@ def forecast_command(args) -> None:
         europe,
         market_quotes,
         market_pool,
+        personnel=personnel,
     )
     print(
         f"Archived {len(result['matches'])} match forecasts and "

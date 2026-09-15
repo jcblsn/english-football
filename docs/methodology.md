@@ -74,6 +74,38 @@ Each division reads only the divisions that the calibration found useful:
 
 A match forecast integrates the uncertainty of the two teams' log rates with Gauss–Hermite quadrature (9 × 9 nodes). Given the rates, the two scores are independent Poisson counts. The H/D/A probabilities use the full score support. The published exact-score grid states the probability mass that falls outside it.
 
+## Matchday-squad continuity
+
+From model version v0.2, a temporary personnel adjustment moves the expected goals of a near fixture in the Premier League or the Championship. The adjustment changes the log rates of that fixture only. It does not change the persistent team state, and the filter does not learn from it. The code is in `src/epl_forecast/personnel.py`.
+
+The recent weight w_j of player j is the number of minutes, capped at 90, that the player played in the eight previous club matches that kicked off before the forecast cutoff. Each of these matches must have at least 700 recorded minutes. The matchday-squad discontinuity of a club is:
+
+```text
+D = 1 − Σ_j w_j p_j / Σ_j w_j
+```
+
+p_j is the probability that player j is in the matchday squad of the fixture:
+
+- An official team sheet captured before the cutoff gives 1 or 0. The sheet must have 11 starters and at least 7 substitutes.
+- Otherwise, a player who has left the club gives 0. A dated transfer from the club, or a matchday squad of another club after the last matchday squad for this club, shows a departure.
+- Otherwise, a club member gives availability × q(m, n). m is the number of the eight matchday squads that included the player, and n shows whether the last one did. q comes from Premier League and Championship matches in 2021/22–2025/26. For example, q(8, yes) is 0.959 and q(1, no) is 0.297.
+
+Availability is 0 for an API-Football unavailable status or an FPL status of i, s, n or u. It is 0.3 for a doubtful status or FPL d, and 1 otherwise. API-Football statuses must name the same club and fixture, and FPL statuses the same club. Membership comes from dated transfers and matchday squads first. Without them, the latest squad capture and the FPL club decide when they agree.
+
+A player with unknown membership, or with providers that give 0 and 1, is unresolved and is left out. A club with more than 25% unresolved recent weight gets no adjustment.
+
+The shift is:
+
+```text
+Δ = κ (D_away − D_home), κ = 0.4316
+home log rate + Δ
+away log rate − Δ
+```
+
+κ was fitted once on the realized matchday squads of 8,073 Premier League and Championship matches in 2017/18–2025/26. It is not fitted again on later results.
+
+Only a fixture that kicks off in the six days after the cutoff gets the shift. Six days is the longest checkpoint of the prospective evaluation. Each production run calculates the shift again, so the forecast changes when squads, injury lists, FPL statuses and team sheets change. The published match forecast gives the discontinuity of each club and the home log-rate shift.
+
 ## Season paths
 
 Each simulated season path does these steps:
@@ -82,7 +114,7 @@ Each simulated season path does these steps:
 2. Draw the current joint state of all clubs from that filter's posterior.
 3. Draw entry states for clubs with no match yet this season.
 4. Move the state forward to each fixture date, with random innovations.
-5. Draw each score from that path's state.
+5. Draw each score from that path's state. A fixture in the next six days also gets its matchday-squad continuity shift.
 
 Simulated scores do not update the state. The simulator then builds the table and applies the rules in [season simulation](simulation.md).
 
@@ -100,3 +132,4 @@ M2 is a ridge-regularized Poisson model with one attack and one defense value pe
 - Model fitting excludes results from the London calendar day of the cutoff.
 - The current table fixes every captured full-time score, including that day.
 - Historical evaluation assumes that a result and its xG are available on the day after the match.
+- Personnel evidence uses only rows retrieved by the cutoff. A hindcast dates a matchday squad from the London day after its match and a transfer from its date. It uses no injury lists, squad captures, FPL statuses or team sheets, because the data does not show when they were first known.

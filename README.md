@@ -21,7 +21,7 @@ The forecasts also show how much each fixture in the next seven days can move ea
 
 ## Model
 
-One model, M7, makes every published forecast. M7 gives each club a latent strength and a latent openness. These change over time. Goals and expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
+One model, M7, makes every published forecast. M7 gives each club a latent strength and a latent openness. These change over time. Goals and expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. For Premier League and Championship fixtures in the next six days, a temporary adjustment for matchday-squad continuity moves the expected goals of the two clubs. It uses recent minutes, squads, transfers, injury lists, FPL statuses and team sheets. It does not change the persistent strengths. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
 
 See the [methodology](docs/methodology.md) and the [season simulation rules](docs/simulation.md).
 

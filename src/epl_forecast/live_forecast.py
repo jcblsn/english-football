@@ -8,6 +8,7 @@ from epl_forecast.competitions import competition
 from epl_forecast.live import LONDON, LiveSeason, timestamp
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.models.base import ForecastModel
+from epl_forecast.personnel import COMPETITIONS, HORIZON, KAPPA, shift_scores
 from epl_forecast.schema import Match
 from epl_forecast.simulation import EuropeScenario, simulate_season
 from epl_forecast.storage import file_hash, write_json
@@ -293,8 +294,15 @@ def export_forecast(
     market_quotes: list[dict] | None = None,
     market_pool: dict | None = None,
     impact_horizon_days: int = 7,
+    personnel: dict | None = None,
 ) -> dict:
     new_run_directory(output)
+    personnel = personnel or {}
+    shifts = {
+        match_id: record["home_log_rate_shift"]
+        for match_id, record in personnel.items()
+        if record["home_log_rate_shift"] is not None
+    }
     # A match that started without a result is simulated as a match that is not played, so one
     # unsettled result no longer stops the projection of a whole division.
     unsettled_details = [
@@ -341,6 +349,7 @@ def export_forecast(
         impact_fixtures=impact_fixtures,
         impact_horizon_days=impact_horizon_days,
         impact_window=(window_start, window_end),
+        log_rate_shifts=shifts,
     )
     table = current_table(live, adjustments)
     for row in simulation["teams"]:
@@ -364,15 +373,19 @@ def export_forecast(
         if fixture.match_id in unsettled:
             continue
         prediction = model.predict_match(fixture)
-        grid, tail = prediction.scores.grid(max_goals)
+        scores, probabilities = prediction.scores, prediction.probabilities
+        if fixture.match_id in shifts:
+            scores = shift_scores(scores, shifts[fixture.match_id])
+            probabilities = scores.outcome_probabilities()
+        grid, tail = scores.grid(max_goals)
         structural = {
-            "p_home": float(prediction.probabilities[0]),
-            "p_draw": float(prediction.probabilities[1]),
-            "p_away": float(prediction.probabilities[2]),
+            "p_home": float(probabilities[0]),
+            "p_draw": float(probabilities[1]),
+            "p_away": float(probabilities[2]),
         }
         assistance = (
             market_assisted_probabilities(
-                prediction.probabilities, selected_quotes[fixture.match_id], market_pool
+                probabilities, selected_quotes[fixture.match_id], market_pool
             )
             if fixture.match_id in selected_quotes
             else None
@@ -391,15 +404,16 @@ def export_forecast(
                 "primary_p_home": structural["p_home"],
                 "primary_p_draw": structural["p_draw"],
                 "primary_p_away": structural["p_away"],
+                "personnel": personnel.get(fixture.match_id),
                 "score_distribution": {
                     "probability_source": "structural",
-                    "home_rate": prediction.scores.home_rate,
-                    "away_rate": prediction.scores.away_rate,
+                    "home_rate": scores.home_rate,
+                    "away_rate": scores.away_rate,
                     "grid_home_rows_away_columns": grid.tolist(),
                     "omitted_probability": tail,
                     **(
-                        {"uncertainty_components": prediction.scores.uncertainty_components()}
-                        if hasattr(prediction.scores, "uncertainty_components")
+                        {"uncertainty_components": scores.uncertainty_components()}
+                        if hasattr(scores, "uncertainty_components")
                         else {}
                     ),
                 },
@@ -457,6 +471,14 @@ def export_forecast(
         "team_names": live.teams,
         "team_strengths": strengths,
         "matches": matches,
+        "personnel": {
+            "kappa": KAPPA,
+            "horizon_days": HORIZON.days,
+            "competitions": list(COMPETITIONS),
+            "records": len(personnel),
+            "adjusted_fixtures": len(shifts),
+            "persistent_state_changed": False,
+        },
         "market_assistance": None
         if market_pool is None
         else {

@@ -49,6 +49,12 @@ A forecast applies only the sanctions known at its cutoff. A sanction is known f
 
 For historical scoring, the realized final table includes every sanction in force at the end of the season. The simulator does not forecast future sanctions.
 
+## Personnel adjustment
+
+A Premier League or Championship fixture that kicks off in the six days after the cutoff uses the matchday-squad continuity shift of the [methodology](methodology.md#matchday-squad-continuity). The shift applies to that fixture on every path. It does not change the sampled team states, so it does not carry forward to later fixtures.
+
+Later fixtures use the persistent state only. The squad and availability evidence at the cutoff does not describe a fixture several weeks away, so the simulator does not apply the current personnel state to the rest of the season. Playoff matches do not get the shift.
+
 ## Fixtures without a usable date
 
 - A postponed or undated fixture is simulated on the cutoff day. When the provider gives a new date, only the date of its state evolution changes. The archive and the public forecast list each such fixture with the day that the simulation used.

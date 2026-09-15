@@ -12,6 +12,7 @@ from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError, writer_lock
 from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
+from epl_forecast.personnel import current_adjustments
 from epl_forecast.publication import (
     derive_forecast,
     load_policy,
@@ -19,6 +20,7 @@ from epl_forecast.publication import (
     update_impact_state,
 )
 from epl_forecast.record import realized_outcomes, update_record
+from epl_forecast.schema import Fixture
 from epl_forecast.storage import (
     file_hash,
     json_bytes,
@@ -136,6 +138,31 @@ def information_fingerprint(data, competition_id: str):
         ),
     }
     records = {name: data.rows(sql, parameters) for name, (sql, parameters) in queries.items()}
+    upcoming = [
+        row
+        for row in data.fixtures()
+        if row["competition_id"] == competition_id
+        and row["stage"] == "regular"
+        and row["status"] != "finished"
+        and row["kickoff_time"] is not None
+        and row["match_date"] is not None
+    ]
+    records["personnel"] = current_adjustments(
+        data,
+        [
+            Fixture(
+                row["match_id"],
+                competition_id,
+                row["season_id"],
+                row["match_date"],
+                row["home_team_id"],
+                row["away_team_id"],
+            )
+            for row in upcoming
+        ],
+        {row["match_id"]: row["kickoff_time"] for row in upcoming},
+        data.cutoff or datetime.now(UTC),
+    )
     return sha256_bytes(json.dumps(records, default=str, sort_keys=True).encode())
 
 
@@ -176,6 +203,7 @@ MODEL_CODE = (
     Path("src/epl_forecast/data/teams.csv"),
     Path("src/epl_forecast/datasets.py"),
     Path("src/epl_forecast/live.py"),
+    Path("src/epl_forecast/personnel.py"),
     Path("src/epl_forecast/live_forecast.py"),
     Path("src/epl_forecast/market.py"),
     Path("src/epl_forecast/postseason.py"),

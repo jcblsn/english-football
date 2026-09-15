@@ -22,6 +22,7 @@ from epl_forecast.artifacts import execution_provenance
 from epl_forecast.competitions import competition as competition_info
 from epl_forecast.data.rules import league_rules, reviewed_rules_evidence
 from epl_forecast.datasets import Dataset, timestamp
+from epl_forecast.personnel import MAX_UNRESOLVED
 from epl_forecast.postseason import playoff_format
 from epl_forecast.sanctions import load_registry
 from epl_forecast.simulation import EVERY_TEAM
@@ -117,6 +118,35 @@ def verify(archive: Path, data: Path) -> dict:
             f"grid {home:.5f}/{draw:.5f}/{away:.5f} vs {probabilities}",
         ):
             break
+
+    personnel = forecast["personnel"]
+    for match in forecast["matches"]:
+        record = match["personnel"]
+        if record is None:
+            continue
+        kickoff = timestamp(match["kickoff_time"])
+        checks.check(
+            f"personnel evidence is for a fixture within the horizon: {match['match_id']}",
+            observed < kickoff <= observed + timedelta(days=personnel["horizon_days"]),
+            f"{observed.isoformat()} -> {match['kickoff_time']}",
+        )
+        sheets = [record[side]["team_sheet_retrieved_at"] for side in ("home", "away")]
+        checks.check(
+            f"personnel team sheets were captured before the cutoff: {match['match_id']}",
+            all(sheet is None or timestamp(sheet) <= observed for sheet in sheets),
+            sheets,
+        )
+        shift = record["home_log_rate_shift"]
+        if shift is None:
+            continue
+        home, away = record["home"], record["away"]
+        checks.check(
+            f"the personnel shift is kappa times the discontinuity difference: {match['match_id']}",
+            abs(shift - personnel["kappa"] * (away["discontinuity"] - home["discontinuity"]))
+            < 1e-12
+            and max(home["unresolved_weight"], away["unresolved_weight"]) <= MAX_UNRESOLVED,
+            shift,
+        )
 
     unscheduled = [m for m in forecast["matches"] if m["status"] == "unscheduled"]
     checks.check(

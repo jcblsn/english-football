@@ -48,6 +48,14 @@ GitHub Actions is the normal production writer. The workflow concurrency group p
 
 The public version is part of the production fingerprint. When you change it, every division becomes due on the next run, so no current forecast keeps the earlier label. Each forecast document, each pointer and each row in `record.json` keeps the public version that made it. The record summaries can include forecasts from more than one version.
 
+| Version | Changed on `main` | Model change |
+| --- | --- | --- |
+| `v0.0` | 14 September 2026 | The first public M7 forecasts from R2. |
+| `v0.1` | 15 September 2026 | The National League became an entry source for clubs promoted to League Two, and M7 observed API-Football team xG in every division. |
+| `v0.2` | 15 September 2026 | Premier League and Championship fixtures in the next six days get a temporary matchday-squad continuity adjustment. The persistent M7 state does not change. See [methodology](methodology.md#matchday-squad-continuity) and [validation](validation.md#matchday-squad-continuity). |
+
+A new version needs new hindcasts. The hindcast edition of a version freezes its model code, so the `v0.1` hindcasts cannot describe `v0.2`.
+
 ## Single steps
 
 ```sh
@@ -67,6 +75,7 @@ Published:
 
 - H/D/A probabilities and the market-assisted probability;
 - exact-score grids for each club's next fixture;
+- for each Premier League and Championship fixture in the next six days, the matchday-squad discontinuity of each club and the home log-rate shift;
 - points and position distributions, with their intervals;
 - event probabilities and the conditional effect of each match of the week on every club;
 - the list of postponed or undated fixtures;
