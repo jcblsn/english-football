@@ -201,14 +201,28 @@ def publish(root, request, tables):
 
 
 class Dataset:
-    def __init__(self, root=Path("data"), cutoff=None, manifests=None, store=None):
+    def __init__(
+        self,
+        root=Path("data"),
+        cutoff=None,
+        manifests=None,
+        store=None,
+        *,
+        include_local=True,
+    ):
         self.root = Path(root)
         self.store = store if store is not None else r2_store_if_configured("R2_DATA_BUCKET")
+        self.include_local = include_local
         self.cutoff = timestamp(cutoff) if cutoff is not None else None
         if manifests is None:
-            local = [
-                json.loads(p.read_text()) for p in sorted((self.root / "manifests").glob("*.json"))
-            ]
+            local = (
+                [
+                    json.loads(p.read_text())
+                    for p in sorted((self.root / "manifests").glob("*.json"))
+                ]
+                if include_local
+                else []
+            )
             catalog = self.store.get_json("state/manifests.json", {}) if self.store else {}
             remote = catalog.get("manifests", [])
             manifests = list({m["batch_id"]: m for m in [*remote, *local]}.values())
@@ -231,7 +245,7 @@ class Dataset:
                     if file["table"] != table:
                         continue
                     local_path = self.root / file["path"]
-                    if local_path.exists():
+                    if self.include_local and local_path.exists():
                         paths.append(str(local_path))
                     elif self.store:
                         paths.append(self.store.uri(file["path"]))

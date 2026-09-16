@@ -758,24 +758,36 @@ def audit(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["backfill", "collect", "normalize", "audit", "query"])
+    parser.add_argument(
+        "action", choices=["backfill", "collect", "normalize", "audit", "query", "ui"]
+    )
     parser.add_argument("--root", type=Path, default=Path("data"))
     parser.add_argument("--start", type=int, default=2010)
     parser.add_argument("--end", type=int)
     parser.add_argument("--max-requests", type=int)
+    parser.add_argument("--cutoff", type=datetime.fromisoformat)
+    parser.add_argument(
+        "--no-browser", action="store_true", help="Start the UI server without opening a browser"
+    )
     parser.add_argument(
         "--sql",
         default=(
-            "SELECT competition_id, season_id, count(*) FROM fixtures GROUP BY 1,2 ORDER BY 1,2"
+            "SELECT competition_id, season_id, count(*) AS matches "
+            "FROM analysis.matches GROUP BY 1,2 ORDER BY 1,2"
         ),
     )
     args = parser.parse_args()
-    if args.action == "query":
-        data = Dataset(args.root)
+    if args.action in {"query", "ui"}:
+        from epl_forecast.analysis import open_analysis_session, start_ui
+
+        session = open_analysis_session(args.cutoff, root=args.root)
         try:
-            print(json.dumps(data.rows(args.sql), default=str, indent=2))
+            if args.action == "query":
+                print(json.dumps(session.rows(args.sql), default=str, indent=2))
+            else:
+                start_ui(session, open_browser=not args.no_browser)
         finally:
-            data.close()
+            session.close()
         return
     try:
         with writer_lock(args.root):
