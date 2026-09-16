@@ -27,6 +27,10 @@ from epl_forecast.storage import sha256_bytes, write_json
 
 FIXTURE_REFRESH_SECONDS = 3600
 FIXTURE_DETAIL_REFRESH_SECONDS = 15 * 60
+# Clubs announce starting lineups about an hour before kickoff; capture them before kickoff.
+LINEUP_WINDOW = timedelta(minutes=75)
+LINEUP_REFRESH_SECONDS = 9 * 60
+IN_PLAY_REFRESH_SECONDS = 60 * 60
 
 
 def normalized_request(fetcher, endpoint, params=None, *, retained=True, **kwargs):
@@ -391,6 +395,7 @@ def fixture_details_due(fixtures, records, now):
         fixture = row["fixture"]
         kickoff = datetime.fromisoformat(fixture["date"])
         previous = captured.get(fixture["id"])
+        elapsed = None if previous is None else (now - previous).total_seconds()
         status = fixture["status"]["short"]
         if status in {"FT", "AET", "PEN", "AWD", "WO"}:
             targets = [
@@ -401,15 +406,14 @@ def fixture_details_due(fixtures, records, now):
             due = any(
                 target <= now and (previous is None or previous < target) for target in targets
             )
+            due = due and (elapsed is None or elapsed >= FIXTURE_DETAIL_REFRESH_SECONDS)
+        elif now < kickoff:
+            due = kickoff - LINEUP_WINDOW <= now
+            due = due and (elapsed is None or elapsed >= LINEUP_REFRESH_SECONDS)
         else:
-            due = kickoff - timedelta(minutes=90) <= now <= kickoff + timedelta(hours=6)
-            due = due and (
-                previous is None
-                or (now - previous).total_seconds() >= FIXTURE_DETAIL_REFRESH_SECONDS
-            )
-        if due and (
-            previous is None or (now - previous).total_seconds() >= FIXTURE_DETAIL_REFRESH_SECONDS
-        ):
+            due = now <= kickoff + timedelta(hours=6)
+            due = due and (elapsed is None or elapsed >= IN_PLAY_REFRESH_SECONDS)
+        if due:
             selected.append(fixture["id"])
     return selected
 
@@ -500,7 +504,7 @@ def collect(root=Path("data"), season=None, store=None):
             refresh_api(
                 "fixtures",
                 {"ids": "-".join(map(str, selected[offset : offset + 20]))},
-                max_age=FIXTURE_DETAIL_REFRESH_SECONDS,
+                max_age=LINEUP_REFRESH_SECONDS,
             )
     refresh("fpl", fpl.URL, fpl.ingest, max_age=1800, context={"season_id": season_name(year)})
     for division, comp in ENTRY_SOURCE_COMPETITIONS.items():

@@ -2,7 +2,7 @@ name: production
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
     inputs:
       force:
