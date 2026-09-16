@@ -75,6 +75,10 @@ def injury_scope(competition_id, season_id):
     return f"{competition_id}:{season_id}"
 
 
+def fixture_detail_scope(match_id, team_id):
+    return f"{match_id}:{team_id}"
+
+
 class SnapshotIndex:
     """The latest snapshot of each scope that a reader at `cutoff` has seen."""
 

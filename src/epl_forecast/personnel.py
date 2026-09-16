@@ -86,7 +86,7 @@ def usable_capture(captures):
         for capture, rows in captures.items()
         if any(row["minutes"] is not None for row in rows.values())
     ]
-    return max(usable or captures)
+    return max(usable) if usable else None
 
 
 def start_of_day(day):
@@ -143,26 +143,32 @@ class Evidence:
             captures[key][capture_of(row)][row["player_id"]] = row
         spells = defaultdict(set)
         for key, by_capture in captures.items():
-            kickoff = next(
-                row["kickoff_time"] for rows in by_capture.values() for row in rows.values()
-            )
+            valid = {}
             # Every pre-kickoff capture is kept: the team-sheet rule wants the latest one
             # that names a whole matchday squad, which is not always the latest one.
             for capture, rows in by_capture.items():
+                kickoffs = {row["kickoff_time"] for row in rows.values()}
+                if len(kickoffs) != 1:
+                    continue
+                kickoff = kickoffs.pop()
+                valid[capture] = rows, kickoff
                 if capture[0] < kickoff:
                     self.sheets[key][capture] = {
                         player: bool(row["starts"]) for player, row in rows.items()
                     }
-            if kickoff >= cutoff:
+            completed = {
+                capture: rows for capture, (rows, kickoff) in valid.items() if kickoff < cutoff
+            }
+            chosen = usable_capture(completed)
+            if chosen is None:
                 continue
-            chosen = usable_capture(by_capture)
             self.match_captures[key] = chosen
             for player, row in by_capture[chosen].items():
                 spells[player].add((row["match_date"], row["team_id"]))
                 self.matchday[key].add(player)
                 if row["minutes"] is not None:
                     self.played[key][player] = min(int(row["minutes"]), REFERENCE_MINUTES)
-        self.spells = {player: sorted(rows, key=first) for player, rows in spells.items()}
+        self.spells = {player: sorted(rows) for player, rows in spells.items()}
         self.squads = {}
         self.squad_teams = defaultdict(set)
         squad_rows = defaultdict(list)
@@ -251,7 +257,7 @@ class Evidence:
                 (MEMBER if fpl["team_id"] == team else DEPARTED, f"FPL team {fpl['team_id']}")
             )
         if strong:
-            strong.sort(key=first)
+            strong.sort()
             basis = tuple(item[2] for item in strong)
             latest = strong[-1][0]
             states = {state for day, state, _ in strong if day == latest}

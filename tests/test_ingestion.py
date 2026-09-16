@@ -435,6 +435,30 @@ def test_a_fixture_without_team_statistics_publishes_none(tmp_path):
     data.close()
 
 
+def test_an_empty_fixture_detail_response_records_each_club_scope(tmp_path):
+    api.normalize(fixture_record(), fixture_body([]), tmp_path)
+    detail = {
+        **fixture_record("2026-09-08T11:00:00+00:00"),
+        "context": {"endpoint": "fixtures", "ids": "900001"},
+    }
+    api.normalize(detail, {"response": []}, tmp_path)
+    data = Dataset(tmp_path)
+    rows = data.rows("SELECT match_id, team_id, row_count FROM source_snapshots ORDER BY team_id")
+    data.close()
+    assert rows == [
+        {
+            "match_id": "eng-championship:2026-2027:swansea-city:birmingham-city",
+            "team_id": "birmingham-city",
+            "row_count": 0,
+        },
+        {
+            "match_id": "eng-championship:2026-2027:swansea-city:birmingham-city",
+            "team_id": "swansea-city",
+            "row_count": 0,
+        },
+    ]
+
+
 def test_a_reviewed_disputed_fixture_keeps_its_result_unknown(tmp_path, monkeypatch):
     import pytest
 

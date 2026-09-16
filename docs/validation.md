@@ -246,6 +246,15 @@ uv run python scripts/check_publishable.py --site site
 
 The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with the structural M7 control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.
 
+The monitoring population is frozen to Premier League and Championship regular-season fixtures in 2026/27 that kick off from 17 September 2026 00:00 UTC. The archive uses research freeze commit `6fc7d818bc08f2c8fec0c836bdc87eb817dc1285`. It does not refit κ, the matchday-squad propensity table, the availability values or the unresolved limit.
+
+The first review is after the matches of 26 October 2026. The second review is after the matches of 30 November 2026. Remove the adjustment at a review when either condition is true on the prospective fixtures:
+
+- At 24 hours, the correlation between estimated and realized D_away − D_home is below 0.5, or the sign agrees in less than 70% of fixtures whose realized absolute difference is at least 0.10.
+- At 90 minutes, the whole-round 95% interval of candidate minus control score NLL is entirely above zero.
+
+Remove or correct the adjustment at once if an audit finds a semantic or data error, such as a wrong club, a truncated squad, an identity split or an observation retrieved after the cutoff. A review that meets no removal condition keeps the adjustment without changing its frozen values.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.

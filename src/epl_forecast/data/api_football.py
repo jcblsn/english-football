@@ -21,6 +21,7 @@ from epl_forecast.snapshots import (
     SQUAD,
     TEAM_TRANSFERS,
     TRANSFERS,
+    fixture_detail_scope,
     injury_scope,
     snapshot,
 )
@@ -356,20 +357,48 @@ def source_snapshots(record, body, tables, root):
     # A whole-season fixture list carries no lineups, so it never stands in for a capture
     # of one fixture's detail.
     if endpoint == "fixtures" and ("id" in context or "ids" in context):
+        fixtures = {
+            row["match_id"]: row for row in tables.get("fixtures", ()) if row.get("match_id")
+        }
+        requested = {
+            int(value)
+            for value in str(context.get("ids", context.get("id", ""))).split("-")
+            if value
+        }
+        returned = {row.get("api_id") for row in fixtures.values()}
+        missing = requested - returned
+        if missing:
+            fixture_keys = identity_keys(root)[1]
+            match_ids = {fixture_keys[value] for value in missing if value in fixture_keys}
+            if match_ids:
+                data = Dataset(root)
+                try:
+                    placeholders = ", ".join("?" for _ in match_ids)
+                    known = data.rows(
+                        "SELECT DISTINCT match_id, competition_id, season_id, home_team_id, "
+                        f"away_team_id FROM fixtures WHERE match_id IN ({placeholders})",
+                        sorted(match_ids),
+                    )
+                finally:
+                    data.close()
+                fixtures.update({row["match_id"]: row for row in known})
         counts = {}
         for row in tables.get("appearances", ()):
-            counts[row["match_id"]] = counts.get(row["match_id"], 0) + 1
+            key = row["match_id"], row["team_id"]
+            counts[key] = counts.get(key, 0) + 1
         return [
             snapshot(
                 FIXTURE_DETAIL,
-                row["match_id"],
+                fixture_detail_scope(row["match_id"], team),
                 endpoint=endpoint,
-                row_count=counts.get(row["match_id"], 0),
+                row_count=counts.get((row["match_id"], team), 0),
                 competition_id=row["competition_id"],
                 season_id=row["season_id"],
+                team_id=team,
                 match_id=row["match_id"],
             )
-            for row in tables.get("fixtures", ())
+            for row in sorted(fixtures.values(), key=lambda item: item["match_id"])
+            for team in (row["home_team_id"], row["away_team_id"])
         ]
     # A history is requested for one player or for one club, and the two are separate scopes.
     if endpoint in ("sidelined", "transfers"):

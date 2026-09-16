@@ -474,16 +474,29 @@ def test_a_later_capture_without_minutes_cannot_erase_a_complete_one():
     assert evidence.recent_weights("home", previous)["home-0"] == 8 * 90
 
 
+def test_a_completed_match_without_a_usable_capture_has_no_participants():
+    match_id = f"{COMPETITION}:{SEASON}:home:opponent"
+    kickoff = datetime(2026, 8, 1, 14, tzinfo=UTC)
+    rows = [appearance(match_id, "home", player, kickoff, True, None) for player in REGULARS]
+    evidence = evidence_at(CUTOFF, appearances=rows)
+    assert evidence.matchday[match_id, "home"] == set()
+    assert evidence.spells == {}
+
+
 def test_contradictory_strong_evidence_of_the_same_day_leaves_membership_unknown():
     day = date(2026, 9, 10)
+    transfers = [
+        transfer("home-0", "home", "other", day),
+        transfer("home-0", "other", "home", day),
+    ]
     both_ways = evidence_at(
         CUTOFF,
-        transfers=[
-            transfer("home-0", "home", "other", day),
-            transfer("home-0", "other", "home", day),
-        ],
+        transfers=transfers,
     )
-    assert both_ways.membership("home-0", "home").state == UNKNOWN
+    membership = both_ways.membership("home-0", "home")
+    assert membership.state == UNKNOWN
+    reversed_evidence = evidence_at(CUTOFF, transfers=list(reversed(transfers)))
+    assert reversed_evidence.membership("home-0", "home") == membership
     dated = evidence_at(
         CUTOFF,
         transfers=[

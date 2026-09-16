@@ -50,7 +50,7 @@ Each row keeps its provider, its actual retrieval time, its evidence basis and t
 
 ## Source snapshots
 
-`source_snapshots` holds one row for each successful retrieval of one query scope: a club squad, the injury list of a competition season, the FPL availability of a season, the detail of one fixture, or the history of one player or club. The row exists even when the response held no rows.
+`source_snapshots` holds one row for each successful retrieval of one query scope: a club squad, the injury list of a competition season, the FPL availability of a season, the detail of one club in one fixture, or the history of one player or club. The row exists even when the response held no rows.
 
 The row is what makes an empty response readable. Without it, a reader cannot tell "the provider listed nobody" from "the provider was never asked", so an empty response would silently leave the previous one in force. The knowledge cannot live in the request manifests, because canonical compaction keeps rows and collapses request contexts. It is a canonical row, so it compacts like any other.
 
