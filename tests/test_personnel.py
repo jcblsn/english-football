@@ -359,3 +359,149 @@ def test_a_shift_moves_one_fixture_without_changing_the_model_or_its_states(smal
         f"{COMPETITION}:{last.season_id}:b:a", COMPETITION, last.season_id, day, "b", "a"
     )
     assert np.array_equal(plain.rates(later)[0], moved.rates(later)[0])
+
+
+def test_a_later_squad_snapshot_with_no_rows_empties_the_scope():
+    rows, previous, _ = history()
+    squads = squad("home", REGULARS)
+    # The provider answered the squad request with nobody. That is an observation, not
+    # silence, so the squad it replaces may not stay in force.
+    empty = source_snapshot(SQUAD, "home", CUTOFF - timedelta(hours=1), row_count=0)
+    evidence = evidence_at(
+        CUTOFF,
+        appearances=rows,
+        squads=squads,
+        snapshots=[*derive_snapshots(squads), empty],
+    )
+    assert evidence.squads["home"] == set()
+    assert evidence.membership("home-1", "home").state == UNKNOWN
+    assert continuity(evidence, previous)["unresolved_weight"] == pytest.approx(1.0)
+
+
+def test_a_later_injury_snapshot_with_no_rows_clears_the_earlier_list():
+    listed = [injury("home-1", "home", "unavailable")]
+    assert (
+        evidence_at(CUTOFF, injuries=listed).availability("home-1", "home", TARGET, COMPETITION)[0]
+        == 0.0
+    )
+    cleared = source_snapshot(
+        INJURIES, injury_scope(COMPETITION, SEASON), CUTOFF - timedelta(hours=1), row_count=0
+    )
+    evidence = evidence_at(
+        CUTOFF, injuries=listed, snapshots=[*derive_snapshots(injuries=listed), cleared]
+    )
+    assert evidence.availability("home-1", "home", TARGET, COMPETITION)[0] == 1.0
+    assert TARGET not in evidence.injury_fixtures
+
+
+def test_a_later_response_for_an_earlier_season_does_not_supersede_this_season():
+    current = [injury("home-1", "home", "unavailable")]
+    # The same competition and a later retrieval, but the season before this one. Selecting
+    # the latest row of the competition would drop the current-season evidence.
+    earlier_season = [
+        injury(
+            "home-2",
+            "home",
+            "unavailable",
+            retrieved_at=CUTOFF - timedelta(minutes=1),
+            season="2025-2026",
+        )
+    ]
+    evidence = evidence_at(CUTOFF, injuries=current + earlier_season)
+    assert evidence.availability("home-1", "home", TARGET, COMPETITION)[0] == 0.0
+
+
+def test_the_estimate_does_not_depend_on_the_order_the_rows_arrive_in():
+    rows, previous, _ = history()
+    squads = squad("home", REGULARS)
+    injuries = [injury("home-1", "home", "doubtful")]
+    statuses = [fpl("home-2", "home", "d")]
+    snapshots = derive_snapshots(squads, injuries, statuses)
+    forward = evidence_at(
+        CUTOFF,
+        appearances=rows,
+        squads=squads,
+        injuries=injuries,
+        fpl=statuses,
+        snapshots=snapshots,
+    )
+    backward = evidence_at(
+        CUTOFF,
+        appearances=rows[::-1],
+        squads=squads[::-1],
+        injuries=injuries[::-1],
+        fpl=statuses[::-1],
+        snapshots=snapshots[::-1],
+    )
+    assert continuity(backward, previous) == continuity(forward, previous)
+
+
+def test_a_corrected_capture_replaces_the_one_it_corrects():
+    rows, previous, _ = history()
+    corrected_match = previous[0]
+    kickoff = datetime(2026, 8, 1, 14, tzinfo=UTC)
+    later = kickoff + timedelta(days=2)
+    # The provider re-reports the match without one player who it first said had played.
+    without = [
+        appearance(corrected_match, "home", f"home-{n}", kickoff, True, 90, later)
+        for n in range(10)
+    ]
+    removed = evidence_at(CUTOFF, appearances=rows + without, squads=squad("home", REGULARS))
+    assert "home-10" not in removed.matchday[corrected_match, "home"]
+    assert removed.recent_weights("home", previous)["home-10"] == 7 * 90
+    assert removed.recent_weights("home", previous)["home-0"] == 8 * 90
+    assert removed.selection("home", previous, "home-10") == (7, True)
+    # A correction to the minutes of one player replaces them rather than overwriting them
+    # in whichever order the rows happen to be read.
+    fewer_minutes = [
+        *without,
+        appearance(corrected_match, "home", "home-10", kickoff, True, 20, later),
+    ]
+    changed = evidence_at(CUTOFF, appearances=rows + fewer_minutes, squads=squad("home", REGULARS))
+    assert changed.recent_weights("home", previous)["home-10"] == 7 * 90 + 20
+
+
+def test_a_later_capture_without_minutes_cannot_erase_a_complete_one():
+    rows, previous, _ = history()
+    corrected_match = previous[0]
+    kickoff = datetime(2026, 8, 1, 14, tzinfo=UTC)
+    # A short response for a finished match is not a correction; it records no minutes.
+    unusable = [
+        appearance(corrected_match, "home", p, kickoff, True, None, kickoff + timedelta(days=2))
+        for p in REGULARS
+    ]
+    evidence = evidence_at(CUTOFF, appearances=rows + unusable, squads=squad("home", REGULARS))
+    assert evidence.recent_weights("home", previous)["home-0"] == 8 * 90
+
+
+def test_contradictory_strong_evidence_of_the_same_day_leaves_membership_unknown():
+    day = date(2026, 9, 10)
+    both_ways = evidence_at(
+        CUTOFF,
+        transfers=[
+            transfer("home-0", "home", "other", day),
+            transfer("home-0", "other", "home", day),
+        ],
+    )
+    assert both_ways.membership("home-0", "home").state == UNKNOWN
+    dated = evidence_at(
+        CUTOFF,
+        transfers=[
+            transfer("home-0", "home", "other", day),
+            transfer("home-0", "other", "home", day + timedelta(days=1)),
+        ],
+    )
+    assert dated.membership("home-0", "home").state == MEMBER
+
+
+def test_a_snapshot_retrieved_after_the_cutoff_has_no_effect():
+    rows, previous, _ = history()
+    squads = squad("home", REGULARS)
+    baseline = evidence_at(CUTOFF, appearances=rows, squads=squads)
+    later = evidence_at(
+        CUTOFF,
+        appearances=rows,
+        squads=squads,
+        snapshots=[*derive_snapshots(squads), source_snapshot(SQUAD, "home", AFTER, row_count=0)],
+    )
+    assert continuity(later, previous) == continuity(baseline, previous)
