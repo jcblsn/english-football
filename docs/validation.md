@@ -205,7 +205,7 @@ The `v0.2` hindcast archive is generated from the released `main` with the Wedne
 | Item | Value |
 | --- | --- |
 | Released commit | `79d5e8d` |
-| Workflow run | `hindcast` 35040760653, dispatched 2026-09-16T00:37Z |
+| Generation | Workflow run `hindcast` 35040760653 made 104 origins; a local run of the same released code made the other 719 |
 | Public model version | `v0.2` |
 | Edition digest | `7c157a450abae14b052456f891df01ea05432597d42f557c29ac6f3c5e858577` |
 | Origin protocol | Each Wednesday at 09:00 Europe/London |
@@ -222,17 +222,25 @@ from epl_forecast.storage import json_bytes, sha256_bytes
 print(sha256_bytes(json_bytes(edition(load_policy()['product']['model_version'], 10000))))"
 ```
 
-The run was still simulating when this record was written. Two steps remain, in this order:
+Both runs claimed the same edition. `claim_edition` compares the whole edition manifest and stops a run that does not match, so one archive cannot hold two models or two origin protocols.
 
-1. Dispatch the `hindcast` workflow again until one run finishes with no failures. The command resumes: it never simulates an origin that already has a public document, and it publishes a season series only when every weekly document of that season exists. A dispatch that reaches the job time limit is continued by the next one.
-2. Materialize the publication surface and check it, then record the counts here:
+The archive holds 823 weekly documents in 20 season series, one series for each division and season. Every origin falls on a Wednesday at 09:00 Europe/London, every weekly document that a series lists exists, and every per-club array holds one value for each origin.
 
-   ```sh
-   uv run epl-forecast materialize --site site --hindcasts
-   uv run python scripts/check_publishable.py --site site
-   ```
+| Division | Origins | Fixtures with an adjustment | Origins with at least one |
+| --- | ---: | ---: | ---: |
+| Premier League | 212 | 1,803 | 174 |
+| Championship | 204 | 2,287 | 173 |
+| League One | 203 | 0 | 0 |
+| League Two | 204 | 0 | 0 |
 
-   `hindcasts/index.json` must hold 20 `v0.2` rows, one for each division and season. For each row, the length of every per-club array in `series.json` must equal the number of entries in its `origins` list, and every `origin_at` must be a Wednesday at 09:00 Europe/London. Replace this paragraph with the origin counts and the adjusted-fixture counts once they are known.
+League One and League Two hold no adjusted fixture at any origin. That is the unchanged behaviour of the two divisions that the adjustment does not cover.
+
+The whole publication surface materializes and passes the boundary: 1,695 documents, which are the 823 `v0.2` and 825 `v0.0` weekly hindcasts, their 40 season series, the hindcast index, the current pointer, four forecasts and the record.
+
+```sh
+uv run epl-forecast materialize --site site --hindcasts
+uv run python scripts/check_publishable.py --site site
+```
 
 ### Prospective evaluation
 

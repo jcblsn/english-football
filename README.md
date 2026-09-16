@@ -61,7 +61,7 @@ The [validation summary](docs/validation.md) gives the results and the commands 
 ## Limitations
 
 - xG comes from API-Football. It starts in 2023 in the Premier League and the Championship and in August 2026 in League One and League Two. A match without xG updates the model on goals only.
-- The model does not use lineups, injuries or transfers.
+- The persistent M7 state does not use lineups, injuries, suspensions or transfers. The temporary matchday-squad continuity adjustment uses personnel evidence for Premier League and Championship fixtures in the next six days. It does not forecast personnel changes beyond the available evidence.
 - The historical evaluation is retrospective, and it covers only nine to eleven seasons in each division.
 - Some playoff and scheduling details are explicit approximations.
 

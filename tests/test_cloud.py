@@ -209,11 +209,26 @@ def test_compaction_preserves_row_level_cutoffs(tmp_path):
 
 
 def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
-    from epl_forecast.personnel import Evidence, load_evidence
+    from epl_forecast.personnel import Evidence, load_evidence, team_continuity
     from epl_forecast.snapshots import SQUAD, snapshot
 
     root = tmp_path / "source"
     common = {"provider": "api_football", "evidence_basis": "captured", "context": {}}
+    previous = [f"match-{number}" for number in range(8)]
+    appearances = [
+        {
+            "match_id": match_id,
+            "player_id": f"p{player}",
+            "team_id": "arsenal",
+            "competition_id": "eng-premier-league",
+            "season_id": "2026-2027",
+            "kickoff_time": f"2026-08-{number + 1:02d}T12:00:00+00:00",
+            "starts": 1,
+            "minutes": 90,
+        }
+        for number, match_id in enumerate(previous)
+        for player in range(11)
+    ]
 
     def squad_snapshot(row_count):
         return snapshot(
@@ -230,6 +245,7 @@ def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
         root,
         {**common, "retrieved_at": "2026-09-13T12:00:00+00:00", "source_sha256": "a" * 64},
         {
+            "appearances": appearances,
             "memberships": [
                 {
                     "player_id": "p1",
@@ -251,17 +267,27 @@ def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
         {"source_snapshots": [squad_snapshot(0)]},
     )
 
-    def squads_at(directory, manifests, cutoff):
+    def personnel_at(directory, manifests, cutoff):
         data = Dataset(directory, cutoff, manifests=manifests, store=None)
         try:
-            return Evidence(cutoff, **load_evidence(data, ["2026-2027"])).squads
+            evidence = Evidence(cutoff, **load_evidence(data, ["2026-2027"]))
+            estimate = team_continuity(
+                evidence,
+                "arsenal",
+                "target",
+                "eng-premier-league",
+                previous,
+            )
+            return evidence.squads, estimate
         finally:
             data.close()
 
     before = datetime(2026, 9, 13, 18, tzinfo=UTC)
     after = datetime(2026, 9, 14, 18, tzinfo=UTC)
-    assert squads_at(root, None, before) == {"arsenal": {"p1"}}
-    assert squads_at(root, None, after) == {"arsenal": set()}
+    source_before = personnel_at(root, None, before)
+    source_after = personnel_at(root, None, after)
+    assert source_before[0] == {"arsenal": {"p1"}}
+    assert source_after[0] == {"arsenal": set()}
 
     store = Store(tmp_path / "remote")
     result = compact_canonical(root, store)
@@ -274,8 +300,8 @@ def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
     # Compaction collapses the request contexts, so only a canonical row can still say that
     # the later response covered this scope and named nobody. A reader of the compacted
     # history must reach the same squad at the same cutoff as a reader of the source.
-    assert squads_at(compacted, [manifest], before) == {"arsenal": {"p1"}}
-    assert squads_at(compacted, [manifest], after) == {"arsenal": set()}
+    assert personnel_at(compacted, [manifest], before) == source_before
+    assert personnel_at(compacted, [manifest], after) == source_after
 
 
 def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_path, monkeypatch):
