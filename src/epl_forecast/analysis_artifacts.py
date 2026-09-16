@@ -102,11 +102,12 @@ def _create_table(
         )
 
 
-def _document(store, key: str, version: int, kind: str) -> dict:
+def _document(store, key: str, version: int | tuple[int, ...], kind: str) -> dict:
     document = store.get_json(key)
     if document is None:
         raise ValueError(f"The {kind} pointer does not resolve: {key}")
-    if document.get("schema_version") != version:
+    versions = (version,) if isinstance(version, int) else version
+    if document.get("schema_version") not in versions:
         raise ValueError(f"Unsupported {kind} schema at {key}: {document.get('schema_version')!r}")
     return document
 
@@ -243,7 +244,7 @@ def _live_rows(
             forecast_id = public["forecast_id"]
             private_prefix = f"runs/forecasts/{forecast_id}/{competition_id}"
             private = _document(
-                data_store, f"{private_prefix}/forecast.json", 1, "private forecast"
+                data_store, f"{private_prefix}/forecast.json", (1, 2), "private forecast"
             )
             run = data_store.get_json(f"{private_prefix}/run.json")
             if run is None:

@@ -1,4 +1,11 @@
-from epl_forecast.live_forecast import flatten_rows
+import math
+
+import numpy as np
+import pytest
+
+from epl_forecast.live_forecast import flatten_rows, forecast_probability_stages
+from epl_forecast.models.base import Forecast
+from epl_forecast.models.poisson import IndependentPoisson, PoissonMixture
 
 
 def test_flatten_rows_removes_optional_nested_fields_from_every_row():
@@ -10,6 +17,41 @@ def test_flatten_rows_removes_optional_nested_fields_from_every_row():
     )
     assert fields == ["match_id", "price"]
     assert rows == [{"match_id": "a", "price": 2}, {"match_id": "b", "price": None}]
+
+
+def test_forecast_artifact_keeps_the_three_probability_stages():
+    scores = PoissonMixture(np.log([1.6, 1.1]), np.zeros((2, 2)))
+    prediction = Forecast(scores.outcome_probabilities(), scores)
+    quote = {
+        "family": "closing",
+        "retrieved_at": "2026-09-11T00:00:00+00:00",
+        "home_odds": 2.0,
+        "draw_odds": 3.5,
+        "away_odds": 4.0,
+    }
+    stages, adjusted_scores, adjusted_probabilities, assistance = forecast_probability_stages(
+        prediction, 10, 0.2, quote, {"market_weight": 0.25}
+    )
+
+    assert stages["unadjusted"]["score_distribution"]["home_rate"] == 1.6
+    assert stages["personnel_adjusted"]["score_distribution"]["home_rate"] == pytest.approx(
+        1.6 * math.exp(0.2)
+    )
+    assert adjusted_scores.home_rate == pytest.approx(1.6 * math.exp(0.2))
+    assert tuple(
+        stages["personnel_adjusted"][f"p_{side}"] for side in ("home", "draw", "away")
+    ) == pytest.approx(adjusted_probabilities)
+    assert stages["market_assisted"]["score_generating"] is False
+    assert "score_distribution" not in stages["market_assisted"]
+    assert stages["market_assisted"]["market_probabilities"] == assistance["market_probabilities"]
+
+
+def test_a_neutral_personnel_stage_equals_the_unadjusted_stage():
+    scores = IndependentPoisson(1.4, 1.0)
+    prediction = Forecast(scores.outcome_probabilities(), scores)
+    stages, _, _, _ = forecast_probability_stages(prediction, 10)
+    for side in ("home", "draw", "away"):
+        assert stages["unadjusted"][f"p_{side}"] == stages["personnel_adjusted"][f"p_{side}"]
 
 
 def test_a_postponed_fixture_waits_on_the_cutoff_day(tmp_path):

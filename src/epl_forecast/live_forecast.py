@@ -33,6 +33,73 @@ def flatten_rows(rows):
     return flat, list(dict.fromkeys(key for row in flat for key in row))
 
 
+def score_stage(scores, max_goals, probabilities=None):
+    """One score-generating probability stage with its complete finite score grid."""
+    probabilities = scores.outcome_probabilities() if probabilities is None else probabilities
+    grid, tail = scores.grid(max_goals)
+    return {
+        "p_home": float(probabilities[0]),
+        "p_draw": float(probabilities[1]),
+        "p_away": float(probabilities[2]),
+        "score_distribution": {
+            "home_rate": float(scores.home_rate),
+            "away_rate": float(scores.away_rate),
+            "grid_home_rows_away_columns": grid.tolist(),
+            "omitted_probability": float(tail),
+            **(
+                {"uncertainty_components": scores.uncertainty_components()}
+                if hasattr(scores, "uncertainty_components")
+                else {}
+            ),
+        },
+    }
+
+
+def forecast_probability_stages(prediction, max_goals, shift=None, quote=None, market_pool=None):
+    """Keep model, personnel-adjusted, and market-assisted outputs as separate stages."""
+    unadjusted_scores = prediction.scores
+    unadjusted = {
+        "parent_stage": "model_state",
+        "score_generating": True,
+        **score_stage(unadjusted_scores, max_goals, prediction.probabilities),
+    }
+    adjusted_scores = (
+        shift_scores(unadjusted_scores, shift) if shift is not None else unadjusted_scores
+    )
+    adjusted_probabilities = (
+        adjusted_scores.outcome_probabilities() if shift is not None else prediction.probabilities
+    )
+    adjusted = {
+        "parent_stage": "unadjusted",
+        "score_generating": True,
+        **score_stage(adjusted_scores, max_goals, adjusted_probabilities),
+    }
+    assistance = (
+        market_assisted_probabilities(adjusted_probabilities, quote, market_pool)
+        if quote is not None and market_pool is not None
+        else None
+    )
+    market = (
+        None
+        if assistance is None
+        else {
+            "parent_stage": "personnel_adjusted",
+            "score_generating": False,
+            **assistance,
+        }
+    )
+    return (
+        {
+            "unadjusted": unadjusted,
+            "personnel_adjusted": adjusted,
+            "market_assisted": market,
+        },
+        adjusted_scores,
+        adjusted_probabilities,
+        assistance,
+    )
+
+
 def weekly_window(observed_at: datetime, horizon_days: int) -> tuple[datetime, datetime]:
     """The impact slate: the London day of the observation, then the next horizon days.
 
@@ -383,23 +450,18 @@ def export_forecast(
         if fixture.match_id in unsettled:
             continue
         prediction = model.predict_match(fixture)
-        scores, probabilities = prediction.scores, prediction.probabilities
-        if fixture.match_id in shifts:
-            scores = shift_scores(scores, shifts[fixture.match_id])
-            probabilities = scores.outcome_probabilities()
-        grid, tail = scores.grid(max_goals)
+        stages, scores, probabilities, assistance = forecast_probability_stages(
+            prediction,
+            max_goals,
+            shifts.get(fixture.match_id),
+            selected_quotes.get(fixture.match_id),
+            market_pool,
+        )
         structural = {
             "p_home": float(probabilities[0]),
             "p_draw": float(probabilities[1]),
             "p_away": float(probabilities[2]),
         }
-        assistance = (
-            market_assisted_probabilities(
-                probabilities, selected_quotes[fixture.match_id], market_pool
-            )
-            if fixture.match_id in selected_quotes
-            else None
-        )
         matches.append(
             {
                 **live.details[fixture.match_id],
@@ -414,19 +476,9 @@ def export_forecast(
                 "primary_p_home": structural["p_home"],
                 "primary_p_draw": structural["p_draw"],
                 "primary_p_away": structural["p_away"],
+                "stages": stages,
                 "personnel": personnel.get(fixture.match_id),
-                "score_distribution": {
-                    "probability_source": "structural",
-                    "home_rate": scores.home_rate,
-                    "away_rate": scores.away_rate,
-                    "grid_home_rows_away_columns": grid.tolist(),
-                    "omitted_probability": tail,
-                    **(
-                        {"uncertainty_components": scores.uncertainty_components()}
-                        if hasattr(scores, "uncertainty_components")
-                        else {}
-                    ),
-                },
+                "score_distribution": stages["personnel_adjusted"]["score_distribution"],
             }
         )
     matches.sort(key=lambda row: (row["kickoff_time"] or "9999", row["match_id"]))
@@ -465,7 +517,7 @@ def export_forecast(
             }
         )
     forecast = {
-        "schema_version": 1,
+        "schema_version": 2,
         "season_id": live.season_id,
         "generated_at": generated.isoformat(),
         "state_observed_at": live.observed_at.isoformat(),
