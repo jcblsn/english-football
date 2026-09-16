@@ -194,13 +194,21 @@ The checks ran again from the released `main`, at commit `659f475`, whose foreca
 
 The personnel counts reproduce the release record. 10 of 10 Premier League fixtures in the horizon get a shift, and 9 of 12 in the Championship. League One and League Two hold no personnel record and no adjusted fixture, and their check counts equal the `v0.1` counts above, so the two divisions without the adjustment are unchanged.
 
-The shift ranges are not the same: −0.065 to +0.0745 in the Premier League against −0.054 to +0.081, and −0.0624 to +0.0318 in the Championship against −0.068 to +0.032. The canonical history held no source snapshots at this cutoff, so no injury list and no FPL status was readable, and the estimate rested on matchday squads and dated transfers. A shift range describes the evidence at one cutoff. It is not a fixed property of the model.
+The shift ranges are not the same: −0.065 to +0.0745 in the Premier League against −0.054 to +0.081, and −0.0624 to +0.0318 in the Championship against −0.068 to +0.032. The canonical history held no source snapshots at this pre-migration cutoff, so no injury list and no FPL status was readable, and the estimate rested on matchday squads and dated transfers. This is a dated release observation, not the current canonical-data contract. A shift range describes the evidence at one cutoff. It is not a fixed property of the model.
 
 What the injury lists covered at the release is an observation of that moment, not a standing property of the provider. At 21:30 UTC on 15 September 2026, the latest API-Football injury capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore rested on membership and FPL status, and in the Championship on membership alone.
+
+The final canonical migration on 16 September 2026 replayed 8,281 retained request records with the released normalizers and made no provider request. Canonical compaction batch `1945bec7b268a7fc649b7073ed6f9eb89e1b6cd67bccc3d9397737ca80daa4c3` holds 24,268 distinct source-snapshot observations. These include 18 successful empty injury snapshots, 8 successful empty fixture-detail snapshots, 590 successful empty player-sidelined snapshots and 173 successful empty player-transfer snapshots. The compact catalog has one manifest and 14 files. Its distinct row counts equal the union before compaction.
+
+The final clean-workspace production run used commit `0a65902370e89bcc5b05e11580ee1fa0e6813425`, model version `v0.2`, cutoff `2026-09-16T03:05:25.586801Z` and run ID `2026-09-16T030525Z`. It made four API-Football fixture-list requests, finished in 307 seconds and published all four divisions without a failure. The private archives record a clean worktree and this exact commit. The Premier League has 10 personnel records and 10 applied shifts; the Championship has 12 records and 9 applied shifts; League One and League Two have no personnel record or shift. Every archive states that the temporary adjustment did not change the persistent state and that market assistance did not enter the season simulation. The check counts are 1,181, 1,599, 1,602 and 1,599 in division order.
+
+GitHub production workflow run `35050871557` then checked the same commit and compacted data on a hosted runner. It completed in 72 seconds with no provider request and no pending forecast, which confirms that the published fingerprints match the released code and data. Pages workflow run `35050829333` materialized and deployed the full publication surface from the same commit.
 
 ### The v0.2 hindcast archive
 
 The `v0.2` hindcast archive is generated from the released `main` with the Wednesday origin protocol of [operations](operations.md#the-origin-protocol). It does not reuse the pre-release research hindcasts.
+
+The immutable edition remains attributed to commit `79d5e8d`. Later release commits contain canonical-data and deterministic-selection corrections. They do not overwrite or relabel that edition.
 
 | Item | Value |
 | --- | --- |
