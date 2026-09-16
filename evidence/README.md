@@ -1,6 +1,6 @@
 # Evidence
 
-This directory documents the evidence behind [validation](../docs/validation.md). Generated model output is in the private data bucket under `research/evidence/fc94353/`. Git contains the source, configuration, commands and reported results, but it does not contain generated evaluation files.
+This directory documents the evidence behind [validation](../docs/validation.md). Generated model output is in the private data bucket under `research/evidence/`, in the prefix that each row below names. Git contains the source, configuration, commands and reported results, but it does not contain generated evaluation files.
 
 | Private R2 key | Content |
 | --- | --- |
@@ -19,7 +19,7 @@ This directory documents the evidence behind [validation](../docs/validation.md)
 | `research/evidence/api-football-xg/862a1c4/season-panel-premier-league/` and `f3660fe/season-panel-premier-league-before/` | Premier League M7 season forecasts with API-Football xG and with Understat xG, 2022/23–2025/26. |
 | `research/evidence/championship-xg/77b685e/match/eng-championship/` | Championship goals-only and API-Football xG match forecasts; the `api-raw` arm is the product rule. |
 
-Code commit `fc94353` made all these forecasts, with the product configuration.
+Code commit `fc94353` made the forecasts under `research/evidence/fc94353/`, with the product configuration: the match scoreboard and the four season panels. The other rows name the commit that made them in their own key. The matchday-squad continuity evidence of `v0.2` is not in this table; it comes from the `research-personnel-measurement` branch under `research/evidence/personnel-measurement/`. See [validation](../docs/validation.md#matchday-squad-continuity).
 
 An operator with private bucket access can download one marginal archive to `runs/evidence/`, then rescore it without provider data:
 
