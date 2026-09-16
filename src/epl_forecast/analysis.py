@@ -335,6 +335,202 @@ CATALOG_ROWS = (
     ),
 )
 
+CATALOG_ROWS += (
+    (
+        "column_catalog",
+        "one row per analysis column",
+        "Column types, meanings, scales, null rules, and source fields.",
+        "analysis schema introspection and contract metadata",
+        "Descriptive metadata, not event time.",
+        True,
+        None,
+    ),
+    (
+        "forecast_match_stages",
+        "one row per forecast, competition, season, match, and probability stage",
+        "The unadjusted, personnel-adjusted, and market-assisted match probabilities with explicit lineage.",
+        "private forecast match stages, with conservative mappings for schema-version 1",
+        "Values existed in the forecast run. Historical availability is explicit.",
+        True,
+        "Market-assisted rows have no goal rates because the pool does not define a score distribution.",
+    ),
+    (
+        "forecast_match_stage_comparison",
+        "one row per forecast, competition, season, and match",
+        "A wide comparison of all probability stages and the personnel adjustment.",
+        "analysis.forecast_match_stages and analysis.forecast_personnel_teams",
+        "Inherits the forecast run timing.",
+        True,
+        "Historical unadjusted values are null when a nonzero shift was applied but not retained.",
+    ),
+    (
+        "forecast_score_distributions",
+        "one row per forecast, competition, season, match, and score-generating stage",
+        "Goal rates, omitted tail probability, uncertainty components, and score-grid dimensions.",
+        "private forecast score distributions",
+        "Values existed in the forecast run.",
+        True,
+        "The market-assisted stage is absent because it is not score-generating.",
+    ),
+    (
+        "forecast_score_grid",
+        "one row per forecast, match, stage, home-goal value, and away-goal value",
+        "Finite score-grid probabilities for each score-generating match stage.",
+        "private forecast score distributions",
+        "Values existed in the forecast run.",
+        True,
+        "Join forecast_score_distributions for omitted tail probability.",
+    ),
+    (
+        "forecast_personnel_teams",
+        "one row per forecast, match, and team",
+        "Team discontinuity and its match log-rate shift.",
+        "private forecast match personnel records",
+        "Personnel evidence selected at the forecast state observation time.",
+        True,
+        "Status explains why an adjustment was neutral, applied, or unavailable.",
+    ),
+    (
+        "forecast_personnel_players",
+        "one row per forecast, match, team, and player",
+        "Player weights, membership, availability, selection probability, and discontinuity contribution.",
+        "private forecast match personnel records",
+        "Personnel evidence selected at the forecast state observation time.",
+        True,
+        "Unknown players have no invented discontinuity contribution.",
+    ),
+    (
+        "forecast_personnel_evidence",
+        "one row per forecast, match, team, player, evidence kind, and ordinal",
+        "Membership, conflict, and availability evidence used for a player.",
+        "private forecast match personnel evidence arrays",
+        "Personnel evidence selected at the forecast state observation time.",
+        True,
+        None,
+    ),
+    (
+        "forecast_personnel_reference_matches",
+        "one row per forecast, match, team, and reference match",
+        "Recent squad reference matches used for team personnel weights.",
+        "private forecast match personnel reference_matches",
+        "Reference matches were available at the forecast state observation time.",
+        True,
+        None,
+    ),
+    (
+        "forecast_market_inputs",
+        "one row per forecast and match with a usable market quote",
+        "Odds, de-vigged probabilities, overround, and market-pool weight.",
+        "private forecast market-assisted stage",
+        "market_observed_at is the quote capture time.",
+        True,
+        None,
+    ),
+    (
+        "model_specifications",
+        "one row per forecast and mixture specification",
+        "Mixture parameters, prior and posterior weights, and log evidence.",
+        "private forecast fit_diagnostics.specifications",
+        "The specification mixture fitted for this forecast run.",
+        True,
+        None,
+    ),
+    (
+        "forecast_impact_fixtures",
+        "one row per forecast and impact fixture",
+        "Fixture-level sample, uncertainty, availability, window, and carry-forward metadata.",
+        "successful public forecast impact surface",
+        "Carry-forward fields identify the eligible pre-kickoff forecast.",
+        False,
+        None,
+    ),
+)
+
+for _product, _id in (("forecast", "forecast"), ("hindcast", "hindcast origin")):
+    CATALOG_ROWS += (
+        (
+            f"{_product}_simulation_runs",
+            f"one row per {_id} and competition",
+            "Raw private simulation settings, diagnostics, rules, and assumptions.",
+            f"private {_product} simulation",
+            "The simulation belonged to this model run; hindcast origins remain retrospective.",
+            True,
+            "Irregular rules and assumptions remain JSON.",
+        ),
+        (
+            f"{_product}_simulation_teams",
+            f"one row per {_id} and team",
+            "Raw private scalar season-simulation output.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            "These values are not the rounded public product values.",
+        ),
+        (
+            f"{_product}_simulation_team_events",
+            f"one row per {_id}, team, and event",
+            "Raw private event probabilities.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            None,
+        ),
+        (
+            f"{_product}_simulation_points_distribution",
+            f"one row per {_id}, team, and points total",
+            "Raw private points distribution.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            None,
+        ),
+        (
+            f"{_product}_simulation_position_distribution",
+            f"one row per {_id}, team, and position",
+            "Raw private position distribution.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            None,
+        ),
+        (
+            f"{_product}_simulation_goal_difference_distribution",
+            f"one row per {_id}, team, and goal difference",
+            "Raw private goal-difference distribution when retained.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            "Some historical hindcasts did not retain this distribution.",
+        ),
+        (
+            f"{_product}_simulation_intervals",
+            f"one row per {_id}, team, estimate, and interval level",
+            "Raw private points and position intervals.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            None,
+        ),
+        (
+            f"{_product}_simulation_europe_probabilities",
+            f"one row per {_id}, team, and European scenario",
+            "Raw conditional European qualification probabilities when present.",
+            f"private {_product} simulation teams",
+            "The simulation belonged to this model run.",
+            True,
+            "Only applicable competitions and scenarios have rows.",
+        ),
+        (
+            f"{_product}_simulation_match_frequencies",
+            f"one row per {_id} and simulated match",
+            "Raw simulated home, draw, and away frequencies.",
+            f"private {_product} simulation match_frequencies",
+            "The simulation belonged to this model run.",
+            True,
+            "Historical hindcasts can omit this output.",
+        ),
+    )
+
 
 class AnalysisSession:
     """A prepared analytical connection and the resources that own it."""
@@ -627,6 +823,162 @@ def _install_metadata(
     )
 
 
+COLUMN_MEANINGS = {
+    "stage": ("Probability stage name.", None, "stages object or historical mapping"),
+    "stage_order": (
+        "Order of the probability stage in the forecast pipeline.",
+        None,
+        "analysis contract",
+    ),
+    "parent_stage": ("Immediate input stage for this stage.", None, "analysis contract"),
+    "available": (
+        "True when the source artifact retained this stage.",
+        None,
+        "artifact availability",
+    ),
+    "availability_reason": ("Reason that the stage is not available.", None, "historical mapping"),
+    "p_home": ("Home-win probability.", "probability from 0 to 1", "p_home"),
+    "p_draw": ("Draw probability.", "probability from 0 to 1", "p_draw"),
+    "p_away": ("Away-win probability.", "probability from 0 to 1", "p_away"),
+    "home_rate": (
+        "Expected home goals from a score-generating stage.",
+        "goals",
+        "score_distribution.home_rate",
+    ),
+    "away_rate": (
+        "Expected away goals from a score-generating stage.",
+        "goals",
+        "score_distribution.away_rate",
+    ),
+    "discontinuity": (
+        "Resolved expected missing player weight for the team.",
+        "share from 0 to 1",
+        "personnel.<side>.discontinuity",
+    ),
+    "unresolved_weight": (
+        "Recent player weight that could not be resolved.",
+        "share from 0 to 1",
+        "personnel.<side>.unresolved_weight",
+    ),
+    "kappa": (
+        "Coefficient that maps the discontinuity difference to a log-rate shift.",
+        "natural-log rate per discontinuity unit",
+        "personnel.kappa",
+    ),
+    "home_log_rate_shift": (
+        "Shift applied to the home log scoring rate; the away rate receives its negative.",
+        "natural-log rate",
+        "personnel.home_log_rate_shift",
+    ),
+    "team_log_rate_shift": (
+        "Log-rate shift applied to this team.",
+        "natural-log rate",
+        "derived from home_log_rate_shift and side",
+    ),
+    "selection_probability": (
+        "Probability that the player is selected.",
+        "probability from 0 to 1",
+        "personnel.players.probability",
+    ),
+    "expected_missing_weight": (
+        "Recent weight multiplied by one minus selection probability.",
+        "share",
+        "derived",
+    ),
+    "discontinuity_contribution": (
+        "Resolved player contribution to team discontinuity.",
+        "share",
+        "derived",
+    ),
+    "market_weight": (
+        "Weight of the de-vigged market probabilities in the logarithmic pool.",
+        "share from 0 to 1",
+        "market_weight",
+    ),
+    "raw_implied_probability_sum": (
+        "Sum of raw inverse decimal odds before de-vigging.",
+        "ratio",
+        "raw_implied_probability_sum",
+    ),
+    "omitted_probability": (
+        "Probability outside the retained finite score grid.",
+        "probability from 0 to 1",
+        "score_distribution.omitted_probability",
+    ),
+    "quality": ("Team Quality state.", "model log-strength scale", "team_strengths.quality"),
+    "tilt": ("Team Tilt state.", "model log-strength scale", "team_strengths.tilt"),
+    "quality_tilt_covariance": (
+        "Posterior covariance between Quality and Tilt.",
+        "squared model scale",
+        "team_strengths.quality_tilt_covariance",
+    ),
+}
+
+
+def _install_column_catalog(connection) -> None:
+    sources = dict(
+        connection.execute("SELECT object_name, source FROM analysis.catalog").fetchall()
+    )
+    columns = connection.execute(
+        """
+        SELECT table_name, column_name, data_type, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'analysis' AND table_name <> 'column_catalog'
+        ORDER BY table_name, ordinal_position
+        """
+    ).fetchall()
+    rows = []
+    for object_name, column_name, data_type, nullable in columns:
+        meaning, unit, source_field = COLUMN_MEANINGS.get(
+            column_name,
+            (
+                f"The {column_name.replace('_', ' ')} value for this row.",
+                None,
+                column_name,
+            ),
+        )
+        rows.append(
+            {
+                "object_name": object_name,
+                "column_name": column_name,
+                "data_type": data_type,
+                "meaning": meaning,
+                "unit_or_scale": unit,
+                "nullable_reason": "Not applicable or not retained in the source artifact."
+                if nullable == "YES"
+                else None,
+                "source_field": f"{sources.get(object_name, 'analysis bootstrap')}: {source_field}",
+            }
+        )
+    definitions = (
+        ("object_name", "VARCHAR", "Analysis object name."),
+        ("column_name", "VARCHAR", "Analysis column name."),
+        ("data_type", "VARCHAR", "DuckDB data type."),
+        ("meaning", "VARCHAR", "Meaning of the column."),
+        ("unit_or_scale", "VARCHAR", "Unit or scale when applicable."),
+        ("nullable_reason", "VARCHAR", "Reason that the column can be null."),
+        ("source_field", "VARCHAR", "Source object or field."),
+    )
+    rows.extend(
+        {
+            "object_name": "column_catalog",
+            "column_name": name,
+            "data_type": data_type,
+            "meaning": meaning,
+            "unit_or_scale": None,
+            "nullable_reason": None,
+            "source_field": "analysis bootstrap",
+        }
+        for name, data_type, meaning in definitions
+    )
+    _create_table(
+        connection,
+        "analysis.column_catalog",
+        tuple((name, data_type) for name, data_type, _ in definitions),
+        rows,
+    )
+
+
 def open_analysis_session(
     cutoff=None,
     *,
@@ -666,6 +1018,7 @@ def open_analysis_session(
                 dataset.con, data_store, publish_store, normalized_cache
             )
         _install_metadata(dataset, datetime.now(UTC), publication_index_timestamps, model_versions)
+        _install_column_catalog(dataset.con)
         return AnalysisSession(dataset, publish_store)
     except Exception:
         dataset.close()

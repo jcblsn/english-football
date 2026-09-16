@@ -55,6 +55,8 @@ A reader that parses documents uses `schema_version`. A reader that compares num
 
 Each document kind carries its own `schema_version`. There is no single number for the whole surface, and the numbers do not move together. The private forecast archive that `epl-forecast forecast` writes is a different artifact from the published forecast document, and it keeps its own `schema_version`.
 
+Private forecast schema version 2 retains three explicit match-probability stages: the unadjusted model distribution, the personnel-adjusted score distribution, and the outcome-only market-assisted pool. It retains a score grid for each score-generating stage. Public forecast schema version 3 is unchanged because the public horizon and probability fields did not change.
+
 The `schema_version` of a document stays where it is while every change to that document is additive and optional. The `personnel` block is such a change: it is present only for a Premier League or Championship fixture in the horizon, and a reader that ignores the key still reads a correct and complete forecast. Raise the `schema_version` of a document when a key is removed or renamed, when the type or the meaning of an existing key changes, or when a new key becomes necessary to read the document correctly.
 
 `model_version` in `configs/publication.toml` is the public product version, for example `v0.0`, `v0.1` or `v1.0`. It is separate from the internal model names in `configs/product.toml`, which stay private.

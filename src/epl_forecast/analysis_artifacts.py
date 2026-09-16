@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import shutil
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,14 @@ from epl_forecast.storage import json_bytes
 ARTIFACT_TABLES = (
     "forecasts",
     "forecast_matches",
+    "forecast_match_stages",
+    "forecast_score_distributions",
+    "forecast_score_grid",
+    "forecast_personnel_teams",
+    "forecast_personnel_players",
+    "forecast_personnel_evidence",
+    "forecast_personnel_reference_matches",
+    "forecast_market_inputs",
     "forecast_teams",
     "forecast_team_events",
     "forecast_points_distribution",
@@ -21,6 +30,17 @@ ARTIFACT_TABLES = (
     "forecast_intervals",
     "model_team_states",
     "forecast_runs",
+    "model_specifications",
+    "forecast_simulation_runs",
+    "forecast_simulation_teams",
+    "forecast_simulation_team_events",
+    "forecast_simulation_points_distribution",
+    "forecast_simulation_position_distribution",
+    "forecast_simulation_goal_difference_distribution",
+    "forecast_simulation_intervals",
+    "forecast_simulation_europe_probabilities",
+    "forecast_simulation_match_frequencies",
+    "forecast_impact_fixtures",
     "forecast_impacts",
     "hindcast_origins",
     "hindcast_teams",
@@ -28,6 +48,15 @@ ARTIFACT_TABLES = (
     "hindcast_points_distribution",
     "hindcast_position_distribution",
     "hindcast_intervals",
+    "hindcast_simulation_runs",
+    "hindcast_simulation_teams",
+    "hindcast_simulation_team_events",
+    "hindcast_simulation_points_distribution",
+    "hindcast_simulation_position_distribution",
+    "hindcast_simulation_goal_difference_distribution",
+    "hindcast_simulation_intervals",
+    "hindcast_simulation_europe_probabilities",
+    "hindcast_simulation_match_frequencies",
     "record_matches",
     "record_summary",
 )
@@ -169,6 +198,328 @@ def _team_rows(product_id: str, team: dict, base: dict, targets: dict[str, list]
             )
 
 
+STAGES = (
+    ("unadjusted", 1, "model_state"),
+    ("personnel_adjusted", 2, "unadjusted"),
+    ("market_assisted", 3, "personnel_adjusted"),
+)
+
+
+def _probability_stages(match: dict, schema_version: int) -> dict[str, dict | None]:
+    if schema_version >= 2:
+        return match["stages"]
+    personnel = match.get("personnel") or {}
+    shift = personnel.get("home_log_rate_shift")
+    adjusted = {
+        "p_home": match.get("p_home"),
+        "p_draw": match.get("p_draw"),
+        "p_away": match.get("p_away"),
+        "score_distribution": match.get("score_distribution"),
+    }
+    unadjusted = (
+        None if shift is not None and shift != 0 else {**adjusted, "historical_identity": True}
+    )
+    return {
+        "unadjusted": unadjusted,
+        "personnel_adjusted": adjusted,
+        "market_assisted": match.get("market_assisted_probabilities"),
+    }
+
+
+def _match_detail_rows(
+    match: dict,
+    base: dict,
+    schema_version: int,
+    on_public_surface: bool,
+    targets: dict[str, list],
+) -> None:
+    identity = {**base, "match_id": match["match_id"]}
+    personnel = match.get("personnel") or {}
+    shift = personnel.get("home_log_rate_shift")
+    stages = _probability_stages(match, schema_version)
+    for stage, order, parent in STAGES:
+        value = stages.get(stage)
+        score = (value or {}).get("score_distribution")
+        if value is not None:
+            reason = None
+        elif stage == "unadjusted" and schema_version == 1 and shift not in (None, 0):
+            reason = "The historical artifact retained only the post-personnel distribution."
+        elif stage == "market_assisted":
+            reason = "No usable market quote was available."
+        else:
+            reason = "The artifact does not contain this stage."
+        targets["forecast_match_stages"].append(
+            {
+                **identity,
+                "stage": stage,
+                "stage_order": order,
+                "parent_stage": parent,
+                "available": value is not None,
+                "availability_reason": reason,
+                "p_home": None if value is None else value.get("p_home"),
+                "p_draw": None if value is None else value.get("p_draw"),
+                "p_away": None if value is None else value.get("p_away"),
+                "home_rate": None if score is None else score.get("home_rate"),
+                "away_rate": None if score is None else score.get("away_rate"),
+                "personnel_shift_available": shift is not None,
+                "personnel_applied": shift is not None and shift != 0,
+                "home_log_rate_shift": shift,
+                "market_family": None if value is None else value.get("market_family"),
+                "market_observed_at": None if value is None else value.get("market_observed_at"),
+                "market_weight": None if value is None else value.get("market_weight"),
+                "on_public_surface": on_public_surface,
+            }
+        )
+        if score is None:
+            continue
+        grid = score.get("grid_home_rows_away_columns") or []
+        targets["forecast_score_distributions"].append(
+            {
+                **identity,
+                "stage": stage,
+                "home_rate": score.get("home_rate"),
+                "away_rate": score.get("away_rate"),
+                "omitted_probability": score.get("omitted_probability"),
+                "uncertainty_components": _json(score.get("uncertainty_components")),
+                "home_goal_values": len(grid),
+                "away_goal_values": max((len(row) for row in grid), default=0),
+            }
+        )
+        for home_goals, row in enumerate(grid):
+            for away_goals, probability in enumerate(row):
+                targets["forecast_score_grid"].append(
+                    {
+                        **identity,
+                        "stage": stage,
+                        "home_goals": home_goals,
+                        "away_goals": away_goals,
+                        "probability": probability,
+                    }
+                )
+    market = stages.get("market_assisted")
+    if market is not None:
+        odds = market.get("decimal_odds") or {}
+        probabilities = market.get("market_probabilities") or {}
+        targets["forecast_market_inputs"].append(
+            {
+                **identity,
+                "market_family": market.get("market_family"),
+                "market_observed_at": market.get("market_observed_at"),
+                "home_odds": odds.get("home"),
+                "draw_odds": odds.get("draw"),
+                "away_odds": odds.get("away"),
+                "market_p_home": probabilities.get("p_home"),
+                "market_p_draw": probabilities.get("p_draw"),
+                "market_p_away": probabilities.get("p_away"),
+                "raw_implied_probability_sum": market.get("raw_implied_probability_sum"),
+                "market_weight": market.get("market_weight"),
+            }
+        )
+
+
+def _personnel_rows(match: dict, base: dict, kappa, targets: dict[str, list]) -> None:
+    record = match.get("personnel")
+    if not record:
+        return
+    identity = {**base, "match_id": match["match_id"]}
+    shift = record.get("home_log_rate_shift")
+    applied = shift is not None and shift != 0
+    for side in ("home", "away"):
+        team = record.get(side) or {}
+        team_id = match[f"{side}_team_id"]
+        unresolved = team.get("unresolved_weight")
+        usable = shift is not None
+        if usable:
+            status = "applied" if applied else "neutral"
+        elif team.get("discontinuity") is None:
+            status = "discontinuity_unavailable"
+        else:
+            status = "unresolved_weight_too_high"
+        targets["forecast_personnel_teams"].append(
+            {
+                **identity,
+                "side": side,
+                "team_id": team_id,
+                "discontinuity": team.get("discontinuity"),
+                "unresolved_weight": unresolved,
+                "team_sheet_retrieved_at": team.get("team_sheet_retrieved_at"),
+                "usable_for_shift": usable,
+                "kappa": kappa,
+                "home_log_rate_shift": shift,
+                "team_log_rate_shift": None
+                if shift is None
+                else shift
+                if side == "home"
+                else -shift,
+                "personnel_applied": applied,
+                "status": status,
+            }
+        )
+        for reference in team.get("reference_matches", ()):
+            match_id = reference.get("match_id") if isinstance(reference, dict) else reference
+            targets["forecast_personnel_reference_matches"].append(
+                {
+                    **identity,
+                    "team_id": team_id,
+                    "side": side,
+                    "reference_match_id": match_id,
+                    "reference": _json(reference) if isinstance(reference, dict) else None,
+                }
+            )
+        for player in team.get("players", ()):
+            probability = player.get("probability")
+            recent_weight = player.get("recent_weight")
+            expected = (
+                None
+                if probability is None or recent_weight is None
+                else recent_weight * (1 - probability)
+            )
+            contribution = (
+                None
+                if expected is None or unresolved is None or unresolved >= 1
+                else expected / (1 - unresolved)
+            )
+            player_base = {
+                **identity,
+                "team_id": team_id,
+                "side": side,
+                "player_id": player["player_id"],
+            }
+            targets["forecast_personnel_players"].append(
+                {
+                    **player_base,
+                    "player_name": player.get("player_name"),
+                    "recent_weight": recent_weight,
+                    "membership": player.get("membership"),
+                    "recent_squads": player.get("recent_squads"),
+                    "in_last_squad": player.get("in_last_squad"),
+                    "availability": player.get("availability"),
+                    "selection_probability": probability,
+                    "membership_basis": _json(player.get("membership_basis")),
+                    "membership_conflicts": _json(player.get("membership_conflicts")),
+                    "availability_basis": _json(player.get("availability_basis")),
+                    "expected_missing_weight": expected,
+                    "discontinuity_contribution": contribution,
+                }
+            )
+            for evidence_kind in (
+                "membership_basis",
+                "membership_conflicts",
+                "availability_basis",
+            ):
+                for ordinal, evidence in enumerate(player.get(evidence_kind) or (), 1):
+                    targets["forecast_personnel_evidence"].append(
+                        {
+                            **player_base,
+                            "evidence_kind": evidence_kind,
+                            "ordinal": ordinal,
+                            "basis": _json(evidence),
+                        }
+                    )
+
+
+def _simulation_rows(
+    simulation: dict,
+    base: dict,
+    targets: dict[str, list],
+    prefix: str = "forecast",
+    team_names: dict | None = None,
+) -> None:
+    team_names = team_names or {}
+    targets[f"{prefix}_simulation_runs"].append(
+        {
+            **base,
+            "simulations": simulation.get("simulations"),
+            "seed": simulation.get("seed"),
+            "as_of": simulation.get("as_of"),
+            "results_observed_at": simulation.get("results_observed_at"),
+            "played_matches": simulation.get("played_matches"),
+            "remaining_matches": simulation.get("remaining_matches"),
+            "state_uncertainty": simulation.get("state_uncertainty"),
+            "future_state_evolution": simulation.get("future_state_evolution"),
+            "head_to_head_applied_rate": simulation.get("head_to_head_applied_rate"),
+            "unresolved_decisive_tie_rate": simulation.get("unresolved_decisive_tie_rate"),
+            "ranking_rules": _json(simulation.get("ranking_rules")),
+            "ranking_diagnostics": _json(simulation.get("ranking_rules_evidence")),
+            "tie_diagnostics": _json(
+                {
+                    "disciplinary_tiebreaks_available": simulation.get(
+                        "disciplinary_tiebreaks_available"
+                    ),
+                    "head_to_head_applied_rate": simulation.get("head_to_head_applied_rate"),
+                    "unresolved_decisive_tie_rate": simulation.get("unresolved_decisive_tie_rate"),
+                }
+            ),
+            "point_adjustments": _json(simulation.get("point_adjustments")),
+            "assumptions": _json(simulation.get("assumptions")),
+            "playoff_model": _json(simulation.get("playoff_model")),
+            "europe_scenario": _json(simulation.get("europe_scenario")),
+        }
+    )
+    for team in simulation.get("teams", ()):
+        team_base = {**base, "team_id": team["team_id"]}
+        targets[f"{prefix}_simulation_teams"].append(
+            {
+                **team_base,
+                **{column: team.get(column) for column, _ in TEAM_COLUMNS if column != "team_name"},
+                "team_name": team.get("name") or team_names.get(team["team_id"]),
+            }
+        )
+        for key, value in team.items():
+            if key.endswith("_probability") and isinstance(value, (int, float)):
+                targets[f"{prefix}_simulation_team_events"].append(
+                    {**team_base, "event": key, "probability": value}
+                )
+        for points, probability in team.get("points_distribution", {}).items():
+            targets[f"{prefix}_simulation_points_distribution"].append(
+                {**team_base, "points": int(points), "probability": probability}
+            )
+        for position, probability in enumerate(team.get("position_probabilities", ()), 1):
+            targets[f"{prefix}_simulation_position_distribution"].append(
+                {**team_base, "position": position, "probability": probability}
+            )
+        for difference, probability in team.get("goal_difference_distribution", {}).items():
+            targets[f"{prefix}_simulation_goal_difference_distribution"].append(
+                {**team_base, "goal_difference": int(difference), "probability": probability}
+            )
+        for estimate in ("points", "position"):
+            for level, bounds in team.get(f"{estimate}_intervals", {}).items():
+                targets[f"{prefix}_simulation_intervals"].append(
+                    {
+                        **team_base,
+                        "estimate": estimate,
+                        "level": int(level),
+                        "lower": bounds[0],
+                        "upper": bounds[1],
+                    }
+                )
+        for scenario, probability in team.get("conditional_europe_probabilities", {}).items():
+            targets[f"{prefix}_simulation_europe_probabilities"].append(
+                {**team_base, "scenario": scenario, "probability": probability}
+            )
+    frequencies = simulation.get("match_frequencies") or {}
+    if isinstance(frequencies, dict):
+        iterator = frequencies.items()
+    else:
+        iterator = ((row.get("match_id"), row) for row in frequencies)
+    for match_id, value in iterator:
+        if isinstance(value, dict):
+            home = value.get("p_home", value.get("home", value.get("home_win")))
+            draw = value.get("p_draw", value.get("draw"))
+            away = value.get("p_away", value.get("away", value.get("away_win")))
+        else:
+            home, draw, away = value
+        targets[f"{prefix}_simulation_match_frequencies"].append(
+            {
+                **base,
+                "match_id": match_id,
+                "p_home": home,
+                "p_draw": draw,
+                "p_away": away,
+            }
+        )
+
+
 def _live_rows(
     data_store,
     publish_store,
@@ -180,6 +531,14 @@ def _live_rows(
         for name in (
             "forecasts",
             "forecast_matches",
+            "forecast_match_stages",
+            "forecast_score_distributions",
+            "forecast_score_grid",
+            "forecast_personnel_teams",
+            "forecast_personnel_players",
+            "forecast_personnel_evidence",
+            "forecast_personnel_reference_matches",
+            "forecast_market_inputs",
             "forecast_teams",
             "forecast_team_events",
             "forecast_points_distribution",
@@ -187,6 +546,17 @@ def _live_rows(
             "forecast_intervals",
             "model_team_states",
             "forecast_runs",
+            "model_specifications",
+            "forecast_simulation_runs",
+            "forecast_simulation_teams",
+            "forecast_simulation_team_events",
+            "forecast_simulation_points_distribution",
+            "forecast_simulation_position_distribution",
+            "forecast_simulation_goal_difference_distribution",
+            "forecast_simulation_intervals",
+            "forecast_simulation_europe_probabilities",
+            "forecast_simulation_match_frequencies",
+            "forecast_impact_fixtures",
             "forecast_impacts",
         )
     }
@@ -277,13 +647,17 @@ def _live_rows(
                     "model_results_cutoff": public["model_results_cutoff"],
                     "public_model_version": model_version,
                     "private_model_id": private.get("model", {}).get("id"),
+                    "private_schema_version": private["schema_version"],
                     "simulations": public["simulations"],
                     "public_href": pointer["href"],
                     "private_prefix": private_prefix,
                 }
             )
+            private_schema = private["schema_version"]
+            personnel_summary = private.get("personnel") or {}
             for match in private.get("matches", ()):
                 assisted = match.get("market_assisted_probabilities")
+                on_public_surface = match["match_id"] in public_matches
                 rows["forecast_matches"].append(
                     {
                         **base,
@@ -293,7 +667,7 @@ def _live_rows(
                         "home_team_id": match["home_team_id"],
                         "away_team_id": match["away_team_id"],
                         "status": match.get("status"),
-                        "on_public_surface": match["match_id"] in public_matches,
+                        "on_public_surface": on_public_surface,
                         "structural_p_home": match.get("p_home"),
                         "structural_p_draw": match.get("p_draw"),
                         "structural_p_away": match.get("p_away"),
@@ -315,7 +689,10 @@ def _live_rows(
                         "personnel": _json(match.get("personnel")),
                     }
                 )
+                _match_detail_rows(match, base, private_schema, on_public_surface, rows)
+                _personnel_rows(match, base, personnel_summary.get("kappa"), rows)
             simulation = private.get("simulation") or {}
+            _simulation_rows(simulation, base, rows, team_names=private.get("team_names"))
             for team in simulation.get("teams", ()):
                 public_team = next(
                     (row for row in public["teams"] if row["team_id"] == team["team_id"]), team
@@ -327,11 +704,19 @@ def _live_rows(
                         **base,
                         "team_id": state["team_id"],
                         "quality": state.get("quality"),
+                        "tilt": state.get("tilt"),
+                        "quality_sd": state.get("quality_sd"),
+                        "tilt_sd": state.get("tilt_sd"),
+                        "quality_tilt_covariance": state.get("quality_tilt_covariance"),
                         "attack_log_rate": state.get("attack_log_rate"),
                         "defense_log_rate": state.get("defense_log_rate"),
+                        "attack_sd": state.get("attack_sd"),
+                        "defense_sd": state.get("defense_sd"),
                         "attack_multiplier": state.get("attack_multiplier"),
                         "defense_multiplier": state.get("defense_multiplier"),
                         "training_matches": state.get("training_matches"),
+                        "state_source": state.get("state_source"),
+                        "season_matches": state.get("season_matches"),
                         "state": _json(state),
                     }
                 )
@@ -340,17 +725,88 @@ def _live_rows(
                     **base,
                     "generated_at": public["generated_at"],
                     "model_id": private.get("model", {}).get("id"),
+                    "model_version": model_version,
                     "package_version": run.get("package_version"),
                     "code_sha256": run.get("code_sha256"),
                     "commit": run.get("execution", {}).get("commit"),
                     "training_matches": private.get("training_matches"),
+                    "training_date_max": private.get("training_date_max"),
+                    "league_away_goal_rate": private.get("league_away_goal_rate"),
+                    "league_log_rate": math.log(private["league_away_goal_rate"])
+                    if private.get("league_away_goal_rate", 0) > 0
+                    else None,
+                    "home_scoring_multiplier": private.get("home_scoring_multiplier"),
+                    "home_advantage_log": math.log(private["home_scoring_multiplier"])
+                    if private.get("home_scoring_multiplier", 0) > 0
+                    else None,
+                    "state_uncertainty": private.get("state_uncertainty"),
+                    "future_state_evolution": private.get("future_state_evolution"),
+                    "personnel_kappa": personnel_summary.get("kappa"),
+                    "personnel_horizon_days": personnel_summary.get("horizon_days"),
+                    "personnel_records": personnel_summary.get("records"),
+                    "personnel_adjusted_fixtures": personnel_summary.get("adjusted_fixtures"),
+                    "persistent_state_changed": personnel_summary.get("persistent_state_changed"),
+                    "market_available_match_forecasts": (
+                        private.get("market_assistance") or {}
+                    ).get("available_match_forecasts"),
+                    "season_simulation_uses_market": (private.get("market_assistance") or {}).get(
+                        "season_simulation_uses_market"
+                    ),
                     "fit_diagnostics": _json(private.get("fit_diagnostics")),
                     "provenance": _json(run),
                 }
             )
+            for index, specification in enumerate(
+                (private.get("fit_diagnostics") or {}).get("specifications", ())
+            ):
+                rows["model_specifications"].append(
+                    {
+                        **base,
+                        "specification_index": index,
+                        "quality_retention": specification.get("quality_retention"),
+                        "quality_sd": specification.get("quality_sd"),
+                        "tilt_retention": specification.get("tilt_retention"),
+                        "tilt_sd": specification.get("tilt_sd"),
+                        "dispersion": specification.get("dispersion"),
+                        "chance_probability": specification.get("chance_probability"),
+                        "prior_weight": specification.get("prior_weight"),
+                        "posterior_weight": specification.get("posterior_weight"),
+                        "log_evidence": specification.get("log_evidence"),
+                    }
+                )
             impact = public.get("impact") or {}
+            event_baselines = {
+                team["team_id"]: team.get("events", {}) for team in public.get("teams", ())
+            }
             for fixture in impact.get("fixtures", ()):
                 carried = fixture.get("carried_from") or {}
+                counts = fixture.get("outcome_counts") or {}
+                rows["forecast_impact_fixtures"].append(
+                    {
+                        **base,
+                        "match_id": fixture["match_id"],
+                        "match_date": fixture.get("match_date"),
+                        "kickoff_time": fixture.get("kickoff_time"),
+                        "home_team_id": fixture.get("home_team_id"),
+                        "away_team_id": fixture.get("away_team_id"),
+                        "status": fixture.get("status"),
+                        "outcome": fixture.get("outcome"),
+                        "outcome_count_home": counts.get("home"),
+                        "outcome_count_draw": counts.get("draw"),
+                        "outcome_count_away": counts.get("away"),
+                        "sufficient_sample": fixture.get("sufficient_sample"),
+                        "max_standard_error": fixture.get("max_standard_error"),
+                        "top_rms_movement": fixture.get("top_rms_movement"),
+                        "unavailable_reason": fixture.get("unavailable_reason"),
+                        "carried_from_forecast_id": carried.get("forecast_id"),
+                        "carried_from_generated_at": carried.get("generated_at"),
+                        "impact_horizon_days": impact.get("horizon_days"),
+                        "impact_window_start": impact.get("window_start"),
+                        "impact_window_end": impact.get("window_end"),
+                        "impact_coverage": impact.get("coverage"),
+                        "minimum_conditional_samples": impact.get("minimum_conditional_samples"),
+                    }
+                )
                 for event, block in fixture.get("impacts", {}).items():
                     for index, team_id in enumerate(block.get("team_id", ())):
                         for outcome in ("home", "draw", "away"):
@@ -366,7 +822,7 @@ def _live_rows(
                                     "outcome": outcome,
                                     "baseline": baselines[index]
                                     if index < len(baselines)
-                                    else None,
+                                    else event_baselines.get(team_id, {}).get(event),
                                     "conditional_probability": values[index]
                                     if index < len(values)
                                     else None,
@@ -402,6 +858,15 @@ def _hindcast_rows(
         "hindcast_points_distribution",
         "hindcast_position_distribution",
         "hindcast_intervals",
+        "hindcast_simulation_runs",
+        "hindcast_simulation_teams",
+        "hindcast_simulation_team_events",
+        "hindcast_simulation_points_distribution",
+        "hindcast_simulation_position_distribution",
+        "hindcast_simulation_goal_difference_distribution",
+        "hindcast_simulation_intervals",
+        "hindcast_simulation_europe_probabilities",
+        "hindcast_simulation_match_frequencies",
     )
     rows = {name: [] for name in names}
     index = publish_store.get_json("hindcasts/index.json")
@@ -462,6 +927,13 @@ def _hindcast_rows(
         )
         for team in public["teams"]:
             _team_rows("hindcast", team, base, artifact_rows)
+        _simulation_rows(
+            private["simulation"],
+            base,
+            artifact_rows,
+            "hindcast",
+            {team["team_id"]: team.get("name") for team in public["teams"]},
+        )
         value = {
             "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
             "identity": origin["href"],
@@ -548,6 +1020,7 @@ def _install_live(connection, rows: dict[str, list]) -> None:
             ("model_results_cutoff", "DATE"),
             ("public_model_version", "VARCHAR"),
             ("private_model_id", "VARCHAR"),
+            ("private_schema_version", "INTEGER"),
             ("simulations", "INTEGER"),
             ("public_href", "VARCHAR"),
             ("private_prefix", "VARCHAR"),
@@ -577,6 +1050,152 @@ def _install_live(connection, rows: dict[str, list]) -> None:
             ("personnel", "JSON"),
         ),
         rows["forecast_matches"],
+    )
+    _create_table(
+        connection,
+        "forecast_match_stages",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("stage", "VARCHAR"),
+            ("stage_order", "INTEGER"),
+            ("parent_stage", "VARCHAR"),
+            ("available", "BOOLEAN"),
+            ("availability_reason", "VARCHAR"),
+            ("p_home", "DOUBLE"),
+            ("p_draw", "DOUBLE"),
+            ("p_away", "DOUBLE"),
+            ("home_rate", "DOUBLE"),
+            ("away_rate", "DOUBLE"),
+            ("personnel_shift_available", "BOOLEAN"),
+            ("personnel_applied", "BOOLEAN"),
+            ("home_log_rate_shift", "DOUBLE"),
+            ("market_family", "VARCHAR"),
+            ("market_observed_at", "TIMESTAMPTZ"),
+            ("market_weight", "DOUBLE"),
+            ("on_public_surface", "BOOLEAN"),
+        ),
+        rows["forecast_match_stages"],
+    )
+    _create_table(
+        connection,
+        "forecast_score_distributions",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("stage", "VARCHAR"),
+            ("home_rate", "DOUBLE"),
+            ("away_rate", "DOUBLE"),
+            ("omitted_probability", "DOUBLE"),
+            ("uncertainty_components", "JSON"),
+            ("home_goal_values", "INTEGER"),
+            ("away_goal_values", "INTEGER"),
+        ),
+        rows["forecast_score_distributions"],
+    )
+    _create_table(
+        connection,
+        "forecast_score_grid",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("stage", "VARCHAR"),
+            ("home_goals", "INTEGER"),
+            ("away_goals", "INTEGER"),
+            ("probability", "DOUBLE"),
+        ),
+        rows["forecast_score_grid"],
+    )
+    _create_table(
+        connection,
+        "forecast_personnel_teams",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("side", "VARCHAR"),
+            ("team_id", "VARCHAR"),
+            ("discontinuity", "DOUBLE"),
+            ("unresolved_weight", "DOUBLE"),
+            ("team_sheet_retrieved_at", "TIMESTAMPTZ"),
+            ("usable_for_shift", "BOOLEAN"),
+            ("kappa", "DOUBLE"),
+            ("home_log_rate_shift", "DOUBLE"),
+            ("team_log_rate_shift", "DOUBLE"),
+            ("personnel_applied", "BOOLEAN"),
+            ("status", "VARCHAR"),
+        ),
+        rows["forecast_personnel_teams"],
+    )
+    _create_table(
+        connection,
+        "forecast_personnel_players",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("team_id", "VARCHAR"),
+            ("side", "VARCHAR"),
+            ("player_id", "VARCHAR"),
+            ("player_name", "VARCHAR"),
+            ("recent_weight", "DOUBLE"),
+            ("membership", "VARCHAR"),
+            ("recent_squads", "INTEGER"),
+            ("in_last_squad", "BOOLEAN"),
+            ("availability", "VARCHAR"),
+            ("selection_probability", "DOUBLE"),
+            ("membership_basis", "JSON"),
+            ("membership_conflicts", "JSON"),
+            ("availability_basis", "JSON"),
+            ("expected_missing_weight", "DOUBLE"),
+            ("discontinuity_contribution", "DOUBLE"),
+        ),
+        rows["forecast_personnel_players"],
+    )
+    _create_table(
+        connection,
+        "forecast_personnel_evidence",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("team_id", "VARCHAR"),
+            ("side", "VARCHAR"),
+            ("player_id", "VARCHAR"),
+            ("evidence_kind", "VARCHAR"),
+            ("ordinal", "INTEGER"),
+            ("basis", "JSON"),
+        ),
+        rows["forecast_personnel_evidence"],
+    )
+    _create_table(
+        connection,
+        "forecast_personnel_reference_matches",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("team_id", "VARCHAR"),
+            ("side", "VARCHAR"),
+            ("reference_match_id", "VARCHAR"),
+            ("reference", "JSON"),
+        ),
+        rows["forecast_personnel_reference_matches"],
+    )
+    _create_table(
+        connection,
+        "forecast_market_inputs",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("market_family", "VARCHAR"),
+            ("market_observed_at", "TIMESTAMPTZ"),
+            ("home_odds", "DOUBLE"),
+            ("draw_odds", "DOUBLE"),
+            ("away_odds", "DOUBLE"),
+            ("market_p_home", "DOUBLE"),
+            ("market_p_draw", "DOUBLE"),
+            ("market_p_away", "DOUBLE"),
+            ("raw_implied_probability_sum", "DOUBLE"),
+            ("market_weight", "DOUBLE"),
+        ),
+        rows["forecast_market_inputs"],
     )
     _create_table(connection, "forecast_teams", base + TEAM_COLUMNS, rows["forecast_teams"])
     _create_table(
@@ -617,11 +1236,19 @@ def _install_live(connection, rows: dict[str, list]) -> None:
         + (
             ("team_id", "VARCHAR"),
             ("quality", "DOUBLE"),
+            ("tilt", "DOUBLE"),
+            ("quality_sd", "DOUBLE"),
+            ("tilt_sd", "DOUBLE"),
+            ("quality_tilt_covariance", "DOUBLE"),
             ("attack_log_rate", "DOUBLE"),
             ("defense_log_rate", "DOUBLE"),
+            ("attack_sd", "DOUBLE"),
+            ("defense_sd", "DOUBLE"),
             ("attack_multiplier", "DOUBLE"),
             ("defense_multiplier", "DOUBLE"),
             ("training_matches", "INTEGER"),
+            ("state_source", "VARCHAR"),
+            ("season_matches", "INTEGER"),
             ("state", "JSON"),
         ),
         rows["model_team_states"],
@@ -633,14 +1260,145 @@ def _install_live(connection, rows: dict[str, list]) -> None:
         + (
             ("generated_at", "TIMESTAMPTZ"),
             ("model_id", "VARCHAR"),
+            ("model_version", "VARCHAR"),
             ("package_version", "VARCHAR"),
             ("code_sha256", "VARCHAR"),
             ("commit", "VARCHAR"),
             ("training_matches", "INTEGER"),
+            ("training_date_max", "DATE"),
+            ("league_away_goal_rate", "DOUBLE"),
+            ("league_log_rate", "DOUBLE"),
+            ("home_scoring_multiplier", "DOUBLE"),
+            ("home_advantage_log", "DOUBLE"),
+            ("state_uncertainty", "VARCHAR"),
+            ("future_state_evolution", "BOOLEAN"),
+            ("personnel_kappa", "DOUBLE"),
+            ("personnel_horizon_days", "INTEGER"),
+            ("personnel_records", "INTEGER"),
+            ("personnel_adjusted_fixtures", "INTEGER"),
+            ("persistent_state_changed", "BOOLEAN"),
+            ("market_available_match_forecasts", "INTEGER"),
+            ("season_simulation_uses_market", "BOOLEAN"),
             ("fit_diagnostics", "JSON"),
             ("provenance", "JSON"),
         ),
         rows["forecast_runs"],
+    )
+    _create_table(
+        connection,
+        "model_specifications",
+        base
+        + (
+            ("specification_index", "INTEGER"),
+            ("quality_retention", "DOUBLE"),
+            ("quality_sd", "DOUBLE"),
+            ("tilt_retention", "DOUBLE"),
+            ("tilt_sd", "DOUBLE"),
+            ("dispersion", "DOUBLE"),
+            ("chance_probability", "DOUBLE"),
+            ("prior_weight", "DOUBLE"),
+            ("posterior_weight", "DOUBLE"),
+            ("log_evidence", "DOUBLE"),
+        ),
+        rows["model_specifications"],
+    )
+    _create_table(
+        connection,
+        "forecast_simulation_runs",
+        base
+        + (
+            ("simulations", "INTEGER"),
+            ("seed", "BIGINT"),
+            ("as_of", "DATE"),
+            ("results_observed_at", "TIMESTAMPTZ"),
+            ("played_matches", "INTEGER"),
+            ("remaining_matches", "INTEGER"),
+            ("state_uncertainty", "VARCHAR"),
+            ("future_state_evolution", "BOOLEAN"),
+            ("head_to_head_applied_rate", "DOUBLE"),
+            ("unresolved_decisive_tie_rate", "DOUBLE"),
+            ("ranking_rules", "JSON"),
+            ("ranking_diagnostics", "JSON"),
+            ("tie_diagnostics", "JSON"),
+            ("point_adjustments", "JSON"),
+            ("assumptions", "JSON"),
+            ("playoff_model", "JSON"),
+            ("europe_scenario", "JSON"),
+        ),
+        rows["forecast_simulation_runs"],
+    )
+    _create_table(
+        connection,
+        "forecast_simulation_teams",
+        base + TEAM_COLUMNS,
+        rows["forecast_simulation_teams"],
+    )
+    for suffix, value_column in (
+        ("team_events", (("event", "VARCHAR"),)),
+        ("points_distribution", (("points", "INTEGER"),)),
+        ("position_distribution", (("position", "INTEGER"),)),
+        ("goal_difference_distribution", (("goal_difference", "INTEGER"),)),
+        ("europe_probabilities", (("scenario", "VARCHAR"),)),
+    ):
+        _create_table(
+            connection,
+            f"forecast_simulation_{suffix}",
+            base + (("team_id", "VARCHAR"),) + value_column + (("probability", "DOUBLE"),),
+            rows[f"forecast_simulation_{suffix}"],
+        )
+    _create_table(
+        connection,
+        "forecast_simulation_intervals",
+        base
+        + (
+            ("team_id", "VARCHAR"),
+            ("estimate", "VARCHAR"),
+            ("level", "INTEGER"),
+            ("lower", "DOUBLE"),
+            ("upper", "DOUBLE"),
+        ),
+        rows["forecast_simulation_intervals"],
+    )
+    _create_table(
+        connection,
+        "forecast_simulation_match_frequencies",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("p_home", "DOUBLE"),
+            ("p_draw", "DOUBLE"),
+            ("p_away", "DOUBLE"),
+        ),
+        rows["forecast_simulation_match_frequencies"],
+    )
+    _create_table(
+        connection,
+        "forecast_impact_fixtures",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("match_date", "DATE"),
+            ("kickoff_time", "TIMESTAMPTZ"),
+            ("home_team_id", "VARCHAR"),
+            ("away_team_id", "VARCHAR"),
+            ("status", "VARCHAR"),
+            ("outcome", "VARCHAR"),
+            ("outcome_count_home", "INTEGER"),
+            ("outcome_count_draw", "INTEGER"),
+            ("outcome_count_away", "INTEGER"),
+            ("sufficient_sample", "BOOLEAN"),
+            ("max_standard_error", "DOUBLE"),
+            ("top_rms_movement", "DOUBLE"),
+            ("unavailable_reason", "VARCHAR"),
+            ("carried_from_forecast_id", "VARCHAR"),
+            ("carried_from_generated_at", "TIMESTAMPTZ"),
+            ("impact_horizon_days", "INTEGER"),
+            ("impact_window_start", "TIMESTAMPTZ"),
+            ("impact_window_end", "TIMESTAMPTZ"),
+            ("impact_coverage", "VARCHAR"),
+            ("minimum_conditional_samples", "INTEGER"),
+        ),
+        rows["forecast_impact_fixtures"],
     )
     _create_table(
         connection,
@@ -710,6 +1468,75 @@ def _install_hindcasts(connection, rows: dict[str, list]) -> None:
         ),
         rows["hindcast_intervals"],
     )
+    _create_table(
+        connection,
+        "hindcast_simulation_runs",
+        base
+        + (
+            ("simulations", "INTEGER"),
+            ("seed", "BIGINT"),
+            ("as_of", "DATE"),
+            ("results_observed_at", "TIMESTAMPTZ"),
+            ("played_matches", "INTEGER"),
+            ("remaining_matches", "INTEGER"),
+            ("state_uncertainty", "VARCHAR"),
+            ("future_state_evolution", "BOOLEAN"),
+            ("head_to_head_applied_rate", "DOUBLE"),
+            ("unresolved_decisive_tie_rate", "DOUBLE"),
+            ("ranking_rules", "JSON"),
+            ("ranking_diagnostics", "JSON"),
+            ("tie_diagnostics", "JSON"),
+            ("point_adjustments", "JSON"),
+            ("assumptions", "JSON"),
+            ("playoff_model", "JSON"),
+            ("europe_scenario", "JSON"),
+        ),
+        rows["hindcast_simulation_runs"],
+    )
+    _create_table(
+        connection,
+        "hindcast_simulation_teams",
+        base + TEAM_COLUMNS,
+        rows["hindcast_simulation_teams"],
+    )
+    for suffix, value_column in (
+        ("team_events", (("event", "VARCHAR"),)),
+        ("points_distribution", (("points", "INTEGER"),)),
+        ("position_distribution", (("position", "INTEGER"),)),
+        ("goal_difference_distribution", (("goal_difference", "INTEGER"),)),
+        ("europe_probabilities", (("scenario", "VARCHAR"),)),
+    ):
+        _create_table(
+            connection,
+            f"hindcast_simulation_{suffix}",
+            base + (("team_id", "VARCHAR"),) + value_column + (("probability", "DOUBLE"),),
+            rows[f"hindcast_simulation_{suffix}"],
+        )
+    _create_table(
+        connection,
+        "hindcast_simulation_intervals",
+        base
+        + (
+            ("team_id", "VARCHAR"),
+            ("estimate", "VARCHAR"),
+            ("level", "INTEGER"),
+            ("lower", "DOUBLE"),
+            ("upper", "DOUBLE"),
+        ),
+        rows["hindcast_simulation_intervals"],
+    )
+    _create_table(
+        connection,
+        "hindcast_simulation_match_frequencies",
+        base
+        + (
+            ("match_id", "VARCHAR"),
+            ("p_home", "DOUBLE"),
+            ("p_draw", "DOUBLE"),
+            ("p_away", "DOUBLE"),
+        ),
+        rows["hindcast_simulation_match_frequencies"],
+    )
 
 
 def _install_record(connection, matches: list[dict], summaries: list[dict]) -> None:
@@ -751,6 +1578,14 @@ def _validate_analysis(connection) -> None:
     grains = {
         "forecasts": "forecast_id, competition_id",
         "forecast_matches": "forecast_id, competition_id, match_id",
+        "forecast_match_stages": "forecast_id, competition_id, match_id, stage",
+        "forecast_score_distributions": "forecast_id, competition_id, match_id, stage",
+        "forecast_score_grid": "forecast_id, competition_id, match_id, stage, home_goals, away_goals",
+        "forecast_personnel_teams": "forecast_id, competition_id, match_id, team_id",
+        "forecast_personnel_players": "forecast_id, competition_id, match_id, team_id, player_id",
+        "forecast_personnel_evidence": "forecast_id, competition_id, match_id, team_id, player_id, evidence_kind, ordinal",
+        "forecast_personnel_reference_matches": "forecast_id, competition_id, match_id, team_id, reference_match_id",
+        "forecast_market_inputs": "forecast_id, competition_id, match_id",
         "forecast_teams": "forecast_id, competition_id, team_id",
         "forecast_team_events": "forecast_id, competition_id, team_id, event",
         "forecast_points_distribution": "forecast_id, competition_id, team_id, points",
@@ -758,6 +1593,17 @@ def _validate_analysis(connection) -> None:
         "forecast_intervals": "forecast_id, competition_id, team_id, estimate, level",
         "model_team_states": "forecast_id, competition_id, team_id",
         "forecast_runs": "forecast_id, competition_id",
+        "model_specifications": "forecast_id, competition_id, specification_index",
+        "forecast_simulation_runs": "forecast_id, competition_id",
+        "forecast_simulation_teams": "forecast_id, competition_id, team_id",
+        "forecast_simulation_team_events": "forecast_id, competition_id, team_id, event",
+        "forecast_simulation_points_distribution": "forecast_id, competition_id, team_id, points",
+        "forecast_simulation_position_distribution": "forecast_id, competition_id, team_id, position",
+        "forecast_simulation_goal_difference_distribution": "forecast_id, competition_id, team_id, goal_difference",
+        "forecast_simulation_intervals": "forecast_id, competition_id, team_id, estimate, level",
+        "forecast_simulation_europe_probabilities": "forecast_id, competition_id, team_id, scenario",
+        "forecast_simulation_match_frequencies": "forecast_id, competition_id, match_id",
+        "forecast_impact_fixtures": "forecast_id, competition_id, match_id",
         "forecast_impacts": "forecast_id, competition_id, match_id, event, team_id, outcome",
         "hindcast_origins": "hindcast_id, competition_id, season_id",
         "hindcast_teams": "hindcast_id, competition_id, season_id, team_id",
@@ -765,6 +1611,15 @@ def _validate_analysis(connection) -> None:
         "hindcast_points_distribution": "hindcast_id, competition_id, season_id, team_id, points",
         "hindcast_position_distribution": "hindcast_id, competition_id, season_id, team_id, position",
         "hindcast_intervals": "hindcast_id, competition_id, season_id, team_id, estimate, level",
+        "hindcast_simulation_runs": "hindcast_id, competition_id, season_id",
+        "hindcast_simulation_teams": "hindcast_id, competition_id, season_id, team_id",
+        "hindcast_simulation_team_events": "hindcast_id, competition_id, season_id, team_id, event",
+        "hindcast_simulation_points_distribution": "hindcast_id, competition_id, season_id, team_id, points",
+        "hindcast_simulation_position_distribution": "hindcast_id, competition_id, season_id, team_id, position",
+        "hindcast_simulation_goal_difference_distribution": "hindcast_id, competition_id, season_id, team_id, goal_difference",
+        "hindcast_simulation_intervals": "hindcast_id, competition_id, season_id, team_id, estimate, level",
+        "hindcast_simulation_europe_probabilities": "hindcast_id, competition_id, season_id, team_id, scenario",
+        "hindcast_simulation_match_frequencies": "hindcast_id, competition_id, season_id, match_id",
         "record_matches": "record_state, match_id",
         "record_summary": "scope",
     }
@@ -776,6 +1631,7 @@ def _validate_analysis(connection) -> None:
             raise ValueError(f"Duplicate declared grain in analysis.{table}")
     probability_checks = {
         "forecast_matches": "abs(structural_p_home + structural_p_draw + structural_p_away - 1) > 0.000002 OR (market_assisted_p_home IS NOT NULL AND abs(market_assisted_p_home + market_assisted_p_draw + market_assisted_p_away - 1) > 0.000002)",
+        "forecast_match_stages": "available AND abs(p_home + p_draw + p_away - 1) > 0.000002",
         "record_matches": "abs(p_home + p_draw + p_away - 1) > 0.000002",
     }
     for table, predicate in probability_checks.items():
@@ -783,6 +1639,95 @@ def _validate_analysis(connection) -> None:
             f"SELECT 1 FROM analysis.{table} WHERE {predicate} LIMIT 1"
         ).fetchone():
             raise ValueError(f"Invalid probability sum in analysis.{table}")
+    if connection.execute(
+        """
+        SELECT 1 FROM analysis.forecast_score_distributions distribution
+        JOIN (
+            SELECT forecast_id, competition_id, season_id, match_id, stage,
+                   sum(probability) AS grid_probability
+            FROM analysis.forecast_score_grid
+            GROUP BY forecast_id, competition_id, season_id, match_id, stage
+        ) grid USING (forecast_id, competition_id, season_id, match_id, stage)
+        WHERE abs(grid_probability + omitted_probability - 1) > 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Invalid score distribution total in analysis.forecast_score_grid")
+    if connection.execute(
+        """
+        SELECT 1
+        FROM analysis.forecast_match_stages stage
+        JOIN analysis.forecasts forecast
+          USING (forecast_id, competition_id, season_id)
+        JOIN analysis.forecast_score_distributions distribution
+          USING (forecast_id, competition_id, season_id, match_id, stage)
+        JOIN (
+            SELECT forecast_id, competition_id, season_id, match_id, stage,
+                   sum(probability) FILTER (home_goals > away_goals) AS p_home,
+                   sum(probability) FILTER (home_goals = away_goals) AS p_draw,
+                   sum(probability) FILTER (home_goals < away_goals) AS p_away
+            FROM analysis.forecast_score_grid
+            GROUP BY forecast_id, competition_id, season_id, match_id, stage
+        ) grid USING (forecast_id, competition_id, season_id, match_id, stage)
+        WHERE forecast.private_schema_version >= 2
+          AND greatest(abs(stage.p_home - grid.p_home), abs(stage.p_draw - grid.p_draw),
+                       abs(stage.p_away - grid.p_away)) > distribution.omitted_probability + 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Score grid does not reproduce its match-stage probabilities")
+    if connection.execute(
+        """
+        SELECT 1
+        FROM analysis.forecast_match_stages original
+        JOIN analysis.forecast_match_stages adjusted
+          USING (forecast_id, competition_id, season_id, match_id)
+        JOIN analysis.forecasts forecast
+          USING (forecast_id, competition_id, season_id)
+        WHERE original.stage = 'unadjusted'
+          AND adjusted.stage = 'personnel_adjusted'
+          AND forecast.private_schema_version >= 2
+          AND coalesce(adjusted.home_log_rate_shift, 0) = 0
+          AND greatest(abs(original.p_home - adjusted.p_home),
+                       abs(original.p_draw - adjusted.p_draw),
+                       abs(original.p_away - adjusted.p_away)) > 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("A neutral personnel stage differs from its unadjusted stage")
+    if connection.execute(
+        """
+        SELECT 1 FROM (
+            SELECT forecast_id, competition_id, season_id, match_id,
+                   max(discontinuity) FILTER (side = 'home') AS home_discontinuity,
+                   max(discontinuity) FILTER (side = 'away') AS away_discontinuity,
+                   max(kappa) AS kappa,
+                   max(home_log_rate_shift) AS shift,
+                   bool_and(usable_for_shift) AS usable
+            FROM analysis.forecast_personnel_teams
+            GROUP BY forecast_id, competition_id, season_id, match_id
+        )
+        WHERE usable AND kappa IS NOT NULL
+          AND abs(shift - kappa * (away_discontinuity - home_discontinuity)) > 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Personnel log-rate shift does not match the discontinuity difference")
+    if connection.execute(
+        """
+        SELECT 1 FROM analysis.forecast_personnel_teams team
+        JOIN (
+            SELECT forecast_id, competition_id, season_id, match_id, team_id,
+                   sum(discontinuity_contribution) AS total
+            FROM analysis.forecast_personnel_players
+            WHERE discontinuity_contribution IS NOT NULL
+            GROUP BY forecast_id, competition_id, season_id, match_id, team_id
+        ) players USING (forecast_id, competition_id, season_id, match_id, team_id)
+        WHERE team.discontinuity IS NOT NULL AND abs(team.discontinuity - players.total) > 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Personnel contributions do not reproduce team discontinuity")
     for prefix in ("forecast", "hindcast"):
         identity = (
             "forecast_id, competition_id, team_id"
@@ -932,13 +1877,68 @@ def _install_projection_view(connection) -> None:
     )
 
 
+def _install_match_stage_comparison(connection) -> None:
+    connection.execute(
+        """
+        CREATE VIEW analysis.forecast_match_stage_comparison AS
+        WITH stages AS (
+            SELECT forecast_id, competition_id, season_id, match_id,
+                   max(p_home) FILTER (stage = 'unadjusted') AS unadjusted_p_home,
+                   max(p_draw) FILTER (stage = 'unadjusted') AS unadjusted_p_draw,
+                   max(p_away) FILTER (stage = 'unadjusted') AS unadjusted_p_away,
+                   max(home_rate) FILTER (stage = 'unadjusted') AS unadjusted_home_rate,
+                   max(away_rate) FILTER (stage = 'unadjusted') AS unadjusted_away_rate,
+                   max(p_home) FILTER (stage = 'personnel_adjusted') AS personnel_adjusted_p_home,
+                   max(p_draw) FILTER (stage = 'personnel_adjusted') AS personnel_adjusted_p_draw,
+                   max(p_away) FILTER (stage = 'personnel_adjusted') AS personnel_adjusted_p_away,
+                   max(home_rate) FILTER (stage = 'personnel_adjusted') AS personnel_adjusted_home_rate,
+                   max(away_rate) FILTER (stage = 'personnel_adjusted') AS personnel_adjusted_away_rate,
+                   max(p_home) FILTER (stage = 'market_assisted') AS market_assisted_p_home,
+                   max(p_draw) FILTER (stage = 'market_assisted') AS market_assisted_p_draw,
+                   max(p_away) FILTER (stage = 'market_assisted') AS market_assisted_p_away,
+                   bool_or(personnel_applied) AS personnel_applied,
+                   max(home_log_rate_shift) AS home_log_rate_shift
+            FROM analysis.forecast_match_stages
+            GROUP BY forecast_id, competition_id, season_id, match_id
+        ), personnel AS (
+            SELECT forecast_id, competition_id, season_id, match_id,
+                   max(discontinuity) FILTER (side = 'home') AS D_home,
+                   max(discontinuity) FILTER (side = 'away') AS D_away,
+                   max(kappa) AS kappa
+            FROM analysis.forecast_personnel_teams
+            GROUP BY forecast_id, competition_id, season_id, match_id
+        )
+        SELECT stages.*, personnel.D_home, personnel.D_away, personnel.kappa
+        FROM stages LEFT JOIN personnel
+        USING (forecast_id, competition_id, season_id, match_id)
+        """
+    )
+
+
+def _install_artifact_views(connection) -> None:
+    has_players = connection.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = 'players' LIMIT 1"
+    ).fetchone()
+    if has_players:
+        connection.execute(
+            """
+            UPDATE analysis.forecast_personnel_players AS target
+            SET player_name = players.name
+            FROM players
+            WHERE target.player_id = players.player_id AND target.player_name IS NULL
+            """
+        )
+    _install_projection_view(connection)
+    _install_match_stage_comparison(connection)
+
+
 def install_artifact_analysis(
     connection, data_store, publish_store, cache: Path | None = None
 ) -> tuple[dict, set[str]]:
     state = _index_state(publish_store)
     cached = _load_session_cache(connection, cache)
     if cached and cached["fingerprint"] == state["fingerprint"]:
-        _install_projection_view(connection)
+        _install_artifact_views(connection)
         return cached["publication_updates"], set(cached["model_versions"])
     old_live = set(map(tuple, cached.get("live_ids", ()))) if cached else set()
     old_hindcasts = set(cached.get("hindcast_ids", ())) if cached else set()
@@ -964,7 +1964,7 @@ def install_artifact_analysis(
         connection.execute("DROP TABLE analysis.record_summary")
     _install_record(connection, record_matches, record_summary)
     _validate_analysis(connection)
-    _install_projection_view(connection)
+    _install_artifact_views(connection)
     publication_updates = {**live_updates, **hindcast_updates, **record_updates}
     model_versions = (
         (set(cached.get("model_versions", ())) if incremental else set())

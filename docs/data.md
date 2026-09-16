@@ -126,7 +126,7 @@ uv run epl-forecast data query --cutoff 2026-08-15T12:00:00+00:00 --sql 'SELECT 
 
 The session reads the canonical manifest catalog from R2 and does not read local manifests or local canonical files. The `--root` option remains for command compatibility, but it cannot add local evidence to an analysis session. Raw canonical and provider views remain available for expert use.
 
-The first session can take longer because it validates and normalizes the indexed history. The ignored `runs/analysis-cache/` directory holds rebuildable copies of immutable JSON artifacts and normalized Parquet tables. The cache identity includes the canonical manifest set, the evidence cutoff, forecast archive entries, hindcast series entries, and the prospective record. R2 indexes remain authoritative. A new indexed artifact is normalized and added to the prior cache; it does not make the session discover bucket objects by prefix.
+The first session can take longer because it validates and normalizes the indexed history. The ignored `runs/analysis-cache/` directory holds rebuildable copies of immutable JSON artifacts and normalized Parquet tables. Every canonical, artifact, and session cache identity includes `ANALYSIS_SCHEMA_VERSION`. A new analysis contract therefore rebuilds incompatible Parquet files. The other identity inputs include the canonical manifest set, the evidence cutoff, forecast archive entries, hindcast series entries, and the prospective record. R2 indexes remain authoritative. A new indexed artifact is normalized and added to the prior cache; it does not make the session discover bucket objects by prefix.
 
 ### Analysis catalog
 
@@ -138,7 +138,7 @@ FROM analysis.catalog
 ORDER BY object_name;
 ```
 
-`analysis.session` records the canonical evidence cutoff, manifest identity, loaded manifest batches, publication-index timestamps, and loaded public model versions.
+`analysis.session` records the analysis schema version, canonical evidence cutoff, manifest identity, loaded manifest batches, publication-index timestamps, and loaded public model versions. `analysis.column_catalog` describes every analysis column, including its DuckDB type, meaning, scale, null rule, and source field.
 
 The main canonical relations are:
 
@@ -167,20 +167,54 @@ ORDER BY tm.match_date DESC, tm.match_id, tm.venue;
 
 `analysis.forecasts` has one row for each successful public forecast and competition. The competition archive is the authoritative list. A failed attempt or a private run that did not enter the archive is not in this relation. Each row links to the expected private run.
 
-`analysis.forecast_matches` has the complete modeled match set from the private run. `on_public_surface` says whether the public forecast included that match in its short horizon. The `structural_p_*` columns are separate from the optional `market_assisted_p_*` columns. The season simulation uses the structural model.
+`analysis.forecast_matches` has the complete modeled match set from the private run. `on_public_surface` says whether the public forecast included that match in its short horizon. Its `structural_p_*` and `market_assisted_p_*` columns are compatibility columns. Use `analysis.forecast_match_stages` as the authoritative probability-stage relation.
+
+The match stages are:
+
+| Stage | Parent | Score-generating | Meaning |
+| --- | --- | --- | --- |
+| `unadjusted` | Model state | Yes | The model prediction before a match-specific personnel shift. |
+| `personnel_adjusted` | `unadjusted` | Yes | The score distribution after the temporary personnel log-rate shift. A neutral or unusable adjustment leaves the distribution unchanged. |
+| `market_assisted` | `personnel_adjusted` | No | The logarithmic pool with de-vigged market outcome probabilities. It has no goal rates or score grid. |
+
+New private artifacts retain every stage. A historical private artifact retained only the post-personnel structural distribution. For such an artifact, `unadjusted` is available only when no nonzero personnel shift was applied. Otherwise, `available=false`, the probability and rate columns are null, and `availability_reason` explains why. The analysis layer does not reconstruct discarded probabilities.
+
+`analysis.forecast_score_distributions` gives the goal rates, omitted tail, uncertainty components, and grid dimensions for the two score-generating stages. `analysis.forecast_score_grid` gives one probability for each retained home and away goal pair. `analysis.forecast_match_stage_comparison` puts the three H/D/A triplets, both rate pairs, `D_home`, `D_away`, κ, δ, and the personnel-applied flag on one row.
 
 ```sql
 SELECT f.generated_at, m.match_id, m.on_public_surface,
-       m.structural_p_home, m.structural_p_draw, m.structural_p_away,
-       m.market_assisted_p_home, m.market_assisted_p_draw, m.market_assisted_p_away
+       s.unadjusted_p_home, s.unadjusted_p_draw, s.unadjusted_p_away,
+       s.personnel_adjusted_p_home, s.personnel_adjusted_p_draw, s.personnel_adjusted_p_away,
+       s.market_assisted_p_home, s.market_assisted_p_draw, s.market_assisted_p_away
 FROM analysis.forecast_matches m
 JOIN analysis.forecasts f USING (forecast_id, competition_id, season_id)
+JOIN analysis.forecast_match_stage_comparison s USING (forecast_id, competition_id, season_id, match_id)
 WHERE f.competition_id = 'eng-premier-league'
 ORDER BY f.generated_at DESC, m.match_date
 LIMIT 100;
 ```
 
-`analysis.forecast_teams` has scalar season estimates. The event, points-distribution, position-distribution, and interval relations are long-form children. `analysis.model_team_states` and `analysis.forecast_runs` are private. They keep stable common fields and JSON columns for model-specific state, diagnostics, and provenance. `analysis.forecast_impacts` is long-form by match, event, team, and outcome, with carry-forward fields.
+`analysis.forecast_personnel_teams` gives each team's discontinuity and shift status. `analysis.forecast_personnel_players` gives each player's recent weight, membership, availability, selection probability, expected missing weight, and resolved contribution to team discontinuity. Unknown players have no invented contribution; their weight remains in `unresolved_weight`. `analysis.forecast_personnel_evidence` expands the membership and availability evidence arrays. `analysis.forecast_personnel_reference_matches` expands the recent squad reference matches.
+
+```sql
+SELECT c.match_id, p.side, p.player_name, p.selection_probability,
+       p.discontinuity_contribution, e.evidence_kind, e.ordinal, e.basis
+FROM analysis.forecast_personnel_players p
+LEFT JOIN analysis.forecast_personnel_evidence e
+  USING (forecast_id, competition_id, season_id, match_id, team_id, side, player_id)
+JOIN analysis.forecast_match_stage_comparison c
+  USING (forecast_id, competition_id, season_id, match_id)
+WHERE c.personnel_applied
+ORDER BY c.match_id, p.side, p.discontinuity_contribution DESC NULLS LAST, e.evidence_kind, e.ordinal;
+```
+
+`analysis.forecast_market_inputs` gives the selected decimal odds, de-vigged probabilities, raw implied-probability sum, and pool weight. Join it to `forecast_match_stage_comparison` to inspect the input and output of the logarithmic pool.
+
+`analysis.forecast_teams` and its event, distribution, and interval children contain the published and rounded product values. The `analysis.forecast_simulation_*` relations contain the raw private simulation output: run settings and diagnostics, team scalars, event probabilities, points, position and goal-difference distributions, intervals, conditional European probabilities, and match frequencies. The equivalent `analysis.hindcast_simulation_*` relations expose fields that each historical private hindcast actually retained. They do not fabricate removed historical fields.
+
+`analysis.model_team_states` exposes Quality, Tilt, their uncertainty and covariance, derived attack and defense state, state source, and match counts. It also keeps the complete state as JSON. `analysis.forecast_runs` exposes stable run-level model, rate, uncertainty, personnel, and market-assistance fields. `analysis.model_specifications` gives the mixture specification parameters, weights, and log evidence. Irregular fit diagnostics and provenance remain JSON.
+
+`analysis.forecast_impact_fixtures` gives fixture-level sample, uncertainty, status, window, and carry-forward metadata. `analysis.forecast_impacts` is long-form by match, event, team, and outcome. For scheduled fixtures, its `baseline` is reconstructed from the published team event probability that the publication contract intentionally does not repeat.
 
 ### Hindcasts and timing
 
