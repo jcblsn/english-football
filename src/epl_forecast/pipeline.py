@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import time
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +34,16 @@ PRODUCT_MODEL = "M7-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
 LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
+
+
+def progress(event: str, **details) -> None:
+    print(
+        json.dumps(
+            {"event": event, "at": datetime.now(UTC).isoformat(), **details},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
 
 def forecast_id(moment: datetime) -> str:
@@ -261,6 +272,8 @@ def operate(
     data_store=None,
     publish_store=None,
 ) -> dict:
+    operation_started = time.monotonic()
+    progress("operation_started", collect_first=collect_first, force=force)
     data, runs = Path(data), Path(runs)
     data_store = data_store if data_store is not None else r2_store_if_configured("R2_DATA_BUCKET")
     publish_store = (
@@ -271,12 +284,23 @@ def operate(
     policy = load_policy()
     result = {"status": "ok", "published": [], "collection": None}
     if collect_first:
+        collection_started = time.monotonic()
+        progress("collection_started")
         try:
             result["collection"], result["data_sync"] = collect_and_sync(data, data_store)
         except SourceAccessError as error:
+            progress("collection_failed", detail=str(error))
             return {"status": "skipped", "reason": str(error)}
+        progress(
+            "collection_finished",
+            api_football_calls=result["collection"]["api_football"]["calls"],
+            elapsed_seconds=round(time.monotonic() - collection_started, 3),
+            uploaded=result["data_sync"]["uploaded"],
+        )
     now = datetime.now(UTC)
     model_version = policy["product"]["model_version"]
+    fingerprint_started = time.monotonic()
+    progress("fingerprint_started", model_version=model_version)
     dataset = Dataset(data, now, store=data_store)
     try:
         fingerprints = {
@@ -290,6 +314,11 @@ def operate(
         dataset.close()
     state = data_store.get_json("state/forecast.json", {})
     pending = [league for league in LEAGUES if force or due(state, fingerprints[league], league)]
+    progress(
+        "fingerprint_finished",
+        elapsed_seconds=round(time.monotonic() - fingerprint_started, 3),
+        pending=pending,
+    )
     if not pending:
         result.update(status="unchanged", reason="No new information since the last publication")
         previous = publish_store.get_json("record.json")
@@ -297,6 +326,11 @@ def operate(
         if previous is None or {**previous, "updated_at": None} != {**record, "updated_at": None}:
             publish_store.put_json("record.json", record)
         result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
+        progress(
+            "operation_finished",
+            elapsed_seconds=round(time.monotonic() - operation_started, 3),
+            status=result["status"],
+        )
         return result
     run_id = forecast_id(now)
     attempt = runs / run_id
@@ -304,25 +338,49 @@ def operate(
     documents, failures = [], []
     for league in pending:
         archive = attempt / league
+        forecast_started = time.monotonic()
+        progress("forecast_started", competition_id=league)
         forecast = run_forecast(data, league, now, archive, simulations)
         write_immutable(
             attempt / f"{league}-forecast.log", (forecast.stdout + forecast.stderr).encode()
         )
         if forecast.returncode:
+            progress(
+                "forecast_failed",
+                competition_id=league,
+                elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+            )
             failures.append(
                 {"league": league, "stage": "forecast", "detail": forecast.stderr[-800:]}
             )
             continue
+        progress(
+            "forecast_finished",
+            competition_id=league,
+            elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+        )
         reports = attempt / f"{league}-verification"
+        verification_started = time.monotonic()
+        progress("verification_started", competition_id=league)
         verification = verify_archive(data, archive, reports)
         write_immutable(
             attempt / f"{league}-verify.log", (verification.stdout + verification.stderr).encode()
         )
         if verification.returncode:
+            progress(
+                "verification_failed",
+                competition_id=league,
+                elapsed_seconds=round(time.monotonic() - verification_started, 3),
+            )
             failures.append(
                 {"league": league, "stage": "verify", "detail": verification.stdout[-800:]}
             )
             continue
+        progress(
+            "verification_finished",
+            competition_id=league,
+            elapsed_seconds=round(time.monotonic() - verification_started, 3),
+        )
         documents.append(
             update_impact_state(
                 derive_forecast(
@@ -337,7 +395,13 @@ def operate(
         result.update(status="failed", failures=failures, attempt=str(attempt))
         write_immutable(attempt / "pipeline.json", json_bytes(result))
         sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
+        progress(
+            "operation_finished",
+            elapsed_seconds=round(time.monotonic() - operation_started, 3),
+            status=result["status"],
+        )
         return result
+    progress("publication_started", forecasts=len(documents))
     result["private_sync"] = sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
     current = publish_documents(publish_store, documents, policy)
     record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
@@ -363,4 +427,10 @@ def operate(
     data_store.put_json("state/forecast.json", state)
     data_store.put_json("state/impacts.json", impact_state)
     sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
+    progress(
+        "operation_finished",
+        elapsed_seconds=round(time.monotonic() - operation_started, 3),
+        published=len(result["published"]),
+        status=result["status"],
+    )
     return result

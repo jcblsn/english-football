@@ -19,7 +19,7 @@ Read the forecasts with these limits in mind.
 - An official team sheet enters the adjustment only when a production run captures it before the forecast cutoff.
 - API-Football publishes the injury list of a fixture only a short time before the match. An adjustment several days before kickoff therefore uses membership and FPL status, and in the Championship membership only. [Validation](validation.md#matchday-squad-continuity) records what the injury lists covered at the release.
 - A player that no provider reports is treated as not listed, not as proven fit. Absence from an injury response is not a statement about a player. The selection rate q(m, n) carries the residual risk, because it was fitted without the players the injury lists named.
-- The production workflow wakes every 10 minutes. Fixture lists are eligible each hour, and match details are eligible every 9 minutes in the 75 minutes before kickoff. GitHub can still delay or skip a scheduled run, so a very late team-news change can be missed.
+- The production workflow wakes every three hours at minute 15 in `America/New_York`, including 09:15 each Saturday. Fixture lists are eligible each hour, and match details are eligible every 9 minutes in the 75 minutes before kickoff, but they are collected only when a run occurs in that window. GitHub can delay or skip a scheduled run, so a late team-news change can be missed.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.
 
 ## Model

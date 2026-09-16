@@ -30,9 +30,9 @@ A failed or unverified division does not publish. Other verified divisions in th
 
 ## Schedule and refresh rules
 
-`.github/workflows/production.yml` wakes every 10 minutes and also supports manual dispatch. GitHub can delay or skip a scheduled run, so the short interval gives more chances to capture the starting lineups before kickoff. Source refresh intervals are independent of this wake schedule. GitHub Actions concurrency lets one production run finish before another starts.
+`.github/workflows/production.yml` wakes every three hours at 15 minutes after midnight, 03:00, 06:00 and each following three-hour boundary in `America/New_York`. This includes a 09:15 New York run each Saturday and keeps that local time when daylight saving time changes. The workflow also supports manual dispatch. Source refresh intervals are independent of this wake schedule. GitHub Actions concurrency lets one production run finish before another starts.
 
-Fixture lists are eligible each hour. Match details are eligible every 9 minutes in the 75 minutes before kickoff, so that the collection keeps the starting lineups before the match starts. During the match they are eligible each hour. After full time they have bounded correction checks. A run with no due source sends no request, and a forecast runs only when its effective inputs change. Other sources keep their own intervals.
+Fixture lists are eligible each hour. Match details are eligible every 9 minutes in the 75 minutes before kickoff, but the three-hour production schedule can collect them only when a run occurs in that window. The 09:15 New York Saturday run is positioned for the common Saturday match window. During a match, details are eligible each hour. After full time, they have bounded correction checks. A run with no due source sends no request, and a forecast runs only when its effective inputs change. Other sources keep their own intervals.
 
 Each collection run that sends requests to API-Football writes one usage record to `audits/api_football/<UTC timestamp>.json` in `page324-data`. The record has the number of requests and the last daily limit and remaining values from the provider. `audits/collection.json` shows the same values for the most recent run. Use these records to see the real usage over a week.
 
@@ -173,7 +173,7 @@ The default materialization gets `forecasts/current.json`, its four forecast doc
 
 Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, with `--hindcasts`, checks the boundary and deploys the site. The hindcast documents add approximately one minute to the materialization. Both R2 buckets stay private.
 
-The production workflow calls the Pages workflow after a run that publishes at least one forecast. A run that publishes nothing does not deploy, so most of the ten-minute wakes deploy nothing. You can also start the Pages workflow manually.
+The production workflow calls the Pages workflow after a run that publishes at least one forecast. A run that publishes nothing does not deploy, so most of the three-hour wakes deploy nothing. You can also start the Pages workflow manually.
 
 ## Credentials
 

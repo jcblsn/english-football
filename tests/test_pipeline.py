@@ -55,7 +55,7 @@ class Store:
         return key in self.objects
 
 
-def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypatch):
+def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypatch, capsys):
     """One division that cannot be forecast leaves the others published."""
 
     def fake_forecast(data, league, cutoff, output, simulations):
@@ -104,6 +104,11 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
         "eng-league-two",
     }
     assert "eng-championship" not in state["competitions"]
+    events = [json.loads(line)["event"] for line in capsys.readouterr().out.splitlines()]
+    assert events[0] == "operation_started"
+    assert events.count("forecast_started") == 4
+    assert "forecast_failed" in events
+    assert events[-1] == "operation_finished"
 
 
 def test_only_an_effective_change_makes_a_division_due():
