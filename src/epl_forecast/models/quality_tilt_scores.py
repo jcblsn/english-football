@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 from scipy.special import gammaln, logsumexp
 from scipy.stats import binom, nbinom
@@ -151,6 +153,24 @@ class ScoreMixture:
             mask = indices == index
             home[mask], away[mask] = component.sample(rng, int(mask.sum()))
         return home, away
+
+
+def shift_scores(scores, shift):
+    """A copy of a score distribution with +shift on the home and −shift on the away log rate.
+
+    The operation is generic: it moves the rates of one match. It knows nothing about why
+    the caller wants them moved, so the simulator does not depend on a product-specific
+    module to use it.
+    """
+    if isinstance(scores, ScoreMixture):
+        return ScoreMixture([shift_scores(c, shift) for c in scores.components], scores.weights)
+    shifted = copy.copy(scores)
+    shifted.log_mean = scores.log_mean + np.array([shift, -shift])
+    shifted.home_rates = scores.home_rates * np.exp(shift)
+    shifted.away_rates = scores.away_rates * np.exp(-shift)
+    shifted.home_rate = float(shifted.weights @ shifted.home_rates)
+    shifted.away_rate = float(shifted.weights @ shifted.away_rates)
+    return shifted
 
 
 def score_diagnostics(scores):

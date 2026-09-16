@@ -5,6 +5,14 @@ import json
 from epl_forecast.data.api_football import team_registry
 from epl_forecast.data.understat_ingest import name_tokens
 from epl_forecast.datasets import Dataset, publish, timestamp
+from epl_forecast.snapshots import (
+    FPL_AVAILABILITY,
+    SQUAD,
+    SnapshotIndex,
+    capture_of,
+    snapshot,
+    snapshot_rows,
+)
 
 URL = "https://fantasy.premierleague.com/api/bootstrap-static/"
 
@@ -42,24 +50,23 @@ def ingest(root, record, payload):
                 identities.setdefault(key, set()).add(player["player_id"])
         team_birthdays = {}
         births = {p["player_id"]: str(p["birth_date"]) for p in players if p["birth_date"]}
-        scope_times = {}
-        for manifest in data.manifests:
-            request = manifest["request"]
-            context = request["context"]
-            if context.get("endpoint") == "players/squads" and timestamp(
-                request["retrieved_at"]
-            ) <= timestamp(record["retrieved_at"]):
-                scope = str(context["team"])
-                observed = timestamp(request["retrieved_at"])
-                scope_times[scope] = max(observed, scope_times.get(scope, observed))
+        # One definition of "the latest captured squad" for the whole product. A manifest
+        # scan cannot serve as that definition, because compaction collapses the request
+        # contexts it reads.
+        index = SnapshotIndex(snapshot_rows(data), timestamp(record["retrieved_at"]))
+        by_team = {}
         for member in data.rows(
-            "SELECT * FROM memberships WHERE basis='captured_squad' AND season_id=?",
+            "SELECT player_id, team_id, retrieved_at, source_sha256 "
+            "FROM memberships_observations WHERE basis='captured_squad' AND season_id=?",
             [record["context"]["season_id"]],
         ):
-            if member["retrieved_at"] != scope_times.get(member["scope"]):
-                continue
-            if member["player_id"] in births:
-                key = member["team_id"], births[member["player_id"]]
+            by_team.setdefault(member["team_id"], []).append(member)
+        for team in index.keys(SQUAD):
+            identity = index.identity(SQUAD, team)
+            for member in by_team.get(team, ()):
+                if capture_of(member) != identity or member["player_id"] not in births:
+                    continue
+                key = team, births[member["player_id"]]
                 team_birthdays.setdefault(key, set()).add(member["player_id"])
         rows, mappings = [], []
         for p in b["elements"]:
@@ -110,6 +117,24 @@ def ingest(root, record, payload):
                     "news_added": p.get("news_added"),
                 }
             )
-        return publish(root, record, {"availability": rows, "players": mappings})
+        season = record["context"]["season_id"]
+        return publish(
+            root,
+            record,
+            {
+                "availability": rows,
+                "players": mappings,
+                "source_snapshots": [
+                    snapshot(
+                        FPL_AVAILABILITY,
+                        season,
+                        endpoint="bootstrap-static",
+                        row_count=len(rows),
+                        competition_id="eng-premier-league",
+                        season_id=season,
+                    )
+                ],
+            },
+        )
     finally:
         data.close()

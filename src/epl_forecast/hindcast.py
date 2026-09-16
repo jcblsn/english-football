@@ -33,7 +33,13 @@ INDEX_KEY = f"{PREFIX}/index.json"
 SEED = 20260905
 SEASONS = tuple(range(2021, 2026))
 ORIGIN_TIME = time(9)
-ORIGIN_RULE = "Each Monday at 09:00 Europe/London, from the Monday on or before the first regular-season match to the first Monday after the last result."
+# Wednesday. The weekday of the origin is an observation protocol: it decides when a
+# retrospective forecast is taken, not how the model forecasts. Changing it does not make
+# the model better or worse, and the edition records it so a reader need not read the code.
+ORIGIN_WEEKDAY = 2
+ORIGIN_WEEKDAY_NAME = "Wednesday"
+ORIGIN_TIME_ZONE = "Europe/London"
+ORIGIN_RULE = f"Each {ORIGIN_WEEKDAY_NAME} at 09:00 {ORIGIN_TIME_ZONE}, from the {ORIGIN_WEEKDAY_NAME} on or before the first regular-season match to the first {ORIGIN_WEEKDAY_NAME} after the last result."
 SERIES_FIELDS = (
     "played",
     "current_points",
@@ -63,14 +69,23 @@ def hindcast_id(origin: datetime) -> str:
     return origin.astimezone(UTC).strftime("%Y-%m-%dT%H%M%SZ")
 
 
-def weekly_origins(first_match: date, last_match: date) -> list[datetime]:
-    """Every Monday at 09:00 in London, from before the first match until every result is known."""
-    day = first_match - timedelta(days=first_match.weekday())
+def weekly_origins(
+    first_match: date,
+    last_match: date,
+    weekday: int = ORIGIN_WEEKDAY,
+    at: time = ORIGIN_TIME,
+) -> list[datetime]:
+    """Every `weekday` at `at` in London, from before the first match until every result is known.
+
+    The origins are London wall-clock times, so an origin keeps its local hour across a
+    daylight-saving change and its UTC instant moves instead.
+    """
+    day = first_match - timedelta(days=(first_match.weekday() - weekday) % 7)
     final = last_match + timedelta(days=1)
-    final += timedelta(days=-final.weekday() % 7)
+    final += timedelta(days=(weekday - final.weekday()) % 7)
     origins = []
     while day <= final:
-        origins.append(datetime.combine(day, ORIGIN_TIME, tzinfo=LONDON))
+        origins.append(datetime.combine(day, at, tzinfo=LONDON))
         day += timedelta(days=7)
     return origins
 
@@ -139,6 +154,9 @@ def edition(model_version: str, simulations: int) -> dict:
         "simulations": simulations,
         "seed": SEED,
         "origin_rule": ORIGIN_RULE,
+        "origin_weekday": ORIGIN_WEEKDAY_NAME,
+        "origin_time": ORIGIN_TIME.isoformat(),
+        "origin_time_zone": ORIGIN_TIME_ZONE,
     }
 
 

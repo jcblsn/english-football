@@ -14,6 +14,16 @@ from epl_forecast.competitions import COMPETITIONS, competition
 from epl_forecast.data.capture import SourceAccessError
 from epl_forecast.datasets import Dataset, publish
 from epl_forecast.schema import fixture_id
+from epl_forecast.snapshots import (
+    FIXTURE_DETAIL,
+    INJURIES,
+    SIDELINED,
+    SQUAD,
+    TEAM_TRANSFERS,
+    TRANSFERS,
+    injury_scope,
+    snapshot,
+)
 
 BASE = "https://v3.football.api-sports.io/"
 LEAGUES = {c.api_football_league: c.competition_id for c in COMPETITIONS}
@@ -296,6 +306,87 @@ def record_identity(root, tables):
     for row in tables.get("teams", ()):
         if row.get("api_id") is not None:
             cached[1][0][row["api_id"]] = row["team_id"]
+
+
+def source_snapshots(record, body, tables, root):
+    """What this response covered, so that a response with no rows is still evidence.
+
+    A scope the provider answered with nothing is not the same as a scope nobody asked
+    about, and only a canonical row keeps that difference through compaction.
+    """
+    context = record["context"]
+    endpoint = context["endpoint"]
+    if endpoint == "players/squads":
+        teams = {team_key(item["team"], True) for item in body["response"]}
+        if not teams:
+            # The provider answered with no squad. The request still names the team, so the
+            # scope is recorded and a reader sees an empty squad instead of the last one.
+            resolved = (
+                identity_keys(root)[0].get(int(context["team"]))
+                if context.get("team") is not None
+                else None
+            )
+            teams = {resolved} if resolved else set()
+        members = tables.get("memberships", ())
+        return [
+            snapshot(
+                SQUAD,
+                team,
+                endpoint=endpoint,
+                row_count=sum(1 for row in members if row["team_id"] == team),
+                competition_id=context.get("competition_id"),
+                season_id=context.get("season_id"),
+                team_id=team,
+            )
+            for team in sorted(teams)
+        ]
+    if endpoint == "injuries" and context.get("league") is not None:
+        competition = LEAGUES[int(context["league"])]
+        season = f"{int(context['season'])}-{int(context['season']) + 1}"
+        return [
+            snapshot(
+                INJURIES,
+                injury_scope(competition, season),
+                endpoint=endpoint,
+                row_count=len(tables.get("availability", ())),
+                competition_id=competition,
+                season_id=season,
+            )
+        ]
+    # A whole-season fixture list carries no lineups, so it never stands in for a capture
+    # of one fixture's detail.
+    if endpoint == "fixtures" and ("id" in context or "ids" in context):
+        counts = {}
+        for row in tables.get("appearances", ()):
+            counts[row["match_id"]] = counts.get(row["match_id"], 0) + 1
+        return [
+            snapshot(
+                FIXTURE_DETAIL,
+                row["match_id"],
+                endpoint=endpoint,
+                row_count=counts.get(row["match_id"], 0),
+                competition_id=row["competition_id"],
+                season_id=row["season_id"],
+                match_id=row["match_id"],
+            )
+            for row in tables.get("fixtures", ())
+        ]
+    # A history is requested for one player or for one club, and the two are separate scopes.
+    if endpoint in ("sidelined", "transfers"):
+        table = "availability" if endpoint == "sidelined" else "transfers"
+        count = len(tables.get(table, ()))
+        kind = SIDELINED if endpoint == "sidelined" else TRANSFERS
+        if context.get("player") is not None:
+            person = player_id(context["player"])
+            if person:
+                return [snapshot(kind, person, endpoint=endpoint, row_count=count)]
+        elif endpoint == "transfers" and context.get("team") is not None:
+            team = identity_keys(root)[0].get(int(context["team"]))
+            if team:
+                return [
+                    snapshot(TEAM_TRANSFERS, team, endpoint=endpoint, row_count=count, team_id=team)
+                ]
+    return []
 
 
 def normalize(record, body, root):
@@ -702,6 +793,9 @@ def normalize(record, body, root):
             tables[table] = merged
         else:
             tables[table] = list({json.dumps(r, sort_keys=True): r for r in rows}.values())
+    snapshots = source_snapshots(record, body, tables, root)
+    if snapshots:
+        tables["source_snapshots"] = snapshots
     if issues:
         record = {**record, "normalization_issues": issues}
     result = publish(root, record, tables)
