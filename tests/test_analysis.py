@@ -187,6 +187,19 @@ def test_personnel_views_keep_latest_successful_empty_snapshots(tmp_path):
     finally:
         session.close()
 
+    historical = open_analysis_session(
+        "2026-01-02T23:00:00+00:00",
+        data_store=Store(remote, [old, empty]),
+        include_derived=False,
+        root=tmp_path / "empty",
+    )
+    try:
+        assert historical.rows(
+            "SELECT team_id, row_count, player_id FROM analysis.squad_memberships"
+        ) == [{"team_id": "arsenal", "row_count": 1, "player_id": "one"}]
+    finally:
+        historical.close()
+
 
 def forecast_stores():
     forecast_id = "2026-09-10T120000Z"

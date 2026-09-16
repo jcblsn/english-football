@@ -518,8 +518,9 @@ def _install_canonical_views(connection) -> None:
                a.season_id, a.match_id, a.status, a.reason, a.start_date, a.end_date
         FROM analysis.personnel_snapshots s
         LEFT JOIN availability_observations a
-          ON s.scope_kind = 'competition_injuries'
+         ON s.scope_kind = 'competition_injuries'
          AND a.provider = 'api_football'
+         AND a.scope LIKE 'fixture:%'
          AND a.competition_id = s.competition_id
          AND a.season_id = s.season_id
          AND a.retrieved_at = s.retrieved_at
