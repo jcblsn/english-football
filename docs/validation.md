@@ -190,6 +190,12 @@ At one cutoff on 15 September 2026, from an empty workspace against R2, the v0.2
 - Premier League: all 10 fixtures in the horizon have a shift, from −0.054 to +0.081. Availability came from FPL, because API-Football had not yet published the injury lists of the next round.
 - Championship: 9 of 12 fixtures in the horizon have a shift, from −0.068 to +0.032. Bolton Wanderers, Cardiff City and Lincoln City have fewer than eight previous matches with complete lineup minutes, so their fixtures have no shift. The largest unresolved weight of a club is 0.092.
 
+The checks ran again from the released `main`, at commit `659f475`, whose forecast code is unchanged at `5b8bc96`. From an empty workspace against R2, at one cutoff on 16 September 2026 UTC, every division passes every check: 1,181 in the Premier League, 1,599 in the Championship, 1,602 in League One and 1,599 in League Two.
+
+The personnel counts reproduce the release record. 10 of 10 Premier League fixtures in the horizon get a shift, and 9 of 12 in the Championship. League One and League Two hold no personnel record and no adjusted fixture, and their check counts equal the `v0.1` counts above, so the two divisions without the adjustment are unchanged.
+
+The shift ranges are not the same: −0.065 to +0.0745 in the Premier League against −0.054 to +0.081, and −0.0624 to +0.0318 in the Championship against −0.068 to +0.032. The canonical history held no source snapshots at this cutoff, so no injury list and no FPL status was readable, and the estimate rested on matchday squads and dated transfers. A shift range describes the evidence at one cutoff. It is not a fixed property of the model.
+
 What the injury lists covered at the release is an observation of that moment, not a standing property of the provider. At 21:30 UTC on 15 September 2026, the latest API-Football injury capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore rested on membership and FPL status, and in the Championship on membership alone.
 
 ### The v0.2 hindcast archive
