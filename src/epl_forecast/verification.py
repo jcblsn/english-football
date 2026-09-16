@@ -22,6 +22,7 @@ from epl_forecast.artifacts import execution_provenance
 from epl_forecast.competitions import competition as competition_info
 from epl_forecast.data.rules import league_rules, reviewed_rules_evidence
 from epl_forecast.datasets import Dataset, timestamp
+from epl_forecast.market import logarithmic_pool
 from epl_forecast.personnel import MAX_UNRESOLVED
 from epl_forecast.postseason import playoff_format
 from epl_forecast.sanctions import load_registry
@@ -118,6 +119,90 @@ def verify(archive: Path, data: Path) -> dict:
             f"grid {home:.5f}/{draw:.5f}/{away:.5f} vs {probabilities}",
         ):
             break
+        if forecast.get("schema_version") != 2:
+            continue
+        stages = match.get("stages") or {}
+        if not checks.check(
+            f"all probability stages are explicit: {match['match_id']}",
+            set(stages) == {"unadjusted", "personnel_adjusted", "market_assisted"},
+            sorted(stages),
+        ):
+            break
+        for stage_name in ("unadjusted", "personnel_adjusted"):
+            stage = stages[stage_name]
+            stage_probabilities = [stage[f"p_{side}"] for side in ("home", "draw", "away")]
+            scores = stage["score_distribution"]
+            stage_grid = np.asarray(scores["grid_home_rows_away_columns"])
+            stage_tail = scores["omitted_probability"]
+            stage_grid_probabilities = (
+                float(np.tril(stage_grid, -1).sum()),
+                float(np.trace(stage_grid)),
+                float(np.triu(stage_grid, 1).sum()),
+            )
+            checks.check(
+                f"{stage_name} probabilities are a distribution: {match['match_id']}",
+                all(0 <= p <= 1 for p in stage_probabilities)
+                and abs(sum(stage_probabilities) - 1) < 1e-9,
+                stage_probabilities,
+            )
+            checks.check(
+                f"{stage_name} score matrix closes: {match['match_id']}",
+                abs(stage_grid.sum() + stage_tail - 1) < 1e-9
+                and (stage_grid >= 0).all()
+                and stage_tail >= 0,
+            )
+            checks.check(
+                f"{stage_name} score matrix reproduces its outcomes: {match['match_id']}",
+                max(
+                    abs(grid_probability - probability)
+                    for grid_probability, probability in zip(
+                        stage_grid_probabilities, stage_probabilities, strict=True
+                    )
+                )
+                < stage_tail + 1e-9,
+            )
+        original, adjusted = stages["unadjusted"], stages["personnel_adjusted"]
+        record = match.get("personnel") or {}
+        shift = record.get("home_log_rate_shift")
+        expected_home_factor = np.exp(shift or 0)
+        expected_away_factor = np.exp(-(shift or 0))
+        checks.check(
+            f"personnel stage applies the retained log-rate shift: {match['match_id']}",
+            abs(
+                adjusted["score_distribution"]["home_rate"]
+                - original["score_distribution"]["home_rate"] * expected_home_factor
+            )
+            < 1e-10
+            and abs(
+                adjusted["score_distribution"]["away_rate"]
+                - original["score_distribution"]["away_rate"] * expected_away_factor
+            )
+            < 1e-10,
+            shift,
+        )
+        checks.check(
+            f"legacy structural fields equal the personnel stage: {match['match_id']}",
+            all(match[f"p_{side}"] == adjusted[f"p_{side}"] for side in ("home", "draw", "away")),
+        )
+        market = stages["market_assisted"]
+        checks.check(
+            f"market stage has no score distribution: {match['match_id']}",
+            market is None or "score_distribution" not in market,
+        )
+        if market is not None:
+            expected = logarithmic_pool(
+                [adjusted[f"p_{side}"] for side in ("home", "draw", "away")],
+                [market["market_probabilities"][f"p_{side}"] for side in ("home", "draw", "away")],
+                market["market_weight"],
+            )
+            checks.check(
+                f"market stage is the logarithmic pool: {match['match_id']}",
+                max(
+                    abs(market[f"p_{side}"] - probability)
+                    for side, probability in zip(("home", "draw", "away"), expected, strict=True)
+                )
+                < 1e-12,
+            )
 
     personnel = forecast["personnel"]
     for match in forecast["matches"]:
