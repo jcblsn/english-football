@@ -36,6 +36,7 @@ A historical run, for example a hindcast or a season panel, must read the canoni
 | `state/collection.json` | The latest request for each URL. Routine collection reads this compact state instead of the full request archive. |
 | `state/manifests.json` | The compact retained base and the canonical batches collected after it. |
 | `state/forecast.json` | The last published effective-input fingerprint for each division. |
+| `state/impacts.json` | For each match of the week, the conditional-impact record of the last forecast made before its kickoff. The published forecast carries it after the result is known. |
 | `runs/forecasts/` | Private forecast archives, logs and verification reports. |
 | `runs/hindcasts/` | The private simulation output of each weekly hindcast and the frozen model of each public model version. See [operations](operations.md#hindcasts). |
 
