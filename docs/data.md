@@ -100,7 +100,8 @@ uv run epl-forecast data collect      # capture due forecast and entry-source ob
 uv run epl-forecast data audit        # check hashes and fixtures; write data/audits/coverage.json
 uv run epl-forecast data backfill --start 2010 --max-requests 200
 uv run epl-forecast data normalize    # rebuild the canonical store from raw captures
-uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM fixtures GROUP BY 1'
+uv run epl-forecast data ui           # open the prepared local DuckDB UI
+uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM analysis.matches GROUP BY 1'
 ```
 
 `data normalize` replays every raw capture into a new local workspace. It replaces the local canonical files only after the new files pass their checks. Stop scheduled runs first.
@@ -108,3 +109,104 @@ uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM fixtu
 Routine synchronization uploads only objects from the current collection. It does not list the full bucket. Canonical compaction is a maintenance task, not part of each collection. Run `uv run python scripts/compact_r2.py` after the incremental-batch threshold is reached. The default threshold is 250 batches.
 
 A backfill of history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
+
+## Interactive analysis
+
+Run `uv run epl-forecast data ui`. The command opens one in-memory DuckDB connection, loads the `analysis` schema, and starts the DuckDB UI on that same connection. The process must stay open while you use the UI. Press Control-C in the terminal to stop the UI and close the connection.
+
+Use `uv run epl-forecast data ui --no-browser` to start the local server without opening a browser. The default address is `http://localhost:4213`.
+
+The UI runs queries on the local DuckDB process. It does not use MotherDuck unless you explicitly enable MotherDuck. The command creates temporary R2 secrets with separate scopes for `page324-data` and `page324-publish`. It does not store credentials in a DuckDB database.
+
+`data query` uses the same analysis-session bootstrap. Use `--cutoff` to set the canonical evidence cutoff:
+
+```sh
+uv run epl-forecast data query --cutoff 2026-08-15T12:00:00+00:00 --sql 'SELECT season_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
+```
+
+The session reads the canonical manifest catalog from R2 and does not read local manifests or local canonical files. The `--root` option remains for command compatibility, but it cannot add local evidence to an analysis session. Raw canonical and provider views remain available for expert use.
+
+The first session can take longer because it validates and normalizes the indexed history. The ignored `runs/analysis-cache/` directory holds rebuildable copies of immutable JSON artifacts and normalized Parquet tables. The cache identity includes the canonical manifest set, the evidence cutoff, forecast archive entries, hindcast series entries, and the prospective record. R2 indexes remain authoritative. A new indexed artifact is normalized and added to the prior cache; it does not make the session discover bucket objects by prefix.
+
+### Analysis catalog
+
+Start with the catalog:
+
+```sql
+SELECT object_name, grain, temporal_semantics, private, caveats
+FROM analysis.catalog
+ORDER BY object_name;
+```
+
+`analysis.session` records the canonical evidence cutoff, manifest identity, loaded manifest batches, publication-index timestamps, and loaded public model versions.
+
+The main canonical relations are:
+
+| Relation | Grain | Important rule |
+| --- | --- | --- |
+| `analysis.matches` | One row for each `match_id` | It is the materialized result of `Dataset.fixtures()`. It reconciles providers and rejects contradictions. The raw `fixtures` view does not have this grain. |
+| `analysis.team_matches` | Two rows for each match | It gives team, opponent, venue, result, and goals in team-oriented form. |
+| `analysis.team_match_xg` | One row for each match with preferred xG for both teams | It is the materialized result of `Dataset.xg_observations()` and uses the product transition from Understat to API-Football xG. |
+| `analysis.player_matches` | One row for each player, team, match, and provider capture | It keeps capture identity. Select one response explicitly when a query needs one capture. |
+| `analysis.personnel_snapshots` | One row for each latest successful query scope | It includes successful responses that returned no rows. |
+| `analysis.squad_memberships`, `analysis.injury_availability`, `analysis.fpl_availability` | Rows from the latest successful snapshot, or one row with a null player for an empty response | A null player with `row_count=0` is evidence that the provider returned an empty response. |
+
+For example, this query gives team results with preferred xG when xG exists:
+
+```sql
+SELECT tm.competition_id, tm.season_id, tm.match_date, tm.team_id, tm.opponent_id, tm.result,
+       CASE WHEN tm.venue = 'home' THEN x.home_xg ELSE x.away_xg END AS xg_for,
+       CASE WHEN tm.venue = 'home' THEN x.away_xg ELSE x.home_xg END AS xg_against
+FROM analysis.team_matches tm
+LEFT JOIN analysis.team_match_xg x USING (match_id)
+WHERE tm.status = 'finished'
+ORDER BY tm.match_date DESC, tm.match_id, tm.venue;
+```
+
+### Live forecasts
+
+`analysis.forecasts` has one row for each successful public forecast and competition. The competition archive is the authoritative list. A failed attempt or a private run that did not enter the archive is not in this relation. Each row links to the expected private run.
+
+`analysis.forecast_matches` has the complete modeled match set from the private run. `on_public_surface` says whether the public forecast included that match in its short horizon. The `structural_p_*` columns are separate from the optional `market_assisted_p_*` columns. The season simulation uses the structural model.
+
+```sql
+SELECT f.generated_at, m.match_id, m.on_public_surface,
+       m.structural_p_home, m.structural_p_draw, m.structural_p_away,
+       m.market_assisted_p_home, m.market_assisted_p_draw, m.market_assisted_p_away
+FROM analysis.forecast_matches m
+JOIN analysis.forecasts f USING (forecast_id, competition_id, season_id)
+WHERE f.competition_id = 'eng-premier-league'
+ORDER BY f.generated_at DESC, m.match_date
+LIMIT 100;
+```
+
+`analysis.forecast_teams` has scalar season estimates. The event, points-distribution, position-distribution, and interval relations are long-form children. `analysis.model_team_states` and `analysis.forecast_runs` are private. They keep stable common fields and JSON columns for model-specific state, diagnostics, and provenance. `analysis.forecast_impacts` is long-form by match, event, team, and outcome, with carry-forward fields.
+
+### Hindcasts and timing
+
+`analysis.hindcast_origins` and its child relations come only from `hindcasts/index.json` and the season series to which it points. Every origin has `retrospective=true`. `origin_at` is the simulated historical origin. It is not the time at which the artifact existed. `generated_at` is null by design.
+
+`analysis.team_projections` is a convenience union of live and hindcast team estimates. Do not replace its explicit time fields with one generic `as_of` value:
+
+```sql
+SELECT product, retrospective, generated_at, origin_at, state_observed_at,
+       model_results_cutoff, competition_id, season_id, team_id, mean_points, mean_position
+FROM analysis.team_projections
+WHERE team_id = 'arsenal'
+ORDER BY coalesce(generated_at, origin_at);
+```
+
+An evidence cutoff applies to canonical rows through `retrieved_at`. It does not remove derived artifacts by their generation time. A live forecast has an actual `generated_at`, a `state_observed_at`, and a `model_results_cutoff`. A hindcast has a retrospective `origin_at` and a model-results cutoff. These fields are not interchangeable.
+
+### Prospective scoring
+
+`analysis.record_matches` reproduces the pending and settled last-pre-kickoff rows in `record.json`. `analysis.record_summary` gives the overall and competition scoring summaries and keeps the complete summary block in `metrics`.
+
+```sql
+SELECT competition_id, outcome, count(*) AS matches,
+       avg(-ln(CASE outcome WHEN 'H' THEN p_home WHEN 'D' THEN p_draw ELSE p_away END)) AS log_loss
+FROM analysis.record_matches
+WHERE record_state = 'settled'
+GROUP BY 1, 2
+ORDER BY 1, 2;
+```

@@ -1,9 +1,11 @@
 import json
 
+import duckdb
 import pytest
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast.analysis import open_analysis_session, start_ui
+from epl_forecast.analysis_artifacts import install_artifact_analysis
 from epl_forecast.datasets import publish
 from epl_forecast.publication import derive_forecast, forecast_pointer
 
@@ -363,3 +365,45 @@ def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
     monkeypatch.setattr("epl_forecast.analysis.time.sleep", interrupt)
     assert start_ui(Session(), open_browser=False) == "http://localhost:4213"
     assert statements == ["CALL start_ui_server()", "CALL stop_ui_server()"]
+
+
+def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_path):
+    data, publish_store = forecast_stores()
+    cache = tmp_path / "cache"
+    first = duckdb.connect()
+    first.execute("CREATE SCHEMA analysis")
+    install_artifact_analysis(first, data, publish_store, cache)
+    assert first.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (1,)
+    first.close()
+
+    data.reads.clear()
+    publish_store.reads.clear()
+    second = duckdb.connect()
+    second.execute("CREATE SCHEMA analysis")
+    install_artifact_analysis(second, data, publish_store, cache)
+    assert second.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (1,)
+    assert not any(key.endswith("/forecast.json") for key in data.reads)
+    assert not any(key.endswith("T120000Z.json") for key in publish_store.reads)
+    second.close()
+
+    forecast_id = "2026-09-11T120000Z"
+    private = {
+        "schema_version": 1,
+        **sample_forecast(generated="2026-09-11T12:00:00+00:00"),
+    }
+    public = derive_forecast(private, forecast_id)
+    pointer = forecast_pointer(public)
+    publish_store.objects[pointer["href"]] = public
+    publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"].append(pointer)
+    prefix = f"runs/forecasts/{forecast_id}/eng-premier-league"
+    data.objects[f"{prefix}/forecast.json"] = private
+    data.objects[f"{prefix}/run.json"] = sample_run()
+
+    third = duckdb.connect()
+    third.execute("CREATE SCHEMA analysis")
+    install_artifact_analysis(third, data, publish_store, cache)
+    assert third.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (2,)
+    assert third.execute(
+        "SELECT count(DISTINCT forecast_id) FROM analysis.forecast_matches"
+    ).fetchone() == (2,)
+    third.close()

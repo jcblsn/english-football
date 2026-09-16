@@ -2,12 +2,54 @@
 
 import hashlib
 import json
+import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from epl_forecast.datasets import Dataset
 from epl_forecast.storage import R2Store, json_bytes
+
+
+class CachedArtifactStore:
+    """Cache immutable JSON artifacts while leaving mutable indexes authoritative."""
+
+    def __init__(self, store, root: Path, namespace: str):
+        self.store = store
+        self.root = root / namespace
+
+    def configure_duckdb(self, connection, name="page324_r2") -> None:
+        self.store.configure_duckdb(connection, name=name)
+
+    def uri(self, key: str) -> str:
+        return self.store.uri(key)
+
+    def get_json(self, key: str, default=None):
+        if not self._immutable(key):
+            return self.store.get_json(key, default)
+        path = self.root / key
+        try:
+            return json.loads(path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            value = self.store.get_json(key, default)
+            if value is default:
+                return default
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_bytes(json_bytes(value))
+            temporary.replace(path)
+            return value
+
+    def _immutable(self, key: str) -> bool:
+        if key.startswith("runs/forecasts/"):
+            return key.endswith(("/forecast.json", "/run.json"))
+        if key.startswith("runs/hindcasts/"):
+            return key.endswith(".json") and not key.endswith(("/series.json", "/edition.json"))
+        if key.startswith("forecasts/"):
+            return key.endswith(".json") and not key.endswith(("/archive.json", "/current.json"))
+        if key.startswith("hindcasts/"):
+            return key.endswith(".json") and not key.endswith(("/index.json", "/series.json"))
+        return False
 
 
 def _ident(value: str) -> str:
@@ -308,18 +350,59 @@ class AnalysisSession:
         return self.dataset.rows(sql, parameters)
 
 
-def _install_canonical_analysis(data: Dataset) -> None:
+def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> None:
     connection = data.con
     connection.execute("CREATE SCHEMA analysis")
+    fingerprint = hashlib.sha256(
+        json_bytes(
+            {
+                "manifests": data.manifests,
+                "cutoff": data.cutoff.isoformat() if data.cutoff else None,
+            }
+        )
+    ).hexdigest()
+    if cache is not None:
+        try:
+            pointer = json.loads((cache / "current.json").read_text())
+            directory = cache / "sessions" / pointer["fingerprint"]
+            if pointer["fingerprint"] == fingerprint:
+                connection.execute(
+                    "CREATE TABLE analysis.matches AS SELECT * FROM read_parquet(?)",
+                    [str(directory / "matches.parquet")],
+                )
+                connection.execute(
+                    "CREATE TABLE analysis.team_match_xg AS SELECT * FROM read_parquet(?)",
+                    [str(directory / "team_match_xg.parquet")],
+                )
+                _install_canonical_views(connection)
+                return
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            connection.execute("DROP TABLE IF EXISTS analysis.matches")
+            connection.execute("DROP TABLE IF EXISTS analysis.team_match_xg")
     connection.execute("CREATE TABLE analysis.matches AS SELECT * FROM fixtures LIMIT 0")
     matches = data.fixtures()
     if matches:
         columns = [row[0] for row in connection.execute("DESCRIBE analysis.matches").fetchall()]
-        placeholders = ", ".join("?" for _ in columns)
-        connection.executemany(
-            f"INSERT INTO analysis.matches VALUES ({placeholders})",
-            [tuple(row[column] for column in columns) for row in matches],
+        schema = json.dumps(
+            [
+                {
+                    row[1]: row[2]
+                    for row in connection.execute(
+                        "PRAGMA table_info('analysis.matches')"
+                    ).fetchall()
+                }
+            ]
         )
+        for start in range(0, len(matches), 10_000):
+            payload = [
+                {column: row[column] for column in columns}
+                for row in matches[start : start + 10_000]
+            ]
+            connection.execute(
+                "INSERT INTO analysis.matches BY NAME "
+                "SELECT unnest(from_json_strict(?, ?), recursive := true)",
+                [json.dumps(payload, default=str, allow_nan=False), schema],
+            )
     xg = data.xg_observations()
     _create_table(
         connection,
@@ -340,6 +423,34 @@ def _install_canonical_analysis(data: Dataset) -> None:
         ),
         xg,
     )
+    _install_canonical_views(connection)
+    if cache is not None:
+        sessions = cache / "sessions"
+        target = sessions / fingerprint
+        temporary = sessions / f".{fingerprint}.tmp"
+        if not target.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
+            temporary.mkdir(parents=True)
+            for table in ("matches", "team_match_xg"):
+                connection.execute(
+                    f"COPY analysis.{table} TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
+                    [str(temporary / f"{table}.parquet")],
+                )
+            temporary.replace(target)
+        old = None
+        try:
+            old = json.loads((cache / "current.json").read_text()).get("fingerprint")
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        cache.mkdir(parents=True, exist_ok=True)
+        pointer = cache / "current.tmp"
+        pointer.write_bytes(json_bytes({"fingerprint": fingerprint}))
+        pointer.replace(cache / "current.json")
+        if old and old != fingerprint:
+            shutil.rmtree(sessions / old, ignore_errors=True)
+
+
+def _install_canonical_views(connection) -> None:
     connection.execute(
         """
         CREATE VIEW analysis.team_matches AS
@@ -508,23 +619,36 @@ def open_analysis_session(
     publish_store=None,
     root: Path = Path("data"),
     include_derived: bool = True,
+    cache: Path | None = Path("runs/analysis-cache"),
 ) -> AnalysisSession:
     """Open the authoritative remote corpus and install its analytical namespace."""
     data_store = data_store or R2Store.from_environment("R2_DATA_BUCKET")
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
+    normalized_cache = (
+        cache / "normalized"
+        if cache is not None
+        and isinstance(data_store, R2Store)
+        and isinstance(publish_store, R2Store)
+        else None
+    )
+    canonical_cache = cache / "canonical" if normalized_cache is not None else None
+    if cache is not None and isinstance(data_store, R2Store):
+        data_store = CachedArtifactStore(data_store, cache, "data")
+    if cache is not None and isinstance(publish_store, R2Store):
+        publish_store = CachedArtifactStore(publish_store, cache, "publication")
     dataset = Dataset(root, cutoff, store=data_store, include_local=False)
     try:
         if include_derived:
             publish_store.configure_duckdb(dataset.con, name="page324_publish")
-        _install_canonical_analysis(dataset)
+        _install_canonical_analysis(dataset, canonical_cache)
         publication_index_timestamps = {}
         model_versions = set()
         if include_derived:
             from epl_forecast.analysis_artifacts import install_artifact_analysis
 
             publication_index_timestamps, model_versions = install_artifact_analysis(
-                dataset.con, data_store, publish_store
+                dataset.con, data_store, publish_store, normalized_cache
             )
         _install_metadata(dataset, datetime.now(UTC), publication_index_timestamps, model_versions)
         return AnalysisSession(dataset, publish_store)
