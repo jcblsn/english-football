@@ -192,7 +192,41 @@ At one cutoff on 15 September 2026, from an empty workspace against R2, the v0.2
 
 What the injury lists covered at the release is an observation of that moment, not a standing property of the provider. At 21:30 UTC on 15 September 2026, the latest API-Football injury capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore rested on membership and FPL status, and in the Championship on membership alone.
 
-The `v0.2` hindcast archive is generated from the released `main` with the Wednesday origin protocol of [operations](operations.md#the-origin-protocol). Its origin counts and adjusted-fixture counts are recorded here when that regeneration completes and passes its verification.
+### The v0.2 hindcast archive
+
+The `v0.2` hindcast archive is generated from the released `main` with the Wednesday origin protocol of [operations](operations.md#the-origin-protocol). It does not reuse the pre-release research hindcasts.
+
+| Item | Value |
+| --- | --- |
+| Released commit | `79d5e8d` |
+| Workflow run | `hindcast` 35040760653, dispatched 2026-09-16T00:37Z |
+| Public model version | `v0.2` |
+| Edition digest | `7c157a450abae14b052456f891df01ea05432597d42f557c29ac6f3c5e858577` |
+| Origin protocol | Each Wednesday at 09:00 Europe/London |
+| Seed and paths | 20260905, 10,000 |
+| Scope | Four divisions, 2021/22–2025/26 |
+
+The edition digest is the SHA-256 of the edition manifest that the run claims, over the model code hashes, the seed, the number of paths and the origin protocol. The same digest comes from the released commit on any machine, so a later reader can check that the archive was made by this code and this protocol:
+
+```sh
+uv run python -c "
+from epl_forecast.hindcast import edition
+from epl_forecast.publication import load_policy
+from epl_forecast.storage import json_bytes, sha256_bytes
+print(sha256_bytes(json_bytes(edition(load_policy()['product']['model_version'], 10000))))"
+```
+
+The run was still simulating when this record was written. Two steps remain, in this order:
+
+1. Dispatch the `hindcast` workflow again until one run finishes with no failures. The command resumes: it never simulates an origin that already has a public document, and it publishes a season series only when every weekly document of that season exists. A dispatch that reaches the job time limit is continued by the next one.
+2. Materialize the publication surface and check it, then record the counts here:
+
+   ```sh
+   uv run epl-forecast materialize --site site --hindcasts
+   uv run python scripts/check_publishable.py --site site
+   ```
+
+   `hindcasts/index.json` must hold 20 `v0.2` rows, one for each division and season. For each row, the length of every per-club array in `series.json` must equal the number of entries in its `origins` list, and every `origin_at` must be a Wednesday at 09:00 Europe/London. Replace this paragraph with the origin counts and the adjusted-fixture counts once they are known.
 
 ### Prospective evaluation
 
