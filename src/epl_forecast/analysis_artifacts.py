@@ -7,10 +7,10 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from epl_forecast import analysis_contract
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.storage import json_bytes
 
-CACHE_VERSION = 1
 ARTIFACT_TABLES = (
     "forecasts",
     "forecast_matches",
@@ -40,7 +40,10 @@ def _cached(path: Path | None, identity: str) -> dict | None:
         value = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return None
-    if value.get("cache_version") != CACHE_VERSION or value.get("identity") != identity:
+    if (
+        value.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION
+        or value.get("identity") != identity
+    ):
         return None
     return value
 
@@ -376,7 +379,7 @@ def _live_rows(
             _cache(
                 cache_path,
                 {
-                    "cache_version": CACHE_VERSION,
+                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
                     "identity": pointer["href"],
                     "model_version": model_version,
                     "rows": {table: values[starts[table] :] for table, values in rows.items()},
@@ -459,7 +462,7 @@ def _hindcast_rows(
         for team in public["teams"]:
             _team_rows("hindcast", team, base, artifact_rows)
         value = {
-            "cache_version": CACHE_VERSION,
+            "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
             "identity": origin["href"],
             "model_version": public["model"]["version"],
             "rows": artifact_rows,
@@ -830,7 +833,15 @@ def _index_state(publish_store) -> dict:
             if series is not None:
                 hindcast_ids.extend(origin["href"] for origin in series["origins"])
     return {
-        "fingerprint": hashlib.sha256(json_bytes(documents)).hexdigest(),
+        "fingerprint": hashlib.sha256(
+            json_bytes(
+                {
+                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
+                    "documents": documents,
+                }
+            )
+        ).hexdigest(),
+        "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
         "live_ids": sorted(live_ids),
         "hindcast_ids": sorted(hindcast_ids),
     }
@@ -841,8 +852,12 @@ def _load_session_cache(connection, cache: Path | None) -> dict | None:
         return None
     try:
         pointer = json.loads((cache / "current.json").read_text())
+        if pointer.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION:
+            return None
         directory = cache / "sessions" / pointer["fingerprint"]
         metadata = json.loads((directory / "metadata.json").read_text())
+        if metadata.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION:
+            return None
         for table in ARTIFACT_TABLES:
             path = directory / f"{table}.parquet"
             connection.execute(
@@ -878,7 +893,14 @@ def _write_session_cache(connection, cache: Path | None, metadata: dict) -> None
         pass
     cache.mkdir(parents=True, exist_ok=True)
     pointer = cache / "current.tmp"
-    pointer.write_bytes(json_bytes({"fingerprint": metadata["fingerprint"]}))
+    pointer.write_bytes(
+        json_bytes(
+            {
+                "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
+                "fingerprint": metadata["fingerprint"],
+            }
+        )
+    )
     pointer.replace(cache / "current.json")
     if old and old != metadata["fingerprint"]:
         shutil.rmtree(sessions / old, ignore_errors=True)

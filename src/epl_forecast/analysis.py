@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from epl_forecast import analysis_contract
 from epl_forecast.datasets import Dataset
 from epl_forecast.storage import R2Store, json_bytes
 
@@ -356,6 +357,7 @@ def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> Non
     fingerprint = hashlib.sha256(
         json_bytes(
             {
+                "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
                 "manifests": data.manifests,
                 "cutoff": data.cutoff.isoformat() if data.cutoff else None,
             }
@@ -365,7 +367,10 @@ def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> Non
         try:
             pointer = json.loads((cache / "current.json").read_text())
             directory = cache / "sessions" / pointer["fingerprint"]
-            if pointer["fingerprint"] == fingerprint:
+            if (
+                pointer.get("analysis_schema_version") == analysis_contract.ANALYSIS_SCHEMA_VERSION
+                and pointer["fingerprint"] == fingerprint
+            ):
                 connection.execute(
                     "CREATE TABLE analysis.matches AS SELECT * FROM read_parquet(?)",
                     [str(directory / "matches.parquet")],
@@ -444,7 +449,14 @@ def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> Non
             pass
         cache.mkdir(parents=True, exist_ok=True)
         pointer = cache / "current.tmp"
-        pointer.write_bytes(json_bytes({"fingerprint": fingerprint}))
+        pointer.write_bytes(
+            json_bytes(
+                {
+                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
+                    "fingerprint": fingerprint,
+                }
+            )
+        )
         pointer.replace(cache / "current.json")
         if old and old != fingerprint:
             shutil.rmtree(sessions / old, ignore_errors=True)
@@ -590,6 +602,7 @@ def _install_metadata(
         "analysis.session",
         (
             ("loaded_at", "TIMESTAMPTZ"),
+            ("analysis_schema_version", "INTEGER"),
             ("evidence_cutoff", "TIMESTAMPTZ"),
             ("remote_only", "BOOLEAN"),
             ("manifest_identity_sha256", "VARCHAR"),
@@ -601,6 +614,7 @@ def _install_metadata(
         (
             {
                 "loaded_at": loaded_at,
+                "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
                 "evidence_cutoff": data.cutoff,
                 "remote_only": True,
                 "manifest_identity_sha256": identity,

@@ -4,9 +4,10 @@ import duckdb
 import pytest
 from test_publication import sample_forecast, sample_run
 
-from epl_forecast.analysis import open_analysis_session, start_ui
+from epl_forecast import analysis_contract
+from epl_forecast.analysis import _install_canonical_analysis, open_analysis_session, start_ui
 from epl_forecast.analysis_artifacts import install_artifact_analysis
-from epl_forecast.datasets import publish
+from epl_forecast.datasets import Dataset, publish
 from epl_forecast.publication import derive_forecast, forecast_pointer
 
 
@@ -380,7 +381,7 @@ def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
     assert statements == ["CALL start_ui_server()", "CALL stop_ui_server()"]
 
 
-def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_path):
+def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_path, monkeypatch):
     data, publish_store = forecast_stores()
     cache = tmp_path / "cache"
     first = duckdb.connect()
@@ -420,3 +421,50 @@ def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_pa
         "SELECT count(DISTINCT forecast_id) FROM analysis.forecast_matches"
     ).fetchone() == (2,)
     third.close()
+
+    data.reads.clear()
+    monkeypatch.setattr(
+        analysis_contract,
+        "ANALYSIS_SCHEMA_VERSION",
+        analysis_contract.ANALYSIS_SCHEMA_VERSION + 1,
+    )
+    rebuilt = duckdb.connect()
+    rebuilt.execute("CREATE SCHEMA analysis")
+    install_artifact_analysis(rebuilt, data, publish_store, cache)
+    assert rebuilt.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (2,)
+    assert any(key.endswith("/forecast.json") for key in data.reads)
+    rebuilt.close()
+
+
+def test_canonical_cache_rebuilds_for_a_new_analysis_schema_version(tmp_path, monkeypatch):
+    remote = tmp_path / "remote"
+    manifest = publish(
+        remote,
+        request("2026-01-02T12:00:00+00:00", "a"),
+        {"fixtures": [fixture()]},
+    )
+    store = Store(remote, [manifest])
+    cache = tmp_path / "cache"
+    first = Dataset(tmp_path / "empty", store=store, include_local=False)
+    _install_canonical_analysis(first, cache)
+    first.close()
+
+    monkeypatch.setattr(
+        analysis_contract,
+        "ANALYSIS_SCHEMA_VERSION",
+        analysis_contract.ANALYSIS_SCHEMA_VERSION + 1,
+    )
+    second = Dataset(tmp_path / "empty", store=store, include_local=False)
+    calls = 0
+    fixtures = second.fixtures
+
+    def counted_fixtures():
+        nonlocal calls
+        calls += 1
+        return fixtures()
+
+    monkeypatch.setattr(second, "fixtures", counted_fixtures)
+    _install_canonical_analysis(second, cache)
+    assert calls > 0
+    assert second.rows("SELECT count(*) AS n FROM analysis.matches") == [{"n": 1}]
+    second.close()
