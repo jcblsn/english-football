@@ -51,9 +51,11 @@ A published document carries two version numbers. They answer different question
 | `schema_version` | The version of the public contract: which keys a reader of that document kind may expect and how to read them. | A reader that follows the old contract would break. |
 | `model_version` | The version of the forecast semantics: what the numbers mean and how they were made. | The model, its inputs or its rules change the numbers. |
 
-A reader that parses documents uses `schema_version`. A reader that compares numbers over time uses `model_version`. One can change without the other: `v0.2` changes the forecast semantics and adds the optional `personnel` block, but it does not break a reader of schema 1.
+A reader that parses documents uses `schema_version`. A reader that compares numbers over time uses `model_version`. One can change without the other: `v0.2` changes the forecast semantics, and it adds the optional `personnel` block without raising any `schema_version`.
 
-`schema_version` stays 1 while every change is additive and optional. The `personnel` block is such a change: it is present only for a Premier League or Championship fixture in the horizon, and a reader that ignores the key still reads a correct and complete forecast. Raise `schema_version` when a key is removed or renamed, when the type or the meaning of an existing key changes, or when a new key becomes necessary to read the document correctly.
+Each document kind carries its own `schema_version`. There is no single number for the whole surface, and the numbers do not move together. The private forecast archive that `epl-forecast forecast` writes is a different artifact from the published forecast document, and it keeps its own `schema_version`.
+
+The `schema_version` of a document stays where it is while every change to that document is additive and optional. The `personnel` block is such a change: it is present only for a Premier League or Championship fixture in the horizon, and a reader that ignores the key still reads a correct and complete forecast. Raise the `schema_version` of a document when a key is removed or renamed, when the type or the meaning of an existing key changes, or when a new key becomes necessary to read the document correctly.
 
 `model_version` in `configs/publication.toml` is the public product version, for example `v0.0`, `v0.1` or `v1.0`. It is separate from the internal model names in `configs/product.toml`, which stay private.
 
