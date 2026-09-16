@@ -22,6 +22,7 @@ Ruff E501 is disabled, so the formatter owns line length in Python. Do not hand-
 
 ## Data
 
+- The API key and the R2 settings are in the ignored `.env` file, and `epl_forecast.storage.load_environment` loads it at the start of every CLI command. The shell environment is normally empty, so an unset `$R2_ACCESS_KEY_ID` does not mean the credential is missing. Read `.env` itself before you conclude that an R2 run cannot go locally. Match the names with a pattern that accepts digits: `R2_ACCOUNT_ID` does not match `^[A-Z_]*=`.
 - Fetch through `src/epl_forecast/data/capture.py`, never a web-reader tool. Football-Data 503s through readers and on the `www` host.
 - Retained Understat payloads are gzip; decompress on the `\x1f\x8b` magic byte. Legacy FPL archives (2016–19) are Latin-1, not UTF-8.
 - Team identity comes from `data/teams.csv` verbatim — extend the reviewed registry rather than inventing a slug.
