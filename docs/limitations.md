@@ -17,8 +17,9 @@ Read the forecasts with these limits in mind.
 - The persistent M7 state does not use lineups, injuries, suspensions or transfers. Only the temporary continuity adjustment uses them, and only for Premier League and Championship fixtures in the next six days. League One and League Two have no adjustment.
 - A club without eight previous matches with complete lineup minutes, for example a club promoted from League One, has no adjustment until it has them.
 - An official team sheet enters the adjustment only when a production run captures it before the forecast cutoff.
-- API-Football publishes the injury list of a fixture only a short time before the match. On 15 September 2026 at 21:30 UTC, the latest capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore uses membership and FPL status, and in the Championship membership only.
-- The production workflow wakes each hour. Fixture lists are eligible each hour, and match details are eligible every 15 minutes around kickoff. An hourly wake can still miss very late team news.
+- API-Football publishes the injury list of a fixture only a short time before the match. An adjustment several days before kickoff therefore uses membership and FPL status, and in the Championship membership only. [Validation](validation.md#matchday-squad-continuity) records what the injury lists covered at the release.
+- A player that no provider reports is treated as not listed, not as proven fit. Absence from an injury response is not a statement about a player. The selection rate q(m, n) carries the residual risk, because it was fitted without the players the injury lists named.
+- The production workflow wakes every 10 minutes. Fixture lists are eligible each hour, and match details are eligible every 9 minutes in the 75 minutes before kickoff. GitHub can still delay or skip a scheduled run, so a very late team-news change can be missed.
 - The model does not forecast future sanctions or appeals. A forecast applies only the sanctions known at its cutoff.
 
 ## Model
@@ -27,6 +28,7 @@ Read the forecasts with these limits in mind.
 - Dynamics parameters are fixed. They are not estimated from the data.
 - Entry priors come from few clubs at some boundaries, for example clubs promoted from a curtailed season. Their intervals can be too wide or too narrow.
 - The continuity adjustment has one linear coefficient for both divisions, fixed availability values and one pooled table for q(m, n). It responds only to the difference between the two clubs, so two clubs with the same discontinuity get no shift.
+- The six-day horizon is a frozen deployment choice, not an optimized one. It is the longest checkpoint of the prospective evaluation, so the prospective record can measure it. No search chose it, and no evidence says that six days is better than five or seven. It stays fixed while the prospective evidence collects.
 - The market-assisted weight is 1.0. Thus the market-assisted probability adds no model information to the market price.
 
 ## Season rules

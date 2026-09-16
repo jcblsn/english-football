@@ -90,7 +90,9 @@ p_j is the probability that player j is in the matchday squad of the fixture:
 - Otherwise, a player who has left the club gives 0. A dated transfer from the club, or a matchday squad of another club after the last matchday squad for this club, shows a departure.
 - Otherwise, a club member gives availability × q(m, n). m is the number of the eight matchday squads that included the player, and n shows whether the last one did. q comes from Premier League and Championship matches in 2021/22–2025/26. For example, q(8, yes) is 0.959 and q(1, no) is 0.297.
 
-Availability is 0 for an API-Football unavailable status or an FPL status of i, s, n or u. It is 0.3 for a doubtful status or FPL d, and 1 otherwise. API-Football statuses must name the same club and fixture, and FPL statuses the same club. Membership comes from dated transfers and matchday squads first. Without them, the latest squad capture and the FPL club decide when they agree.
+Availability is 0 for an API-Football unavailable status or an FPL status of i, s, n or u. It is 0.3 for a doubtful status or FPL d, and 1 otherwise. API-Football statuses must name the same club and fixture, and FPL statuses the same club. Membership comes from dated transfers and matchday squads first. Without them, the latest squad snapshot and the FPL club decide when they agree. Two strong observations of the same day that disagree leave membership unknown, because the evidence does not order them.
+
+Availability 1 is not a statement that a player is fit. A provider lists only the players it reports, and API-Football publishes the list of a fixture a short time before kickoff, so absence from a response is not proof of availability. The record says which case holds: the fixture appears in an injury snapshot and the player is not named in it, or no snapshot covers the fixture. The residual risk sits in q(m, n), which was fitted without the players that the injury lists named.
 
 A player with unknown membership, or with providers that give 0 and 1, is unresolved and is left out. A club with more than 25% unresolved recent weight gets no adjustment.
 
@@ -104,7 +106,9 @@ away log rate − Δ
 
 κ was fitted once on the realized matchday squads of 8,073 Premier League and Championship matches in 2017/18–2025/26. It is not fitted again on later results.
 
-Only a fixture that kicks off in the six days after the cutoff gets the shift. Six days is the longest checkpoint of the prospective evaluation. Each production run calculates the shift again, so the forecast changes when squads, injury lists, FPL statuses and team sheets change. The published match forecast gives the discontinuity of each club and the home log-rate shift.
+Only a fixture that kicks off in the six days after the cutoff gets the shift. Six days is the longest checkpoint of the prospective evaluation, so the prospective record can measure the horizon that the product deploys. It is a frozen deployment choice under monitoring, not an optimized one: no search selected it, and no evidence says that six days scores better than five or seven. It stays fixed while prospective evidence collects.
+
+Each production run calculates the shift again, so the forecast changes when squads, injury lists, FPL statuses and team sheets change. The published match forecast gives the discontinuity of each club and the home log-rate shift.
 
 ## Season paths
 
@@ -133,3 +137,5 @@ M2 is a ridge-regularized Poisson model with one attack and one defense value pe
 - The current table fixes every captured full-time score, including that day.
 - Historical evaluation assumes that a result and its xG are available on the day after the match.
 - Personnel evidence uses only rows retrieved by the cutoff. A hindcast dates a matchday squad from the London day after its match and a transfer from its date. It uses no injury lists, squad captures, FPL statuses or team sheets, because the data does not show when they were first known.
+- Squad, injury and FPL evidence is selected by source snapshot, not by taking the latest rows of a table. Each scope has one latest snapshot at the cutoff, and only the rows of that retrieval count. A response that held no rows therefore clears its scope, and a response retrieved later for another competition, season or club cannot supersede this one. See [data and provenance](data.md#production-contracts-of-the-player-tables).
+- For a completed reference match, one latest usable capture of each club gives the participants and the minutes. A correction replaces what it corrects. Before kickoff every capture is kept, because the team-sheet rule wants the latest one that names a whole matchday squad.

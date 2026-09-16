@@ -42,7 +42,18 @@ Routine production does not compact canonical data. Run `uv run python scripts/c
 
 GitHub Actions is the normal production writer. The workflow concurrency group prevents two production runs at the same time, but it does not know about local commands. Maintenance and migration writes to R2 must not overlap production. Before such a write, run `gh workflow disable production.yml`, make sure that no production run is in progress, do the write, then run `gh workflow enable production.yml`.
 
-## Model versions
+## Versions
+
+A published document carries two version numbers. They answer different questions and they change for different reasons.
+
+| Field | Meaning | Changes when |
+| --- | --- | --- |
+| `schema_version` | The version of the public contract: which keys a reader of that document kind may expect and how to read them. | A reader that follows the old contract would break. |
+| `model_version` | The version of the forecast semantics: what the numbers mean and how they were made. | The model, its inputs or its rules change the numbers. |
+
+A reader that parses documents uses `schema_version`. A reader that compares numbers over time uses `model_version`. One can change without the other: `v0.2` changes the forecast semantics and adds the optional `personnel` block, but it does not break a reader of schema 1.
+
+`schema_version` stays 1 while every change is additive and optional. The `personnel` block is such a change: it is present only for a Premier League or Championship fixture in the horizon, and a reader that ignores the key still reads a correct and complete forecast. Raise `schema_version` when a key is removed or renamed, when the type or the meaning of an existing key changes, or when a new key becomes necessary to read the document correctly.
 
 `model_version` in `configs/publication.toml` is the public product version, for example `v0.0`, `v0.1` or `v1.0`. It is separate from the internal model names in `configs/product.toml`, which stay private.
 
@@ -106,16 +117,24 @@ The command makes hindcasts for the four divisions in 2021/22–2025/26. Use `--
 
 The rules for each hindcast:
 
-- There is one origin each Monday at 09:00 Europe/London. The first origin is the Monday on or before the first regular-season match. The last origin is the first Monday after the last result. The archive keeps every weekly origin, also when the estimates do not change.
+- There is one origin each Wednesday at 09:00 Europe/London. The first origin is the Wednesday on or before the first regular-season match. The last origin is the first Wednesday after the last result. The archive keeps every weekly origin, also when the estimates do not change. The origin is a London wall-clock time, so it keeps its local hour across a daylight-saving change and its UTC instant moves.
 - The model uses the results of matches played before the London day of the origin. It uses the same information rules as the [season panels](validation.md#method): results and xG are available on the day after each match, a points deduction applies from its reviewed announcement date, and the simulation uses the fixture dates that the season finally used.
 - The structural model makes the season simulation. A hindcast has no market-assisted probabilities, no match impacts and no score grids.
 - Each document lists these assumptions in `assumptions`, and has `"product": "hindcast"` and `"retrospective": true`.
+
+### The origin protocol
+
+The weekday and time of the origin are an observation protocol. They decide when a retrospective forecast is taken. They do not change how the model forecasts, so a change of weekday is not evidence that the model became better or worse. Do not compare a Wednesday edition with a Monday edition and read the difference as a model effect.
+
+`v0.2` and later editions use Wednesday. `v0.0` and `v0.1` used Monday. Those editions are immutable and keep their Monday origins. The edition file records `origin_weekday`, `origin_time` and `origin_time_zone`, so a reader does not have to read the code of the version that made it. `claim_edition` compares the whole edition, so a rerun of an older version with the new weekday stops instead of extending that archive with origins it never had.
+
+If a same-origin comparison between two model versions is ever needed, generate the older version again under its own separately identified edition. Do not write Wednesday origins into the `v0.0` or `v0.1` archives.
 
 The command writes these objects:
 
 | Bucket | Key | Content |
 | --- | --- | --- |
-| `page324-data` | `runs/hindcasts/<version>/edition.json` | The model code hashes, the seed, the number of paths and the origin rule of the public model version. It is immutable. |
+| `page324-data` | `runs/hindcasts/<version>/edition.json` | The model code hashes, the seed, the number of paths and the origin protocol of the public model version: the rule, the weekday, the time and the time zone. It is immutable. |
 | `page324-data` | `runs/hindcasts/<version>/<competition>/<season>/<hindcast>.json` | The private simulation output of one origin. It is immutable. |
 | `page324-publish` | `hindcasts/<version>/<competition>/<season>/<hindcast>.json` | The sanitized season estimates of each club at one origin. It is immutable. |
 | `page324-publish` | `hindcasts/<version>/<competition>/<season>/series.json` | The weekly series of the season. |
@@ -150,7 +169,7 @@ The default materialization gets `forecasts/current.json`, its four forecast doc
 
 Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, with `--hindcasts`, checks the boundary and deploys the site. The hindcast documents add approximately one minute to the materialization. Both R2 buckets stay private.
 
-The production workflow calls the Pages workflow after a run that publishes at least one forecast. An hourly run that publishes nothing does not deploy. You can also start the Pages workflow manually.
+The production workflow calls the Pages workflow after a run that publishes at least one forecast. A run that publishes nothing does not deploy, so most of the ten-minute wakes deploy nothing. You can also start the Pages workflow manually.
 
 ## Credentials
 

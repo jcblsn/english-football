@@ -102,18 +102,27 @@ def render_forecast(forecast: dict) -> str:
     names = forecast["team_names"]
     simulation = forecast["simulation"]
     promotion = bool(simulation) and "promotion_probability" in simulation["teams"][0]
+    # The adjustment is part of the forecast, so the page may not say that personnel are
+    # omitted. What the forecast does not do is predict personnel changes after the horizon.
+    personnel = forecast.get("personnel") or {}
+    personnel_note = (
+        f"A fixture in the next {personnel.get('horizon_days', HORIZON.days)} days carries the "
+        "matchday-squad continuity adjustment. Transfers, injuries and squad changes after "
+        "that are not forecast."
+        if personnel.get("adjusted_fixtures")
+        else "Transfers, injuries and squad changes are not forecast."
+    )
     uncertainty_note = (
         "These probabilities include uncertainty in current team strength and match randomness. "
-        "Each simulated season holds its sampled strengths fixed; "
-        "transfers and injuries are omitted."
+        f"Each simulated season holds its sampled strengths fixed. {personnel_note}"
         if forecast.get("state_uncertainty") == "posterior"
         else "Team strengths are held fixed; these probabilities include match randomness and omit "
-        "uncertainty in team strength, transfers and injuries."
+        f"uncertainty in team strength. {personnel_note}"
     )
     if forecast.get("future_state_evolution"):
         uncertainty_note = (
             "These probabilities include current Quality/Tilt uncertainty, uncertain dynamics, "
-            "future changes in strength and match tempo. Transfers and injuries are omitted."
+            f"future changes in strength and match tempo. {personnel_note}"
         )
     prior_note = (
         "Clubs entering the division start from transition-aware entry priors. Strength uncertainty "

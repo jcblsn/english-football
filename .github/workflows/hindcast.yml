@@ -1,0 +1,80 @@
+name: hindcast
+
+# Retrospective hindcasts of completed seasons. This is a manual product task, not part of
+# routine production. The run resumes: it never simulates an origin that already has a
+# public document, so a dispatch that runs out of time is continued by the next one.
+on:
+  workflow_dispatch:
+    inputs:
+      competition:
+        description: One division, or every division when empty
+        required: false
+        type: choice
+        default: ""
+        options:
+          - ""
+          - eng-premier-league
+          - eng-championship
+          - eng-league-one
+          - eng-league-two
+      seasons:
+        description: Season start years, separated by spaces
+        required: false
+        type: string
+        default: 2021 2022 2023 2024 2025
+      simulations:
+        description: Season paths for each origin
+        required: false
+        type: string
+        default: "10000"
+      workers:
+        description: Parallel simulation processes
+        required: false
+        type: string
+        default: "4"
+
+permissions:
+  contents: read
+
+# The command writes immutable objects and one mutable index, so two runs must not overlap.
+concurrency:
+  group: hindcast
+  cancel-in-progress: false
+
+jobs:
+  hindcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+      R2_DATA_BUCKET: ${{ vars.R2_DATA_BUCKET }}
+      R2_PUBLISH_BUCKET: ${{ vars.R2_PUBLISH_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # The provenance of the run: which code, which public model version and which origin
+      # protocol the archive it writes will carry.
+      - name: Record the edition this run will claim
+        run: >-
+          uv run python -c "
+          import json;
+          from epl_forecast.hindcast import edition, ORIGIN_RULE;
+          from epl_forecast.publication import load_policy;
+          version = load_policy()['product']['model_version'];
+          manifest = edition(version, int('${{ inputs.simulations }}'));
+          print(json.dumps({k: v for k, v in manifest.items() if k != 'model_code'}, indent=2));
+          print('model_code files', len(manifest['model_code']))"
+      - name: Make and publish the hindcasts
+        run: >-
+          uv run epl-forecast hindcast
+          --data "${RUNNER_TEMP}/hindcast-workspace"
+          --simulations "${{ inputs.simulations }}"
+          --workers "${{ inputs.workers }}"
+          --seasons ${{ inputs.seasons }}
+          ${{ inputs.competition && format('--competition {0}', inputs.competition) || '' }}
