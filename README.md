@@ -88,4 +88,6 @@ scripts/verify.sh
 
 This formats, lints and tests the code. GitHub Actions runs the same checks and the publication boundary check on every push and pull request.
 
-Provider data is used under each provider's terms. It is not redistributed.
+## License
+
+Copyright (c) 2026 Jacob Eliason. All rights reserved. See [LICENSE](LICENSE). Provider data remains subject to each provider's terms and is not redistributed.
