@@ -60,16 +60,29 @@ jobs:
       - run: uv sync --locked
       # The provenance of the run: which code, which public model version and which origin
       # protocol the archive it writes will carry.
+      # A heredoc, not a folded -c string: folding turns each newline into a space inside
+      # the quoted argument, and Python reads the leading space as an indent.
       - name: Record the edition this run will claim
-        run: >-
-          uv run python -c "
-          import json;
-          from epl_forecast.hindcast import edition, ORIGIN_RULE;
-          from epl_forecast.publication import load_policy;
-          version = load_policy()['product']['model_version'];
-          manifest = edition(version, int('${{ inputs.simulations }}'));
-          print(json.dumps({k: v for k, v in manifest.items() if k != 'model_code'}, indent=2));
-          print('model_code files', len(manifest['model_code']))"
+        run: |
+          uv run python <<'PY'
+          from epl_forecast.hindcast import edition
+          from epl_forecast.publication import load_policy
+          from epl_forecast.storage import json_bytes, sha256_bytes
+
+          version = load_policy()["product"]["model_version"]
+          manifest = edition(version, int("${{ inputs.simulations }}"))
+          print("model_version    :", version)
+          print("edition digest   :", sha256_bytes(json_bytes(manifest)))
+          print("model_code files :", len(manifest["model_code"]))
+          print("seed/simulations :", manifest["seed"], manifest["simulations"])
+          print(
+              "origin protocol  :",
+              manifest["origin_weekday"],
+              manifest["origin_time"],
+              manifest["origin_time_zone"],
+          )
+          print("origin_rule      :", manifest["origin_rule"])
+          PY
       - name: Make and publish the hindcasts
         run: >-
           uv run epl-forecast hindcast
