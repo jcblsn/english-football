@@ -35,7 +35,7 @@ CATALOG_ROWS = (
         "Reproducibility metadata for the canonical and publication corpus loaded in this connection.",
         "canonical manifest state and publication indexes",
         "The evidence cutoff applies to canonical rows only.",
-        False,
+        True,
         "Derived artifacts keep their own timing fields.",
     ),
     (
@@ -44,7 +44,7 @@ CATALOG_ROWS = (
         "Grain, meaning, source, timing, visibility, and caveats for each analysis object.",
         "analysis bootstrap",
         "Descriptive metadata, not event time.",
-        False,
+        True,
         None,
     ),
     (
@@ -53,7 +53,7 @@ CATALOG_ROWS = (
         "Cross-provider reconciled fixtures with contradiction checks.",
         "Dataset.fixtures()",
         "Canonical rows retrieved by the session evidence cutoff.",
-        False,
+        True,
         "This is not the raw SQL fixtures view, which is latest per provider.",
     ),
     (
@@ -62,7 +62,7 @@ CATALOG_ROWS = (
         "Team-oriented match results and opponent context.",
         "analysis.matches",
         "Inherits the canonical evidence cutoff.",
-        False,
+        True,
         None,
     ),
     (
@@ -71,7 +71,7 @@ CATALOG_ROWS = (
         "Model-observed xG under the API-Football and Understat transition policy.",
         "Dataset.xg_observations()",
         "Inherits the canonical evidence cutoff and model availability rule.",
-        False,
+        True,
         None,
     ),
     (
@@ -118,6 +118,177 @@ CATALOG_ROWS = (
         "Latest successful fpl_availability response at the session cutoff.",
         True,
         "A null player_id with row_count=0 is a meaningful empty response.",
+    ),
+    (
+        "forecasts",
+        "one row per successful forecast and competition",
+        "Successful live forecast identity, timing, model, simulation, and storage provenance.",
+        "competition forecast archive pointers, public document, and private run",
+        "generated_at, state_observed_at, and model_results_cutoff have distinct meanings.",
+        False,
+        "A row exists only when both the successful public document and expected private run exist.",
+    ),
+    (
+        "forecast_matches",
+        "one row per successful forecast and modeled match",
+        "Complete private match predictions with explicit public horizon membership.",
+        "private forecast.json enriched by its public forecast",
+        "The forecast timing fields are in analysis.forecasts.",
+        True,
+        "Structural and market-assisted probabilities are separate. Season simulations use structural probabilities.",
+    ),
+    (
+        "forecast_teams",
+        "one row per successful forecast and team",
+        "Scalar live season estimates.",
+        "successful public forecast teams",
+        "The forecast timing fields are in analysis.forecasts.",
+        False,
+        None,
+    ),
+    (
+        "forecast_team_events",
+        "one row per forecast, team, and event",
+        "Division-specific live event probabilities.",
+        "successful public forecast teams.events",
+        "The forecast timing fields are in analysis.forecasts.",
+        False,
+        None,
+    ),
+    (
+        "forecast_points_distribution",
+        "one row per forecast, team, and points total",
+        "Live points distributions.",
+        "successful public forecast teams.points_distribution",
+        "The forecast timing fields are in analysis.forecasts.",
+        False,
+        None,
+    ),
+    (
+        "forecast_position_distribution",
+        "one row per forecast, team, and final position",
+        "Live position distributions.",
+        "successful public forecast teams.position_probabilities",
+        "The forecast timing fields are in analysis.forecasts.",
+        False,
+        None,
+    ),
+    (
+        "forecast_intervals",
+        "one row per forecast, team, estimate, and interval level",
+        "Live points and position intervals.",
+        "successful public forecast team interval maps",
+        "The forecast timing fields are in analysis.forecasts.",
+        False,
+        None,
+    ),
+    (
+        "model_team_states",
+        "one row per forecast and team",
+        "Private model team state with stable common fields and the complete state as JSON.",
+        "private forecast.json team_strengths",
+        "State used by this forecast run.",
+        True,
+        None,
+    ),
+    (
+        "forecast_runs",
+        "one row per successful forecast and competition",
+        "Private run provenance and fit diagnostics.",
+        "private run.json and forecast.json",
+        "Run creation time is analysis.forecasts.generated_at.",
+        True,
+        "Complex diagnostics and provenance remain JSON.",
+    ),
+    (
+        "forecast_impacts",
+        "one row per forecast, match, event, team, and outcome",
+        "Conditional match impact values and carry-forward provenance.",
+        "successful public forecast impact surface",
+        "Carry-forward fields identify the last eligible pre-kickoff forecast.",
+        False,
+        None,
+    ),
+    (
+        "hindcast_origins",
+        "one row per retrospective hindcast origin",
+        "Retrospective season estimate identity and timing.",
+        "hindcast index, series pointers, public document, and private run",
+        "origin_at is a retrospective simulation origin, not an artifact creation time.",
+        False,
+        "retrospective is always true and generated_at is intentionally null.",
+    ),
+    (
+        "hindcast_teams",
+        "one row per hindcast origin and team",
+        "Scalar retrospective season estimates.",
+        "successful public hindcast documents",
+        "Join hindcast_origins for explicit retrospective timing.",
+        False,
+        None,
+    ),
+    (
+        "hindcast_team_events",
+        "one row per hindcast origin, team, and event",
+        "Division-specific retrospective event probabilities.",
+        "successful public hindcast documents",
+        "Join hindcast_origins for explicit retrospective timing.",
+        False,
+        None,
+    ),
+    (
+        "hindcast_points_distribution",
+        "one row per hindcast origin, team, and points total",
+        "Retrospective points distributions.",
+        "successful public hindcast documents",
+        "Join hindcast_origins for explicit retrospective timing.",
+        False,
+        None,
+    ),
+    (
+        "hindcast_position_distribution",
+        "one row per hindcast origin, team, and final position",
+        "Retrospective position distributions.",
+        "successful public hindcast documents",
+        "Join hindcast_origins for explicit retrospective timing.",
+        False,
+        None,
+    ),
+    (
+        "hindcast_intervals",
+        "one row per hindcast origin, team, estimate, and interval level",
+        "Retrospective points and position intervals.",
+        "successful public hindcast documents",
+        "Join hindcast_origins for explicit retrospective timing.",
+        False,
+        None,
+    ),
+    (
+        "record_matches",
+        "one row per pending or settled prospective match forecast",
+        "Last pre-kickoff forecast and realized outcome from the prospective record.",
+        "record.json",
+        "generated_at is the actual live forecast time.",
+        False,
+        None,
+    ),
+    (
+        "record_summary",
+        "one row per scoring scope",
+        "Prospective scoring summary, with complete metrics as JSON.",
+        "record.json summary",
+        "Summarizes settled prospective forecasts only.",
+        False,
+        None,
+    ),
+    (
+        "team_projections",
+        "one row per live forecast or hindcast origin and team",
+        "Convenience union of scalar live and retrospective team estimates.",
+        "analysis.forecast_teams and analysis.hindcast_teams",
+        "Use product, retrospective, generated_at, origin_at, state_observed_at, and model_results_cutoff together.",
+        False,
+        "There is no generic as-of timestamp across products.",
     ),
 )
 
@@ -266,7 +437,12 @@ def _install_canonical_analysis(data: Dataset) -> None:
     )
 
 
-def _install_metadata(data: Dataset, loaded_at: datetime) -> None:
+def _install_metadata(
+    data: Dataset,
+    loaded_at: datetime,
+    publication_index_timestamps: dict | None = None,
+    model_versions: set[str] | None = None,
+) -> None:
     connection = data.con
     catalog = [
         {
@@ -318,8 +494,8 @@ def _install_metadata(data: Dataset, loaded_at: datetime) -> None:
                 "manifest_identity_sha256": identity,
                 "manifest_batches": _json([row["batch_id"] for row in manifests]),
                 "canonical_catalog_schema_version": catalog_state.get("schema_version"),
-                "publication_index_timestamps": _json({}),
-                "loaded_model_versions": _json([]),
+                "publication_index_timestamps": _json(publication_index_timestamps or {}),
+                "loaded_model_versions": _json(sorted(model_versions or set())),
             },
         ),
     )
@@ -339,8 +515,18 @@ def open_analysis_session(
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
     dataset = Dataset(root, cutoff, store=data_store, include_local=False)
     try:
+        if include_derived:
+            publish_store.configure_duckdb(dataset.con, name="page324_publish")
         _install_canonical_analysis(dataset)
-        _install_metadata(dataset, datetime.now(UTC))
+        publication_index_timestamps = {}
+        model_versions = set()
+        if include_derived:
+            from epl_forecast.analysis_artifacts import install_artifact_analysis
+
+            publication_index_timestamps, model_versions = install_artifact_analysis(
+                dataset.con, data_store, publish_store
+            )
+        _install_metadata(dataset, datetime.now(UTC), publication_index_timestamps, model_versions)
         return AnalysisSession(dataset, publish_store)
     except Exception:
         dataset.close()
@@ -351,10 +537,12 @@ def start_ui(session: AnalysisSession, *, open_browser: bool = True) -> str:
     """Start the DuckDB UI for a prepared connection and wait until interruption."""
     procedure = "start_ui" if open_browser else "start_ui_server"
     row = session.connection.execute(f"CALL {procedure}()").fetchone()
-    url = str(row[0]) if row else ""
+    url = str(row[0]) if row and isinstance(row[0], str) else "http://localhost:4213"
     print(f"DuckDB UI: {url}")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         return url
+    finally:
+        session.connection.execute("CALL stop_ui_server()")
