@@ -30,7 +30,7 @@ Each M7 archive contains:
 
 ## Hindcasts
 
-A hindcast is a separate, retrospective product. It gives the season estimates of each club at each Monday of a completed season, 2021/22–2025/26, in the four divisions. The frozen public model and the structural simulation make it after the season. A hindcast is not a forecast that existed at its origin, and the prospective record does not include it. [Operations](operations.md#hindcasts) gives its rules and layout.
+A hindcast is a separate, retrospective product. It gives the season estimates of each club at each Wednesday of a completed season, 2021/22–2025/26, in the four divisions. The frozen public model and the structural simulation make it after the season. A hindcast is not a forecast that existed at its origin, and the prospective record does not include it. [Operations](operations.md#hindcasts) gives its rules and layout.
 
 ## Checks on each archive
 

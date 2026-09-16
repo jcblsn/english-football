@@ -43,9 +43,36 @@ DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secre
 
 ## Canonical tables
 
-`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`.
+`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`. `source_snapshots` records which provider responses a reader has seen.
 
 Each row keeps its provider, its actual retrieval time, its evidence basis and the hash of its raw response. `Dataset(root, cutoff)` shows only the evidence retrieved by the cutoff. `Dataset.fixtures()` joins the providers and refuses contradictory identities, dates and scores.
+
+## Source snapshots
+
+`source_snapshots` holds one row for each successful retrieval of one query scope: a club squad, the injury list of a competition season, the FPL availability of a season, the detail of one fixture, or the history of one player or club. The row exists even when the response held no rows.
+
+The row is what makes an empty response readable. Without it, a reader cannot tell "the provider listed nobody" from "the provider was never asked", so an empty response would silently leave the previous one in force. The knowledge cannot live in the request manifests, because canonical compaction keeps rows and collapses request contexts. It is a canonical row, so it compacts like any other.
+
+`epl_forecast.snapshots` selects the one latest snapshot of a scope at a cutoff, ordered by retrieval time and then by content hash. Every reader uses that one selector, so the personnel evidence and the FPL ingestion cannot define "the latest captured squad" differently.
+
+Snapshot rows are written when a response is normalized. Retained captures from before this table existed have no snapshot rows. `uv run epl-forecast data normalize` replays every raw capture and creates them. Until that replay runs against a workspace, a reader of that history sees no squad, injury or FPL scope and falls back to membership from matchday squads alone, which is what a hindcast already does.
+
+## Production contracts of the player tables
+
+These four tables now change published forecasts, through the matchday-squad continuity adjustment. Their contracts:
+
+| Table | What a row asserts | What it does not assert |
+| --- | --- | --- |
+| `appearances` | The provider reported this player in the matchday squad of this club in this match at this retrieval, with the minutes it recorded. | That the squad is complete. A capture before kickoff is a team sheet only when it names 11 starters and at least 7 substitutes. |
+| `memberships` with `basis='captured_squad'` | This player was in the squad the provider published for this club at this retrieval. | Membership at any other time. Absence from one snapshot is not a transfer. |
+| `availability` | The provider reported this status for this player, in the scope named by `scope` and `competition_id`. | Anything about a player it does not name. Absence is not proof of availability. |
+| `transfers` | The provider dated a move of this player between these clubs. | A complete transfer history. Two moves dated the same day are not ordered by the evidence. |
+
+Reading rules that follow from these contracts:
+
+- Read squads, injury lists and FPL statuses through `source_snapshots`, never by taking the latest row of the table. The scope of an injury response is a competition and a season together, so a response retrieved later for an earlier season may not supersede the current one.
+- For a completed match, take the participants and the minutes of a club from one latest usable capture. A capture that records no minutes is not usable, so a short later response cannot erase a complete earlier one.
+- Treat rows retrieved after the forecast cutoff as invisible. A later observation may never change an earlier forecast.
 
 ## Identity and reviewed corrections
 

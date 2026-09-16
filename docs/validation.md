@@ -7,7 +7,7 @@ Four kinds of evidence support M7. This page gives the results and the commands 
 3. A match scoreboard in the Premier League.
 4. The prospective forecast record.
 
-All historical forecasts on this page were made by code commit `fc94353` with the product configuration. The [evidence guide](../evidence/README.md) identifies the generated files in private R2 storage.
+Each section names the code that produced its own evidence. Code commit `fc94353` made the season panels, the match scoreboard and the market pool fit that the first three sections report, with the product configuration. It did not make the evidence of the later sections: the National League entry source, API-Football xG and matchday-squad continuity each name the commits and runs behind them. The [evidence guide](../evidence/README.md) identifies the generated files in private R2 storage.
 
 ## Product checks
 
@@ -160,6 +160,8 @@ The market pool was fitted again on the API-Football xG predictions of the 1,140
 
 Model version v0.2 adds the matchday-squad continuity adjustment of the [methodology](methodology.md#matchday-squad-continuity). The owner decided on 15 September 2026 to release it on retrospective evidence. No prospective fixture was scored before the release. The research work is on the `research-personnel-measurement` branch, in `docs/experiments/personnel_measurement.md` and `docs/experiments/personnel_decision.md`.
 
+Provenance: commit `fc94353` did not make any evidence in this section. The retrospective match scores, the coefficient κ and the q(m, n) table come from the runs of the `research-personnel-measurement` branch, archived under `research/evidence/personnel-measurement/` in `page324-data`. The production checks below come from the release branch of `v0.2` itself, at the cutoff they name.
+
 ### Retrospective match scores
 
 The candidate adds the shift to the structural M7 forecast of the same match. The oracle uses the realized matchday squad after the match, so it measures the mechanism and is not a forecast. The history-only hindcast estimates D before each match day from earlier matchday squads and dated transfers. It uses no injury lists. Both use coefficients and q(m, n) tables from earlier seasons only. The scores cover 5,450 Premier League and Championship matches in 2020/21–2025/26. The values are candidate minus M7, and negative is better.
@@ -188,7 +190,9 @@ At one cutoff on 15 September 2026, from an empty workspace against R2, the v0.2
 - Premier League: all 10 fixtures in the horizon have a shift, from −0.054 to +0.081. Availability came from FPL, because API-Football had not yet published the injury lists of the next round.
 - Championship: 9 of 12 fixtures in the horizon have a shift, from −0.068 to +0.032. Bolton Wanderers, Cardiff City and Lincoln City have fewer than eight previous matches with complete lineup minutes, so their fixtures have no shift. The largest unresolved weight of a club is 0.092.
 
-A Premier League hindcast origin on 20 October 2025 adjusts 6 fixtures, and one on 5 January 2026 adjusts 10.
+What the injury lists covered at the release is an observation of that moment, not a standing property of the provider. At 21:30 UTC on 15 September 2026, the latest API-Football injury capture covered fixtures up to that day and none of the next round. An adjustment several days before kickoff therefore rested on membership and FPL status, and in the Championship on membership alone.
+
+The `v0.2` hindcast archive is generated from the released `main` with the Wednesday origin protocol of [operations](operations.md#the-origin-protocol). Its origin counts and adjusted-fixture counts are recorded here when that regeneration completes and passes its verification.
 
 ### Prospective evaluation
 

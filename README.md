@@ -1,6 +1,6 @@
 # English league forecasts
 
-Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. An hourly production job checks for new effective inputs and publishes only when they change.
+Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. A production job checks for new effective inputs every ten minutes and publishes only when they change.
 
 ## What it forecasts
 
