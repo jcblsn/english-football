@@ -9,15 +9,20 @@ Three concepts stay separate:
 The adjustment moves the log rates of one fixture. It never changes the persistent M7 state.
 """
 
-import copy
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-import numpy as np
-
 from epl_forecast.live import LONDON
-from epl_forecast.models.quality_tilt_scores import ScoreMixture
+from epl_forecast.snapshots import (
+    FPL_AVAILABILITY,
+    INJURIES,
+    SQUAD,
+    SnapshotIndex,
+    capture_of,
+    injury_scope,
+    snapshot_rows,
+)
 
 COMPETITIONS = ("eng-premier-league", "eng-championship")
 # Fitted once on the 8,073 Premier League and Championship matches of 2017/18–2025/26 with a
@@ -67,6 +72,23 @@ def first(item):
     return item[0]
 
 
+def usable_capture(captures):
+    """The one capture of a club in a completed match that gives its squad and minutes.
+
+    A later capture replaces an earlier one completely, so a correction that removes a
+    player or changes minutes takes effect instead of merging with what it corrects. A
+    capture that records no minutes is not usable, so a short or empty later response
+    cannot erase a complete earlier one. Captures are ordered by retrieval time and then
+    by content hash, so the choice does not depend on the order the rows arrive in.
+    """
+    usable = [
+        capture
+        for capture, rows in captures.items()
+        if any(row["minutes"] is not None for row in rows.values())
+    ]
+    return max(usable or captures)
+
+
 def start_of_day(day):
     return datetime.combine(day, time(), tzinfo=LONDON)
 
@@ -83,41 +105,76 @@ class Evidence:
 
     Each row carries `retrieved_at`. Rows retrieved after the cutoff are ignored, so a later
     observation cannot change a result. Appearance rows also need `match_date`.
+
+    Squad, injury and FPL rows are read through `snapshots`, not by taking the latest rows
+    of a table. One scope has one latest snapshot at the cutoff, and only the rows of that
+    retrieval count. Two consequences matter:
+
+    - a successful response that held no rows clears its scope instead of leaving the
+      previous response in force;
+    - a response retrieved later for another competition, season or team cannot supersede
+      the evidence of this one, because each scope is selected separately.
     """
 
-    def __init__(self, cutoff, *, appearances=(), squads=(), transfers=(), injuries=(), fpl=()):
+    def __init__(
+        self,
+        cutoff,
+        *,
+        appearances=(),
+        squads=(),
+        transfers=(),
+        injuries=(),
+        fpl=(),
+        snapshots=(),
+    ):
         self.cutoff = cutoff
+        self.snapshots = (
+            snapshots if isinstance(snapshots, SnapshotIndex) else SnapshotIndex(snapshots, cutoff)
+        )
         self.played = defaultdict(dict)
         self.matchday = defaultdict(set)
-        spells = defaultdict(set)
-        self.sheets = defaultdict(lambda: defaultdict(dict))
+        self.sheets = defaultdict(dict)
+        self.match_captures = {}
+        captures = defaultdict(lambda: defaultdict(dict))
         for row in appearances:
-            kickoff = row["kickoff_time"]
-            if row["retrieved_at"] > cutoff or kickoff is None:
+            if row["retrieved_at"] > cutoff or row["kickoff_time"] is None:
                 continue
             key = row["match_id"], row["team_id"]
-            if row["retrieved_at"] < kickoff:
-                self.sheets[key][row["retrieved_at"]][row["player_id"]] = bool(row["starts"])
+            captures[key][capture_of(row)][row["player_id"]] = row
+        spells = defaultdict(set)
+        for key, by_capture in captures.items():
+            kickoff = next(
+                row["kickoff_time"] for rows in by_capture.values() for row in rows.values()
+            )
+            # Every pre-kickoff capture is kept: the team-sheet rule wants the latest one
+            # that names a whole matchday squad, which is not always the latest one.
+            for capture, rows in by_capture.items():
+                if capture[0] < kickoff:
+                    self.sheets[key][capture] = {
+                        player: bool(row["starts"]) for player, row in rows.items()
+                    }
             if kickoff >= cutoff:
                 continue
-            spells[row["player_id"]].add((row["match_date"], row["team_id"]))
-            self.matchday[key].add(row["player_id"])
-            if row["minutes"] is not None:
-                self.played[key][row["player_id"]] = min(int(row["minutes"]), REFERENCE_MINUTES)
+            chosen = usable_capture(by_capture)
+            self.match_captures[key] = chosen
+            for player, row in by_capture[chosen].items():
+                spells[player].add((row["match_date"], row["team_id"]))
+                self.matchday[key].add(player)
+                if row["minutes"] is not None:
+                    self.played[key][player] = min(int(row["minutes"]), REFERENCE_MINUTES)
         self.spells = {player: sorted(rows, key=first) for player, rows in spells.items()}
-        self.squad_times = {}
+        self.squads = {}
+        self.squad_teams = defaultdict(set)
+        squad_rows = defaultdict(list)
         for row in squads:
             if row["retrieved_at"] <= cutoff:
-                team = row["team_id"]
-                self.squad_times[team] = max(
-                    self.squad_times.get(team, row["retrieved_at"]), row["retrieved_at"]
-                )
-        self.squads = defaultdict(set)
-        self.squad_teams = defaultdict(set)
-        for row in squads:
-            if row["retrieved_at"] == self.squad_times.get(row["team_id"]):
-                self.squads[row["team_id"]].add(row["player_id"])
-                self.squad_teams[row["player_id"]].add(row["team_id"])
+                squad_rows[row["team_id"]].append(row)
+        for team in self.snapshots.keys(SQUAD):
+            identity = self.snapshots.identity(SQUAD, team)
+            members = {row["player_id"] for row in squad_rows[team] if capture_of(row) == identity}
+            self.squads[team] = members
+            for player in members:
+                self.squad_teams[player].add(team)
         day = cutoff.astimezone(LONDON).date()
         self.transfers = defaultdict(list)
         for row in transfers:
@@ -129,23 +186,31 @@ class Evidence:
                 self.transfers[row["player_id"]].append(
                     (row["transfer_date"], row["from_team_id"], row["to_team_id"])
                 )
-        latest = {}
+        self.injuries = defaultdict(list)
+        self.injury_fixtures = set()
+        injury_rows = defaultdict(list)
         for row in injuries:
             if row["retrieved_at"] <= cutoff:
-                key = row["competition_id"]
-                latest[key] = max(latest.get(key, row["retrieved_at"]), row["retrieved_at"])
-        self.injury_times = latest
-        self.injuries = defaultdict(list)
-        for row in injuries:
-            if row["player_id"] and row["retrieved_at"] == latest.get(row["competition_id"]):
-                self.injuries[row["match_id"], row["team_id"], row["player_id"]].append(row)
-        fpl_rows = [row for row in fpl if row["retrieved_at"] <= cutoff]
-        self.fpl_time = max((row["retrieved_at"] for row in fpl_rows), default=None)
-        self.fpl = {
-            row["player_id"]: row
-            for row in fpl_rows
-            if row["retrieved_at"] == self.fpl_time and row["player_id"]
-        }
+                injury_rows[injury_scope(row["competition_id"], row["season_id"])].append(row)
+        for scope in self.snapshots.keys(INJURIES):
+            identity = self.snapshots.identity(INJURIES, scope)
+            for row in injury_rows[scope]:
+                if capture_of(row) != identity:
+                    continue
+                self.injury_fixtures.add(row["match_id"])
+                if row["player_id"]:
+                    self.injuries[row["match_id"], row["team_id"], row["player_id"]].append(row)
+        self.fpl = {}
+        self.fpl_seasons = self.snapshots.keys(FPL_AVAILABILITY)
+        fpl_rows = defaultdict(list)
+        for row in fpl:
+            if row["retrieved_at"] <= cutoff:
+                fpl_rows[row["season_id"]].append(row)
+        for season in self.fpl_seasons:
+            identity = self.snapshots.identity(FPL_AVAILABILITY, season)
+            for row in fpl_rows[season]:
+                if capture_of(row) == identity and row["player_id"]:
+                    self.fpl[row["player_id"]] = row
 
     def last_for(self, player, team):
         days = [day for day, other in self.spells.get(player, ()) if other == team]
@@ -155,10 +220,13 @@ class Evidence:
         """Club membership of a player at the cutoff.
 
         A dated transfer or a matchday squad of another club after the last appearance for
-        this club decides membership. Otherwise the latest captured squads and the FPL team
-        decide when they agree. Absence from one captured squad alone is not a transfer.
-        Before any squad or FPL capture exists, a player without contrary dated evidence
+        this club decides membership. Otherwise the latest squad snapshots and the FPL team
+        decide when they agree. Absence from one squad snapshot alone is not a transfer.
+        Before any squad or FPL snapshot exists, a player without contrary dated evidence
         stays a member.
+
+        Two strong observations of the same day that disagree leave membership unknown. The
+        evidence does not order them, so neither may win because it happens to sort last.
         """
         since = self.last_for(player, team)
         strong = []
@@ -174,9 +242,9 @@ class Evidence:
                 strong.append((day, DEPARTED, f"matchday squad of {other} on {day}"))
         weak = []
         if team in self.squad_teams.get(player, ()):
-            weak.append((MEMBER, f"latest captured squad of {team}"))
+            weak.append((MEMBER, f"latest squad snapshot of {team}"))
         for other in sorted(self.squad_teams.get(player, set()) - {team}):
-            weak.append((DEPARTED, f"latest captured squad of {other}"))
+            weak.append((DEPARTED, f"latest squad snapshot of {other}"))
         fpl = self.fpl.get(player)
         if fpl is not None:
             weak.append(
@@ -184,22 +252,37 @@ class Evidence:
             )
         if strong:
             strong.sort(key=first)
-            state = strong[-1][1]
-            conflicts = tuple(basis for other, basis in weak if other != state)
-            return Membership(state, tuple(item[2] for item in strong), conflicts)
+            basis = tuple(item[2] for item in strong)
+            latest = strong[-1][0]
+            states = {state for day, state, _ in strong if day == latest}
+            if len(states) > 1:
+                return Membership(UNKNOWN, (), basis)
+            state = states.pop()
+            conflicts = tuple(reason for other, reason in weak if other != state)
+            return Membership(state, basis, conflicts)
         states = {state for state, _ in weak}
         if len(states) == 1:
             return Membership(states.pop(), tuple(basis for _, basis in weak))
         if states:
             return Membership(UNKNOWN, (), tuple(basis for _, basis in weak))
-        if not self.squad_times and self.fpl_time is None:
-            return Membership(MEMBER, ("no squad or FPL capture at the cutoff",))
+        if not self.snapshots.keys(SQUAD) and not self.fpl_seasons:
+            return Membership(MEMBER, ("no squad or FPL snapshot at the cutoff",))
         if team in self.squads:
-            return Membership(UNKNOWN, (f"absent from latest captured squad of {team}",))
+            return Membership(UNKNOWN, (f"absent from the latest squad snapshot of {team}",))
         return Membership(UNKNOWN, ("no membership evidence",))
 
     def availability(self, player, team, match_id, competition_id):
-        """Probability that a club member is available for the matchday squad of this fixture."""
+        """Probability that a club member is available for the matchday squad of this fixture.
+
+        Absence from an injury response is not proof of availability. The provider lists
+        only the players it reports as doubtful or missing, and it publishes the list of a
+        fixture a short time before kickoff. So this returns 1.0 for a player no provider
+        reports, and the basis says which of the two cases holds: the fixture appears in an
+        injury snapshot and the player is not named in it, or no snapshot covers the fixture
+        at all. Neither is a positive statement that the player is fit. The residual risk is
+        carried by the selection rate q(m, n), which was fitted without the players that the
+        injury lists named.
+        """
         values, basis = [], []
         for row in self.injuries.get((match_id, team, player), ()):
             values.append({"unavailable": 0.0, "doubtful": DOUBTFUL}.get(row["status"]))
@@ -219,7 +302,9 @@ class Evidence:
         if any(value is None for value in values):
             return None, (*basis, "unknown provider status")
         if not values:
-            return 1.0, ("no contrary availability evidence",)
+            if match_id in self.injury_fixtures:
+                return 1.0, ("not named in the injury snapshot of this fixture",)
+            return 1.0, ("no injury snapshot covers this fixture",)
         if min(values) == 0.0 and max(values) == 1.0:
             return None, (*basis, "providers conflict")
         return min(values), tuple(basis)
@@ -239,11 +324,11 @@ class Evidence:
     def team_sheet(self, match_id, team):
         """The latest official team sheet captured before kickoff with the whole matchday squad."""
         captures = self.sheets.get((match_id, team), {})
-        for retrieved_at in sorted(captures, reverse=True):
-            sheet = captures[retrieved_at]
+        for capture in sorted(captures, reverse=True):
+            sheet = captures[capture]
             starters = sum(sheet.values())
             if starters == STARTING_XI and len(sheet) - starters >= MIN_SUBSTITUTES:
-                return set(sheet), retrieved_at
+                return set(sheet), capture[0]
         return None
 
     def selection(self, team, previous_matches, player):
@@ -376,19 +461,6 @@ def fixture_adjustments(evidence, histories, fixtures, kickoffs, cutoff):
     return result
 
 
-def shift_scores(scores, shift):
-    """A copy of a score distribution with +shift on the home and −shift on the away log rate."""
-    if isinstance(scores, ScoreMixture):
-        return ScoreMixture([shift_scores(c, shift) for c in scores.components], scores.weights)
-    shifted = copy.copy(scores)
-    shifted.log_mean = scores.log_mean + np.array([shift, -shift])
-    shifted.home_rates = scores.home_rates * np.exp(shift)
-    shifted.away_rates = scores.away_rates * np.exp(-shift)
-    shifted.home_rate = float(shifted.weights @ shifted.home_rates)
-    shifted.away_rate = float(shifted.weights @ shifted.away_rates)
-    return shifted
-
-
 def season_ids(cutoff):
     year = cutoff.year - (cutoff.month < 7)
     return f"{year - 1}-{year}", f"{year}-{year + 1}"
@@ -399,8 +471,8 @@ def load_evidence(data, seasons):
     placeholders = ", ".join("?" for _ in seasons)
     days = {row["match_id"]: row["match_date"] for row in data.fixtures()}
     appearances = data.rows(
-        "SELECT match_id, team_id, player_id, starts, minutes, kickoff_time, retrieved_at "
-        f"FROM appearances_observations WHERE season_id IN ({placeholders}) "
+        "SELECT match_id, team_id, player_id, starts, minutes, kickoff_time, retrieved_at, "
+        f"source_sha256 FROM appearances_observations WHERE season_id IN ({placeholders}) "
         "AND player_id IS NOT NULL",
         list(seasons),
     )
@@ -411,7 +483,8 @@ def load_evidence(data, seasons):
     return {
         "appearances": appearances,
         "squads": data.rows(
-            "SELECT player_id, team_id, retrieved_at FROM memberships_observations "
+            "SELECT player_id, team_id, retrieved_at, source_sha256 "
+            "FROM memberships_observations "
             f"WHERE basis='captured_squad' AND season_id IN ({placeholders})",
             list(seasons),
         ),
@@ -420,16 +493,19 @@ def load_evidence(data, seasons):
             "FROM transfers_observations WHERE player_id IS NOT NULL"
         ),
         "injuries": data.rows(
-            "SELECT match_id, team_id, player_id, competition_id, status, reason, retrieved_at "
-            "FROM availability_observations WHERE provider='api_football' "
+            "SELECT match_id, team_id, player_id, competition_id, season_id, status, reason, "
+            "retrieved_at, source_sha256 FROM availability_observations "
+            "WHERE provider='api_football' "
             f"AND scope LIKE 'fixture:%' AND season_id IN ({placeholders})",
             list(seasons),
         ),
         "fpl": data.rows(
-            "SELECT player_id, team_id, status, reason, retrieved_at FROM availability_observations "
+            "SELECT player_id, team_id, season_id, status, reason, retrieved_at, source_sha256 "
+            "FROM availability_observations "
             f"WHERE provider='fpl' AND season_id IN ({placeholders})",
             list(seasons),
         ),
+        "snapshots": snapshot_rows(data),
     }
 
 

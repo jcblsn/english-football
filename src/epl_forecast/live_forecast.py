@@ -8,7 +8,8 @@ from epl_forecast.competitions import competition
 from epl_forecast.live import LONDON, LiveSeason, timestamp
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.models.base import ForecastModel
-from epl_forecast.personnel import COMPETITIONS, HORIZON, KAPPA, shift_scores
+from epl_forecast.models.quality_tilt_scores import shift_scores
+from epl_forecast.personnel import COMPETITIONS, HORIZON, KAPPA
 from epl_forecast.schema import Match
 from epl_forecast.simulation import EuropeScenario, simulate_season
 from epl_forecast.storage import file_hash, write_json

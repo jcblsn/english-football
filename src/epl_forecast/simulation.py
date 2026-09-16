@@ -8,7 +8,7 @@ import numpy as np
 from epl_forecast.competitions import COMPETITIONS
 from epl_forecast.data.rules import LeagueRules, league_rules, reviewed_rules_evidence
 from epl_forecast.models.base import ForecastModel
-from epl_forecast.personnel import shift_scores
+from epl_forecast.models.quality_tilt_scores import shift_scores
 from epl_forecast.postseason import simulate_playoffs
 from epl_forecast.schema import Fixture, Match
 

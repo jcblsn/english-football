@@ -65,6 +65,11 @@ SCHEMAS = {
     "points INTEGER, played INTEGER, wins INTEGER, draws INTEGER, losses INTEGER, "
     "goals_for INTEGER, goals_against INTEGER, goal_difference INTEGER, "
     "group_name VARCHAR, description VARCHAR, updated_at TIMESTAMPTZ",
+    # One row for each successful retrieval of one query scope, including a response that
+    # held no rows. See `epl_forecast.snapshots`.
+    "source_snapshots": "scope_kind VARCHAR, scope_key VARCHAR, endpoint VARCHAR, "
+    "competition_id VARCHAR, season_id VARCHAR, team_id VARCHAR, match_id VARCHAR, "
+    "row_count INTEGER",
 }
 KEYS = {
     "competition_seasons": ["competition_id", "season_id"],
@@ -80,6 +85,7 @@ KEYS = {
     "odds": ["match_id", "family"],
     "team_statistics": ["match_id", "team_id"],
     "standings": ["competition_id", "season_id", "team_id"],
+    "source_snapshots": ["scope_kind", "scope_key"],
 }
 
 
@@ -146,6 +152,8 @@ def publish(root, request, tables):
                 "OR losses<0 OR goals_for<0 OR goals_against<0 "
                 "OR wins+draws+losses<>played "
                 "OR goal_difference<>goals_for-goals_against",
+                "source_snapshots": "scope_kind IS NULL OR scope_key IS NULL "
+                "OR endpoint IS NULL OR row_count<0",
             }.get(table)
             if invalid and con.execute(f"SELECT 1 FROM records WHERE {invalid} LIMIT 1").fetchone():
                 raise ValueError(f"Invalid canonical {table} data")

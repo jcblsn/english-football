@@ -5,6 +5,7 @@ import pytest
 
 from epl_forecast.models import make_model
 from epl_forecast.models.poisson import PoissonMixture
+from epl_forecast.models.quality_tilt_scores import shift_scores
 from epl_forecast.personnel import (
     DEPARTED,
     DOUBTFUL,
@@ -20,10 +21,17 @@ from epl_forecast.personnel import (
     fixture_adjustments,
     home_log_rate_shift,
     reference_matches,
-    shift_scores,
     team_continuity,
 )
 from epl_forecast.schema import Fixture
+from epl_forecast.snapshots import (
+    FPL_AVAILABILITY,
+    INJURIES,
+    SQUAD,
+    capture_of,
+    injury_scope,
+    snapshot,
+)
 
 COMPETITION = "eng-premier-league"
 SEASON = "2026-2027"
@@ -74,26 +82,64 @@ def transfer(player, source, destination, day, retrieved_at=BEFORE):
     }
 
 
-def fpl(player, team, status, retrieved_at=BEFORE):
+def fpl(player, team, status, retrieved_at=BEFORE, season=SEASON):
     return {
         "player_id": player,
         "team_id": team,
+        "season_id": season,
         "status": status,
         "reason": "",
         "retrieved_at": retrieved_at,
     }
 
 
-def injury(player, team, status, match_id=TARGET, retrieved_at=BEFORE):
+def injury(player, team, status, match_id=TARGET, retrieved_at=BEFORE, season=SEASON):
     return {
         "match_id": match_id,
         "team_id": team,
         "player_id": player,
         "competition_id": COMPETITION,
+        "season_id": season,
         "status": status,
         "reason": "Injury",
         "retrieved_at": retrieved_at,
     }
+
+
+def source_snapshot(kind, key, retrieved_at, row_count=1):
+    return {
+        **snapshot(kind, key, endpoint="test", row_count=row_count),
+        "retrieved_at": retrieved_at,
+        "source_sha256": "",
+    }
+
+
+def derive_snapshots(squads=(), injuries=(), fpl_rows=()):
+    """The snapshot rows that a collection records beside these observations.
+
+    A test that wants a scope the provider answered with no rows passes its own snapshots.
+    """
+    scopes = {}
+    for row in squads:
+        scopes.setdefault((SQUAD, row["team_id"]), []).append(capture_of(row))
+    for row in injuries:
+        key = INJURIES, injury_scope(row["competition_id"], row["season_id"])
+        scopes.setdefault(key, []).append(capture_of(row))
+    for row in fpl_rows:
+        scopes.setdefault((FPL_AVAILABILITY, row["season_id"]), []).append(capture_of(row))
+    return [
+        source_snapshot(kind, key, max(captures)[0], len(captures))
+        for (kind, key), captures in scopes.items()
+    ]
+
+
+def evidence_at(cutoff, *, snapshots=None, **rows):
+    """Evidence together with the snapshots that its observations imply."""
+    if snapshots is None:
+        snapshots = derive_snapshots(
+            rows.get("squads", ()), rows.get("injuries", ()), rows.get("fpl", ())
+        )
+    return Evidence(cutoff, **rows, snapshots=snapshots)
 
 
 def continuity(evidence, previous):
@@ -112,22 +158,22 @@ def test_post_cutoff_observations_cannot_change_the_estimate():
         "injuries": [injury("home-1", "home", "unavailable", retrieved_at=AFTER)],
         "fpl": [fpl("home-2", "home", "i", retrieved_at=AFTER)],
     }
-    estimate = continuity(Evidence(CUTOFF, **base), previous)
-    assert continuity(Evidence(CUTOFF, **later), previous) == estimate
+    estimate = continuity(evidence_at(CUTOFF, **base), previous)
+    assert continuity(evidence_at(CUTOFF, **later), previous) == estimate
     assert estimate["discontinuity"] == pytest.approx(1 - FULL)
 
 
 def test_identity_is_not_membership():
-    evidence = Evidence(CUTOFF, squads=squad("home", REGULARS[1:]) + squad("other", ["home-0"]))
+    evidence = evidence_at(CUTOFF, squads=squad("home", REGULARS[1:]) + squad("other", ["home-0"]))
     assert evidence.membership("home-0", "home").state == DEPARTED
     assert evidence.membership("home-0", "other").state == MEMBER
-    lone = Evidence(CUTOFF, squads=squad("home", REGULARS[1:]))
+    lone = evidence_at(CUTOFF, squads=squad("home", REGULARS[1:]))
     assert lone.membership("home-0", "home").state == UNKNOWN
 
 
 def test_without_any_membership_capture_a_recent_player_stays_a_member():
     rows, previous, _ = history()
-    evidence = Evidence(
+    evidence = evidence_at(
         CUTOFF,
         appearances=rows,
         transfers=[transfer("home-0", "home", "other", date(2026, 9, 10))],
@@ -140,7 +186,7 @@ def test_without_any_membership_capture_a_recent_player_stays_a_member():
 
 
 def test_availability_is_scoped_to_the_team_and_fixture():
-    evidence = Evidence(
+    evidence = evidence_at(
         CUTOFF,
         injuries=[
             injury("home-1", "away", "unavailable"),
@@ -149,9 +195,9 @@ def test_availability_is_scoped_to_the_team_and_fixture():
         fpl=[fpl("home-1", "other", "i")],
     )
     assert evidence.availability("home-1", "home", TARGET, COMPETITION)[0] == 1.0
-    doubtful = Evidence(CUTOFF, injuries=[injury("home-1", "home", "doubtful")])
+    doubtful = evidence_at(CUTOFF, injuries=[injury("home-1", "home", "doubtful")])
     assert doubtful.availability("home-1", "home", TARGET, COMPETITION)[0] == DOUBTFUL
-    conflict = Evidence(
+    conflict = evidence_at(
         CUTOFF, injuries=[injury("home-1", "home", "unavailable")], fpl=[fpl("home-1", "home", "a")]
     )
     assert conflict.availability("home-1", "home", TARGET, COMPETITION)[0] is None
@@ -159,7 +205,7 @@ def test_availability_is_scoped_to_the_team_and_fixture():
 
 def test_new_club_availability_cannot_restore_a_former_club_player():
     rows, previous, _ = history()
-    evidence = Evidence(
+    evidence = evidence_at(
         CUTOFF,
         appearances=rows,
         squads=squad("home", REGULARS) + squad("other", ["home-0"]),
@@ -168,7 +214,7 @@ def test_new_club_availability_cannot_restore_a_former_club_player():
     )
     membership = evidence.membership("home-0", "home")
     assert membership.state == DEPARTED
-    assert "latest captured squad of home" in membership.conflicts
+    assert "latest squad snapshot of home" in membership.conflicts
     player = next(
         p for p in continuity(evidence, previous)["players"] if p["player_id"] == "home-0"
     )
@@ -178,7 +224,7 @@ def test_new_club_availability_cannot_restore_a_former_club_player():
 def test_unresolved_players_cannot_create_a_large_personnel_shock():
     rows, previous, _ = history()
     home = continuity(
-        Evidence(CUTOFF, appearances=rows, squads=squad("home", REGULARS[5:])), previous
+        evidence_at(CUTOFF, appearances=rows, squads=squad("home", REGULARS[5:])), previous
     )
     assert home["unresolved_weight"] == pytest.approx(5 / 11)
     assert home["unresolved_weight"] > MAX_UNRESOLVED
@@ -199,14 +245,16 @@ def test_an_official_team_sheet_before_the_cutoff_makes_the_feature_observed():
         appearance(TARGET, "home", p, KICKOFF, False, None, sheet_time) for p in bench
     ]
     base = {"appearances": rows + sheet, "squads": squad("home", REGULARS)}
-    observed = continuity(Evidence(KICKOFF - timedelta(minutes=30), **base), previous)
+    observed = continuity(evidence_at(KICKOFF - timedelta(minutes=30), **base), previous)
     assert observed["team_sheet_retrieved_at"] == sheet_time.isoformat()
     assert observed["discontinuity"] == pytest.approx(1 / 11)
-    before = continuity(Evidence(KICKOFF - timedelta(minutes=90), **base), previous)
+    before = continuity(evidence_at(KICKOFF - timedelta(minutes=90), **base), previous)
     assert before["team_sheet_retrieved_at"] is None
     late = [{**row, "retrieved_at": KICKOFF + timedelta(minutes=5)} for row in sheet]
     assert (
-        Evidence(KICKOFF + timedelta(hours=1), appearances=rows + late).team_sheet(TARGET, "home")
+        evidence_at(KICKOFF + timedelta(hours=1), appearances=rows + late).team_sheet(
+            TARGET, "home"
+        )
         is None
     )
 
@@ -218,7 +266,7 @@ def test_a_team_sheet_without_the_whole_matchday_squad_is_not_observed():
         appearance(TARGET, "home", f"bench-{n}", KICKOFF, False, None, sheet_time)
         for n in range(MIN_SUBSTITUTES - 1)
     ]
-    evidence = Evidence(
+    evidence = evidence_at(
         KICKOFF - timedelta(minutes=30), appearances=rows + partial, squads=squad("home", REGULARS)
     )
     assert evidence.team_sheet(TARGET, "home") is None
@@ -228,7 +276,7 @@ def test_a_team_sheet_without_the_whole_matchday_squad_is_not_observed():
         appearance(TARGET, "home", f"bench-{n}", KICKOFF, False, None, earlier)
         for n in range(MIN_SUBSTITUTES)
     ]
-    evidence = Evidence(KICKOFF - timedelta(minutes=30), appearances=rows + complete + partial)
+    evidence = evidence_at(KICKOFF - timedelta(minutes=30), appearances=rows + complete + partial)
     assert evidence.team_sheet(TARGET, "home")[1] == earlier
 
 
@@ -241,7 +289,7 @@ def test_reference_matches_are_the_matches_known_at_the_cutoff():
     six_days = KICKOFF - timedelta(days=6)
     early = reference_matches(club, KICKOFF.date(), six_days)
     assert early == previous
-    assert Evidence(six_days, appearances=rows).recent_weights("home", early) is not None
+    assert evidence_at(six_days, appearances=rows).recent_weights("home", early) is not None
     late = reference_matches(club, KICKOFF.date(), KICKOFF - timedelta(minutes=90))
     assert late == [*previous, midweek]
 
@@ -249,7 +297,7 @@ def test_reference_matches_are_the_matches_known_at_the_cutoff():
 def test_only_near_fixtures_in_the_two_divisions_get_a_record():
     rows, _, club = history()
     away_rows, _, away_club = history("away")
-    evidence = Evidence(CUTOFF, appearances=rows + away_rows)
+    evidence = evidence_at(CUTOFF, appearances=rows + away_rows)
     histories = {"home": club, "away": away_club}
     near = Fixture(TARGET, COMPETITION, SEASON, KICKOFF.date(), "home", "away")
     far_kickoff = CUTOFF + HORIZON + timedelta(minutes=1)
@@ -268,8 +316,8 @@ def test_history_dates_a_matchday_squad_from_the_day_after_its_match():
     rows, previous, _ = history()
     dated = dated_history(rows, [transfer("home-0", "home", "other", date(2026, 9, 10))])
     last = datetime(2026, 9, 5, 14, tzinfo=UTC)
-    assert Evidence(last + timedelta(hours=3), **dated).recent_weights("home", previous) is None
-    evidence = Evidence(CUTOFF, **dated)
+    assert evidence_at(last + timedelta(hours=3), **dated).recent_weights("home", previous) is None
+    evidence = evidence_at(CUTOFF, **dated)
     assert evidence.recent_weights("home", previous) is not None
     assert evidence.membership("home-0", "home").state == DEPARTED
     assert evidence.membership("home-1", "home").state == MEMBER

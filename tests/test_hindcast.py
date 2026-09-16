@@ -8,6 +8,7 @@ from test_publication import Store, sample_forecast
 from epl_forecast import hindcast
 from epl_forecast.hindcast import (
     INDEX_KEY,
+    ORIGIN_WEEKDAY,
     SEED,
     claim_edition,
     derive_hindcast,
@@ -63,15 +64,33 @@ def season_records():
     ]
 
 
-def test_weekly_origins_are_mondays_at_nine_in_london_until_every_result_is_known():
+def test_weekly_origins_are_wednesdays_at_nine_in_london_until_every_result_is_known():
     origins = weekly_origins(date(2021, 8, 13), date(2022, 5, 22))
-    assert origins[0] == datetime(2021, 8, 9, 9, tzinfo=LONDON)
-    assert origins[-1] == datetime(2022, 5, 23, 9, tzinfo=LONDON)
-    assert all(origin.weekday() == 0 and origin.hour == 9 for origin in origins)
+    assert origins[0] == datetime(2021, 8, 11, 9, tzinfo=LONDON)
+    assert origins[-1] == datetime(2022, 5, 25, 9, tzinfo=LONDON)
+    assert all(origin.weekday() == ORIGIN_WEEKDAY and origin.hour == 9 for origin in origins)
     assert all(b - a == timedelta(days=7) for a, b in zip(origins, origins[1:], strict=False))
-    assert hindcast_id(origins[0]) == "2021-08-09T080000Z"
-    assert "2021-11-01T090000Z" in {hindcast_id(origin) for origin in origins}
-    assert weekly_origins(date(2021, 8, 9), date(2022, 5, 23))[-1].date() == date(2022, 5, 30)
+
+
+def test_an_origin_keeps_its_london_hour_across_the_daylight_saving_change():
+    origins = {
+        origin.date(): origin for origin in weekly_origins(date(2021, 8, 13), date(2022, 5, 22))
+    }
+    summer, winter = origins[date(2021, 8, 11)], origins[date(2021, 11, 3)]
+    assert summer.utcoffset() == timedelta(hours=1) and winter.utcoffset() == timedelta(0)
+    # The origin is a London wall-clock time, so the UTC instant moves, not the local hour.
+    assert hindcast_id(summer) == "2021-08-11T080000Z"
+    assert hindcast_id(winter) == "2021-11-03T090000Z"
+
+
+def test_the_first_and_last_origin_bracket_the_season():
+    # A season that starts and ends on the origin weekday keeps that day as its first
+    # origin, and still gets one origin after the last result.
+    origins = weekly_origins(date(2021, 8, 11), date(2022, 5, 25))
+    assert origins[0].date() == date(2021, 8, 11)
+    assert origins[-1].date() == date(2022, 6, 1)
+    # The last origin is the first origin weekday strictly after the last result.
+    assert weekly_origins(date(2021, 8, 13), date(2022, 5, 24))[-1].date() == date(2022, 5, 25)
 
 
 def test_a_hindcast_document_is_retrospective_and_sanitized():
