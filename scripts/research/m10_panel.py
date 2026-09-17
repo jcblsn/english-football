@@ -16,6 +16,7 @@ import evaluate_seasons  # noqa: E402
 from m10_rolling import CANDIDATES  # noqa: E402
 
 from epl_forecast import cli  # noqa: E402
+from epl_forecast.datasets import Dataset  # noqa: E402
 
 
 def main():
@@ -34,6 +35,23 @@ def main():
         spec["parameters"].update(CANDIDATES[candidate])
         return config
 
+    observations = {}
+    make_model = cli.make_model
+
+    def cached_model(spec):
+        # Read the xG observations from R2 once per run, not once per origin.
+        parameters = dict(spec.get("parameters", {}))
+        if parameters.pop("canonical_xg", False):
+            if not observations:
+                data = Dataset()
+                try:
+                    observations["rows"] = data.xg_observations()
+                finally:
+                    data.close()
+            parameters["observations"] = observations["rows"]
+        return make_model({**spec, "parameters": parameters})
+
+    cli.make_model = cached_model
     evaluate_seasons.load_config = load_config
     evaluate_seasons.SPECS["M10"] = ("m10", "M10-candidate")
     sys.argv = [evaluate_seasons.__file__, *rest]
