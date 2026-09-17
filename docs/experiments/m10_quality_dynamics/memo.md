@@ -1,6 +1,6 @@
 # M10 Quality dynamics: memo
 
-Status: retrospective development evidence, 17 September 2026. Branch: `research-m10-quality-dynamics`. Main base: `c7d94c7`. The plan, recorded before the candidate results, is in [plan.md](plan.md). The tables are in [tables/](tables/). The production candidate is on the branch `m10-quality-dynamics`. It is not merged.
+Status: retrospective development evidence, 17 September 2026. Branch: `research-m10-quality-dynamics`. Main base: `c7d94c7`. The plan, recorded before the candidate results, is in [plan.md](plan.md). The tables are in [tables/](tables/). The production candidate is on the branch `m10-quality-dynamics`. It is not merged. The checks before the merge, which answer the reservations of Sections 7 and 8, are in [premerge_memo.md](premerge_memo.md).
 
 ## Terms
 
