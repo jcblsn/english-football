@@ -208,6 +208,7 @@ The market slope is still 1.12 and club effects still explain 43% of the squared
 - In the EFL, M10 is worse in the first five matches of a club, and the partial 2026/27 season in League One and League Two is worse. A preseason forecast depends most on these matches.
 - The selected point is at the edge of the extended grid. The surface is flat, so the choice between near points has no support from the data.
 - ρ_F = 0.3 was not tested.
+- The data separate form from level only a little for one club. At the cutoff of 17 September 2026, the posterior SD of the form of each Premier League club is 0.070, and the stationary SD is 0.073. Thus the published level and form of a club are not separately precise, although their sum is.
 - The within-season level test in the Premier League shows that clubs with a high Quality fall a little more than M10 expects (slope −0.029 at ten matches). M7 does not have this problem there. Some return of the level may be real.
 - A random walk level has no stationary distribution. The uncertainty of a club that leaves the data increases without a limit. Such a club uses its entry prior when it comes back, so forecasts do not use that uncertainty. But the state summaries of a club with a long gap are wider than before.
 - The personnel coefficient κ and its prospective review were fitted against M7 structural forecasts. The market pool weight was fitted on M7 predictions. Both must be measured again with M10. The pool refit on M10 predictions gives the same weight, 1.0.
@@ -244,4 +245,4 @@ uv run python scripts/evaluate_seasons.py --models M7 --competition <division> -
 uv run --with pandas python scripts/research/m10_panel_report.py
 ```
 
-The control panels ran at `c7d94c7`. The rolling forecasts of the first grid ran at `91973ff`, and the extension and the candidate panels at `2a84dca`. Each job read the R2 catalog in its own process. The production M10 of the branch `m10-quality-dynamics` gives the same Premier League match probabilities as the rolling run of the selected candidate, to within 1e-15.
+The control panels ran at `c7d94c7`. The rolling forecasts of the first grid ran at `91973ff`, and the extension and the candidate panels at `2a84dca`. Each job read the R2 catalog in its own process. The production M10 of the branch `m10-quality-dynamics` gives the same Premier League match probabilities as the rolling run of the selected candidate, to within 1e-15. At one cutoff on 17 September 2026, the M10 forecasts of that branch pass every product check: 4,581 in the Premier League, 6,289 in the Championship, 6,413 in League One and 6,399 in League Two.
