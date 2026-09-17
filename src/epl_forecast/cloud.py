@@ -154,6 +154,71 @@ def sync_tree(root: Path, store: R2Store, prefix: str) -> dict:
     return {"uploaded": len(pending), "files": len(paths), "prefix": prefix}
 
 
+def canonical_rows(data: Dataset) -> dict[str, int]:
+    """Distinct observation count of each canonical table."""
+    return {
+        table: data.rows(
+            f"SELECT count(*) AS n FROM (SELECT DISTINCT * FROM {table}_observations)"
+        )[0]["n"]
+        for table in SCHEMAS
+    }
+
+
+def publish_base_batch(
+    store: R2Store, data: Dataset, request: dict, replaced: set[str], label: str
+) -> dict:
+    """Write the distinct observations of a dataset as one base batch and swap it into the catalog.
+
+    The catalog update replaces only the batches in `replaced`. It keeps every batch that another
+    writer added after the source was read.
+    """
+    batch_id = sha256_bytes(json_bytes({"request": request, "replaced": sorted(replaced)}))
+    with tempfile.TemporaryDirectory(prefix=f"page324-{label}-") as temporary:
+        staging = Path(temporary)
+        files = []
+        rows = canonical_rows(data)
+        for table in SCHEMAS:
+            if not rows[table]:
+                continue
+            path = staging / "parquet" / label / batch_id / f"{table}.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            keys = ",".join([*KEYS[table], "provider", "retrieved_at", "source_sha256"])
+            data.con.execute(
+                f"COPY (SELECT DISTINCT * FROM {table}_observations ORDER BY {keys}) "
+                "TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
+                [str(path)],
+            )
+            files.append(
+                {
+                    "table": table,
+                    "path": path.relative_to(staging).as_posix(),
+                    "sha256": file_hash(path),
+                }
+            )
+        manifest = {
+            "batch_id": batch_id,
+            "covers_history": True,
+            "request": request,
+            "files": files,
+            "rows": rows,
+        }
+        for file in files:
+            store.upload(staging / file["path"], file["path"], immutable=True)
+    store.put_json(f"manifests/{batch_id}.json", manifest, immutable=True)
+
+    def replace(current: dict) -> dict:
+        batches = current.get("manifests", [])
+        if replaced - {batch["batch_id"] for batch in batches}:
+            raise ValueError(
+                f"The R2 catalog lost source batches during the {label} run; run it again"
+            )
+        later = [batch for batch in batches if batch["batch_id"] not in replaced]
+        return manifest_state([manifest, *later])
+
+    update_state(store, "state/manifests.json", replace)
+    return manifest
+
+
 def compact_canonical(store: R2Store) -> dict:
     """Compact the R2 canonical catalog into one batch and switch the catalog to it."""
     source = list(
@@ -162,72 +227,21 @@ def compact_canonical(store: R2Store) -> dict:
             for manifest in store.get_json("state/manifests.json", {}).get("manifests", [])
         }.values()
     )
-    batch_id = sha256_bytes(
-        json_bytes(
-            {
-                "format": "canonical-compaction-v1",
-                "source_batches": sorted(manifest["batch_id"] for manifest in source),
-            }
-        )
-    )
-    with tempfile.TemporaryDirectory(prefix="page324-compact-") as temporary:
-        staging = Path(temporary)
-        data = Dataset(store=store, manifests=source)
-        files = []
-        rows = {}
-        try:
-            for table in SCHEMAS:
-                records = f"SELECT DISTINCT * FROM {table}_observations"
-                count = data.rows(f"SELECT count(*) AS n FROM ({records})")[0]["n"]
-                rows[table] = count
-                if not count:
-                    continue
-                path = staging / "parquet" / "compacted" / batch_id / f"{table}.parquet"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                keys = ",".join([*KEYS[table], "provider", "retrieved_at", "source_sha256"])
-                data.con.execute(
-                    f"COPY (SELECT * FROM ({records}) ORDER BY {keys}) "
-                    "TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-                    [str(path)],
-                )
-                files.append(
-                    {
-                        "table": table,
-                        "path": path.relative_to(staging).as_posix(),
-                        "sha256": file_hash(path),
-                    }
-                )
-        finally:
-            data.close()
-        manifest = {
-            "batch_id": batch_id,
-            "covers_history": True,
-            "request": {
-                "provider": "canonical_compaction",
-                "retrieved_at": max(manifest["request"]["retrieved_at"] for manifest in source),
-                "evidence_basis": "retained",
-                "source_sha256": sha256_bytes(
-                    json_bytes(sorted(manifest["batch_id"] for manifest in source))
-                ),
-                "context": {"kind": "canonical_compaction"},
-            },
-            "files": files,
-            "rows": rows,
-        }
-        for file in files:
-            store.upload(staging / file["path"], file["path"], immutable=True)
-        store.put_json(f"manifests/{batch_id}.json", manifest, immutable=True)
-        compacted = {source_manifest["batch_id"] for source_manifest in source}
-
-        def replace_compacted(current: dict) -> dict:
-            batches = current.get("manifests", [])
-            missing = compacted - {batch["batch_id"] for batch in batches}
-            if missing:
-                raise ValueError(
-                    "The R2 catalog lost compacted batches during compaction; run it again"
-                )
-            later = [batch for batch in batches if batch["batch_id"] not in compacted]
-            return manifest_state([manifest, *later])
-
-        update_state(store, "state/manifests.json", replace_compacted)
-    return {"batch_id": batch_id, "files": len(files), "rows": rows}
+    source_batches = sorted(manifest["batch_id"] for manifest in source)
+    request = {
+        "provider": "canonical_compaction",
+        "retrieved_at": max(manifest["request"]["retrieved_at"] for manifest in source),
+        "evidence_basis": "retained",
+        "source_sha256": sha256_bytes(json_bytes(source_batches)),
+        "context": {"kind": "canonical_compaction"},
+    }
+    data = Dataset(store=store, manifests=source)
+    try:
+        manifest = publish_base_batch(store, data, request, set(source_batches), "compacted")
+    finally:
+        data.close()
+    return {
+        "batch_id": manifest["batch_id"],
+        "files": len(manifest["files"]),
+        "rows": manifest["rows"],
+    }

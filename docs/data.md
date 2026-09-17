@@ -103,7 +103,16 @@ uv run epl-forecast data ui           # open the prepared local DuckDB UI
 uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM analysis.matches GROUP BY 1'
 ```
 
-`operate` is the only command that collects. There is no command that replays raw captures. A replay after a change to normalization must read the raw captures from R2 in a temporary workspace and publish the result to R2, as compaction does.
+`operate` is the only command that collects.
+
+After a change to the normalization code, replay the retained raw captures:
+
+```sh
+uv run python scripts/replay_r2.py            # report only
+uv run python scripts/replay_r2.py --publish  # replace the canonical history
+```
+
+The replay reads every request record and its raw capture from R2 into a temporary workspace. It stops when a raw capture does not match the hash in its request record. It normalizes the captures in a fixed order with the current code. During normalization, it hides the R2 settings, so the normalizers read only the replayed rows and not the old canonical rows. It then checks the hashes and the fixtures of the result. Without `--publish`, it prints the distinct row count of each table for the replay and for the current catalog, and writes nothing. With `--publish`, it writes the replay as one base batch. The catalog update replaces only the batches that the replay read at its start, and keeps the batches that collection adds while it runs. The replay does not send a provider request.
 
 `data audit` reads the whole canonical history from R2, so it takes minutes. Its report shows the history at the time of the audit.
 

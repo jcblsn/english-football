@@ -41,6 +41,8 @@ A new forecast is due only when the effective model inputs for that competition 
 
 Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. The script reads only the R2 catalog. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance. Later routine runs add only new batches to the compact catalog. Compaction does not delete earlier R2 objects. Compaction can run while production collects, because each catalog update is a conditional write that keeps the batches of the other writer.
 
+After a change to the normalization code, run `uv run python scripts/replay_r2.py` and compare the replayed row counts with the current counts. Then run it again with `--publish` to replace the canonical history. See [data](data.md#commands).
+
 GitHub Actions is the normal production writer. The workflow concurrency group prevents two production runs at the same time, but it does not know about local commands. Maintenance and migration writes to R2 must not overlap production. Before such a write, run `gh workflow disable production.yml`, make sure that no production run is in progress, do the write, then run `gh workflow enable production.yml`.
 
 ## Versions
