@@ -40,17 +40,19 @@ def grid_candidates():
             candidates[name] = {
                 "dynamics": {**M7_DYNAMICS, "quality_retention": retention, "quality_sd": sd}
             }
-    for level_sd in (0.04, 0.06):
-        for form_sd in (0.10, 0.15):
-            candidates[f"level-s{level_sd:.2f}-form-s{form_sd:.2f}"] = {
-                "dynamics": {
-                    **M7_DYNAMICS,
-                    "quality_retention": 1.0,
-                    "quality_sd": level_sd,
-                    "form_retention": 0.3,
-                    "form_sd": form_sd,
-                }
+    pairs = [(0.04, 0.10), (0.04, 0.15), (0.06, 0.10), (0.06, 0.15)]
+    # Amendment: one step outward from the first selection, which was at the grid edge.
+    pairs += [(0.06, 0.07), (0.08, 0.07), (0.08, 0.10)]
+    for level_sd, form_sd in pairs:
+        candidates[f"level-s{level_sd:.2f}-form-s{form_sd:.2f}"] = {
+            "dynamics": {
+                **M7_DYNAMICS,
+                "quality_retention": 1.0,
+                "quality_sd": level_sd,
+                "form_retention": 0.3,
+                "form_sd": form_sd,
             }
+        }
     return candidates
 
 
@@ -133,6 +135,8 @@ def run(job):
                 state = model.team_summary(team, fixture.season_id)
                 for key in ("quality", "quality_sd", "tilt", "state_source", "season_matches"):
                     row[f"{side}_{key}"] = state[key]
+                for key in ("quality_level", "quality_form"):
+                    row[f"{side}_{key}"] = state.get(key)
             rows.append(row)
         season = games[0].fixture.season_id
         teams = sorted(
@@ -155,6 +159,8 @@ def run(job):
                     "tilt": state["tilt"],
                     "season_matches": state["season_matches"],
                     "state_source": state["state_source"],
+                    "quality_level": state.get("quality_level"),
+                    "quality_form": state.get("quality_form"),
                 }
             )
     directory = output / competition

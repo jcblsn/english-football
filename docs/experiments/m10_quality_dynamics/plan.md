@@ -50,3 +50,7 @@ C2 is a larger change: each club needs a third state slot. One test that does no
 - If a candidate improves the Premier League but makes the pooled score of the three EFL divisions worse, it is not a model for all divisions. The memo reports this and does not recommend a merge.
 - If a candidate improves match scores but makes the 90% points coverage worse by more than 3 points at two or more origins in a division, the season uncertainty must be examined before a merge.
 - C2 replaces C1 only if it improves the forward-chaining score NLL of the best C1 in the pooled test seasons, and its season effects are not worse in most seasons.
+
+## Amendment of 17 September 2026
+
+The first C2 grid selected σ_L = 0.06 and σ_F = 0.10 in each forward-chaining season from 2015/16. That point is at the edge of the grid. Before any result of new points, the C2 grid adds one step outward: (σ_L, σ_F) ∈ {(0.06, 0.07), (0.08, 0.07), (0.08, 0.10)}. C2-FC selects from all seven points. ρ_F stays at 0.3. The first grid, its results and its selections stay in the record.
