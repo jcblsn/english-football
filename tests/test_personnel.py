@@ -22,6 +22,7 @@ from epl_forecast.personnel import (
     home_log_rate_shift,
     reference_matches,
     team_continuity,
+    team_unusable_reason,
 )
 from epl_forecast.schema import Fixture
 from epl_forecast.snapshots import (
@@ -238,6 +239,11 @@ def test_unresolved_players_cannot_create_a_large_personnel_shock():
     assert home["discontinuity"] == pytest.approx(1 - FULL)
     away = {"discontinuity": 0.0, "unresolved_weight": 0.0}
     assert home_log_rate_shift(home, away) is None
+    assert team_unusable_reason(home) == "unresolved_weight_too_high"
+    assert team_unusable_reason(away) is None
+    assert team_unusable_reason({"discontinuity": None, "unresolved_weight": 0.0}) == (
+        "discontinuity_unavailable"
+    )
     assert home_log_rate_shift(away, {"discontinuity": 0.2, "unresolved_weight": 0.0}) == (
         pytest.approx(KAPPA * 0.2)
     )

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 
 from epl_forecast.competitions import COMPETITION_IDS
+from epl_forecast.personnel import team_unusable_reason
 
 ARTIFACT_TABLES = (
     "forecasts",
@@ -295,17 +296,21 @@ def _personnel_rows(match: dict, base: dict, kappa, targets: dict[str, list]) ->
     identity = {**base, "match_id": match["match_id"]}
     shift = record.get("home_log_rate_shift")
     applied = shift is not None and shift != 0
+    reasons = {side: team_unusable_reason(record.get(side) or {}) for side in ("home", "away")}
     for side in ("home", "away"):
         team = record.get(side) or {}
         team_id = match[f"{side}_team_id"]
         unresolved = team.get("unresolved_weight")
-        usable = shift is not None
-        if usable:
+        usable = reasons[side] is None
+        other = reasons["away" if side == "home" else "home"]
+        if shift is not None:
             status = "applied" if applied else "neutral"
-        elif team.get("discontinuity") is None:
-            status = "discontinuity_unavailable"
+        elif not usable:
+            status = reasons[side]
+        elif other is not None:
+            status = "other_team_unusable"
         else:
-            status = "unresolved_weight_too_high"
+            status = "shift_unavailable"
         targets["forecast_personnel_teams"].append(
             {
                 **identity,
@@ -1638,7 +1643,7 @@ def _validate_analysis(connection) -> None:
             FROM analysis.forecast_personnel_teams
             GROUP BY forecast_id, competition_id, season_id, match_id
         )
-        WHERE usable AND kappa IS NOT NULL
+        WHERE usable AND kappa IS NOT NULL AND shift IS NOT NULL
           AND abs(shift - kappa * (away_discontinuity - home_discontinuity)) > 0.000002
         LIMIT 1
         """
