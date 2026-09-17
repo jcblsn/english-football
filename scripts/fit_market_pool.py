@@ -53,7 +53,7 @@ def main():
     parser.add_argument("--predictions", type=Path, required=True)
     parser.add_argument("--markets", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--structural-model", default="M7-xg-v1")
+    parser.add_argument("--structural-model", default="M10-xg-v1")
     parser.add_argument("--market-model", default="market:market_average_preclosing")
     parser.add_argument("--evaluation-start", type=date.fromisoformat, default=date(2025, 7, 1))
     args = parser.parse_args()

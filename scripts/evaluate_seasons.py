@@ -27,7 +27,7 @@ from epl_forecast.storage import file_hash, load_environment, write_json
 
 SPECS = {
     "M2": ("configs/product.toml", "M2-attack-defense-v1"),
-    "M7": ("configs/product.toml", "M7-xg-v1"),
+    "M10": ("configs/product.toml", "M10-xg-v1"),
 }
 
 

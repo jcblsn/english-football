@@ -251,7 +251,7 @@ def parser() -> argparse.ArgumentParser:
     forecast.add_argument("--season")
     forecast.add_argument("--config", type=Path, default=Path("configs/product.toml"))
     forecast.add_argument("--output", type=Path)
-    forecast.add_argument("--model", default="M7-xg-v1")
+    forecast.add_argument("--model", default="M10-xg-v1")
     forecast.add_argument("--simulations", type=int, default=10000)
     forecast.add_argument("--seed", type=int, default=20260905)
     forecast.add_argument("--max-goals", type=int, default=10)
@@ -306,7 +306,7 @@ def parser() -> argparse.ArgumentParser:
     hindcast.add_argument("--workers", type=int, default=4)
     hindcast.set_defaults(func=hindcast_command)
     evaluate = commands.add_parser(
-        "evaluate", help="Score rolling historical match forecasts for M7 and M2"
+        "evaluate", help="Score rolling historical match forecasts for M10 and M2"
     )
     evaluate.add_argument("--config", type=Path, default=Path("configs/product.toml"))
     evaluate.add_argument("--output", type=Path, required=True)

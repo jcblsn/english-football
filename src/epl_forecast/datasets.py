@@ -372,7 +372,7 @@ class Dataset:
         ]
 
     def xg_observations(self):
-        """Team xG that M7 observes: API-Football, and Understat before API-Football coverage."""
+        """Team xG that M10 observes: API-Football, and Understat before API-Football coverage."""
         understat = self.rows(
             "SELECT match_id, team_id, xg, source_sha256, evidence_basis FROM team_process "
             "WHERE xg IS NOT NULL"

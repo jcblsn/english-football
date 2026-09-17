@@ -22,7 +22,7 @@ def sample_forecast(competition="eng-premier-league", generated="2026-09-10T12:0
         "state_observed_at": "2026-09-10T11:00:00+00:00",
         "model_results_cutoff": "2026-09-10",
         "state_uncertainty": "posterior",
-        "model": {"id": "M7-xg-v1", "kind": "bayesian_xg_quality_tilt", "parameters": {}},
+        "model": {"id": "M10-xg-v1", "kind": "bayesian_xg_quality_tilt", "parameters": {}},
         "team_names": {"arsenal": "Arsenal", "chelsea": "Chelsea"},
         "team_strengths": [{"team_id": "arsenal", "quality": 0.4}],
         "sources": [{"name": "api_football", "sha256": "a" * 64}],
@@ -137,7 +137,7 @@ def sample_run():
 
 
 def test_document_contracts_respect_the_boundary():
-    assert load_policy()["product"]["model_version"] == "v0.2.1"
+    assert load_policy()["product"]["model_version"] == "v0.3.0"
 
 
 def test_derived_forecast_drops_provider_evidence():
@@ -158,7 +158,7 @@ def test_derived_forecast_drops_provider_evidence():
         "away_discontinuity": 0.3,
         "home_log_rate_shift": 0.086323,
     }
-    assert "M7" not in text
+    assert "M10" not in text
     assert "code_sha256" not in text
     assert "verification" not in text
 

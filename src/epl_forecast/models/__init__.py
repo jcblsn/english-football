@@ -1,4 +1,4 @@
-"""The product model M7 and its benchmark M2 share one fit/predict interface."""
+"""The product model M10 and its benchmark M2 share one fit/predict interface."""
 
 from epl_forecast.models.baselines import AttackDefensePoisson
 from epl_forecast.models.xg_quality_tilt import BayesianXGQualityTilt

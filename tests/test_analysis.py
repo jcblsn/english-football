@@ -408,6 +408,10 @@ def version_two_forecast_stores():
             "quality_sd": 0.2,
             "tilt_sd": 0.3,
             "quality_tilt_covariance": 0.01,
+            "quality_level": 0.35,
+            "quality_form": 0.05,
+            "quality_level_sd": 0.18,
+            "quality_form_sd": 0.07,
             "attack_log_rate": 0.5,
             "defense_log_rate": -0.2,
             "attack_sd": 0.25,
@@ -424,6 +428,8 @@ def version_two_forecast_stores():
             {
                 "quality_retention": 0.9,
                 "quality_sd": 0.1,
+                "form_retention": 0.3,
+                "form_sd": 0.07,
                 "tilt_retention": 0.8,
                 "tilt_sd": 0.2,
                 "dispersion": 20.0,
@@ -627,14 +633,17 @@ def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
         ) == pytest.approx(tuple(expected_market[f"p_{side}"] for side in ("home", "draw", "away")))
 
         state = session.rows(
-            "SELECT quality, tilt, quality_sd, tilt_sd, quality_tilt_covariance, "
-            "attack_sd, defense_sd, state_source, season_matches FROM analysis.model_team_states"
+            "SELECT quality, tilt, quality_sd, tilt_sd, quality_tilt_covariance, quality_level, "
+            "quality_form, attack_sd, defense_sd, state_source, season_matches "
+            "FROM analysis.model_team_states"
         )[0]
         assert state["tilt"] == 0.1
+        assert (state["quality_level"], state["quality_form"]) == (0.35, 0.05)
         assert state["state_source"] == "posterior"
         assert session.rows(
-            "SELECT posterior_weight, chance_probability FROM analysis.model_specifications"
-        ) == [{"posterior_weight": 0.7, "chance_probability": 0.05}]
+            "SELECT posterior_weight, chance_probability, form_retention "
+            "FROM analysis.model_specifications"
+        ) == [{"posterior_weight": 0.7, "chance_probability": 0.05, "form_retention": 0.3}]
         assert session.rows(
             "SELECT seed, state_uncertainty, future_state_evolution "
             "FROM analysis.forecast_simulation_runs"

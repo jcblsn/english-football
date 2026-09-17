@@ -31,7 +31,7 @@ from epl_forecast.storage import (
     write_immutable,
 )
 
-PRODUCT_MODEL = "M7-xg-v1"
+PRODUCT_MODEL = "M10-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
 LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]

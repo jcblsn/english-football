@@ -1,4 +1,4 @@
-"""M7 centered team state with joint opportunity-based goals and Understat xG."""
+"""M10 centered team state with joint opportunity-based goals and xG."""
 
 from copy import copy
 from types import MappingProxyType
@@ -10,9 +10,12 @@ from epl_forecast.models.gaussian import likelihood_laplace_update
 from epl_forecast.models.quality_tilt import BayesianQualityTilt, ForwardQualityTiltStates
 from epl_forecast.models.xg_observation import ChanceObservation, chance_rows
 
+# Quality is a persistent level, a random walk, plus a form deviation that returns to that level.
 XG_DYNAMICS = {
-    "quality_retention": 0.85,
-    "quality_sd": 0.09,
+    "quality_retention": 1.0,
+    "quality_sd": 0.08,
+    "form_retention": 0.3,
+    "form_sd": 0.07,
     "tilt_retention": 0.5,
     "tilt_sd": 0.07,
     "dispersion": None,
@@ -22,7 +25,7 @@ XG_DYNAMICS = {
 class XGQualityTiltFilter(CenteredQualityTiltFilter):
     def __init__(self, observations=(), chance_probability=0.2, **kwargs):
         if kwargs.get("dispersion") is not None:
-            raise ValueError("M7 opportunity thinning implies marginal independent Poisson goals")
+            raise ValueError("M10 opportunity thinning implies marginal independent Poisson goals")
         kwargs["dispersion"] = None
         self.chance_probability = chance_probability
         ChanceObservation([], [], chance_probability)

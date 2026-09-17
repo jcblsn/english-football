@@ -101,7 +101,7 @@ def test_a_hindcast_document_is_retrospective_and_sanitized():
     assert document["model"] == {"version": "v0.0"}
     assert document["teams"][0]["events"]["title_probability"] == 0.5
     text = json.dumps(document)
-    for private in ("seed", "adjustments", "M7", "sha256"):
+    for private in ("seed", "adjustments", "M10", "sha256"):
         assert private not in text
     with pytest.raises(ValueError, match="not in the forecast contract"):
         check_publishable(document, policy, "forecast")

@@ -1,4 +1,4 @@
-experiment_id = "M7-Understat-Quality-Tilt"
+experiment_id = "M10-Quality-Level-Form"
 competition_id = "eng-premier-league"
 train_window_days = 1095
 min_train_matches = 700
@@ -12,7 +12,7 @@ validation_end = "2025-07-01"
 holdout_start = "2025-08-01"
 holdout_end = "2026-07-01"
 evaluation_status = "exploratory historical rolling comparison"
-evaluation_note = "Historical development comparison. M2 uses a 1,095-day window in the forecast division; M7 uses expanding history. Understat next-day availability is assumed, not proven by timestamps."
+evaluation_note = "Historical development comparison. M2 uses a 1,095-day window in the forecast division; M10 uses expanding history. Understat next-day availability is assumed, not proven by timestamps."
 
 [[models]]
 id = "M2-attack-defense-v1"
@@ -22,7 +22,7 @@ half_life_days = 365.0
 ridge = 5.0
 
 [[models]]
-id = "M7-xg-v1"
+id = "M10-xg-v1"
 kind = "bayesian_xg_quality_tilt"
 train_window_days = 0
 # Each division's filter updates only on its own matches; the others feed its entry priors.

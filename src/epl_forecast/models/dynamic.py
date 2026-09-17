@@ -25,7 +25,7 @@ RELEGATION_ENTRY = ("retained", "generic", "mapped")
 
 
 class DynamicAttackDefense(BaseModel):
-    """The state holds a leading league block, then two slots per club.
+    """The state holds a leading league block, then `team_dimensions` slots per club.
 
     One generic entry rule covers every division boundary: a club that played the
     forecast competition last season carries its filtered state, and a club
@@ -36,6 +36,7 @@ class DynamicAttackDefense(BaseModel):
     """
 
     league_dimensions = 2
+    team_dimensions = 2
     relegation_entry = "retained"
     entry_prior = "memory"
     entry_prior_label = "season"
@@ -88,8 +89,8 @@ class DynamicAttackDefense(BaseModel):
         return np.array([np.log(1.2), np.log(1.3)]), np.array([0.25**2, 0.25**2])
 
     def _team_slice(self, team: str) -> slice:
-        index = self.league_dimensions + 2 * self.team_index[team]
-        return slice(index, index + 2)
+        index = self.league_dimensions + self.team_dimensions * self.team_index[team]
+        return slice(index, index + self.team_dimensions)
 
     def _league_design(self, fixture_or_match) -> np.ndarray:
         """Rows are home and away log rates; columns are the leading league block."""
@@ -174,19 +175,20 @@ class DynamicAttackDefense(BaseModel):
             index = len(self.team_index)
             self.team_index[team] = index
             self.mean = np.r_[self.mean, prior.mean]
-            self.covariance = np.pad(self.covariance, ((0, 2), (0, 2)))
-            self.covariance[-2:, -2:] = prior.covariance
+            size = self.team_dimensions
+            self.covariance = np.pad(self.covariance, ((0, size), (0, size)))
+            self.covariance[-size:, -size:] = prior.covariance
         elif self._entry_replaces_state(team, season, day):
-            index = self.league_dimensions + 2 * self.team_index[team]
-            self.mean[index : index + 2] = prior.mean
-            self.covariance[index : index + 2, :] = 0
-            self.covariance[:, index : index + 2] = 0
-            self.covariance[index : index + 2, index : index + 2] = prior.covariance
+            block = self._team_slice(team)
+            self.mean[block] = prior.mean
+            self.covariance[block, :] = 0
+            self.covariance[:, block] = 0
+            self.covariance[block, block] = prior.covariance
         else:
-            index = self.league_dimensions + 2 * self.team_index[team]
+            block = self._team_slice(team)
             prior = TeamPrior(
-                self.mean[index : index + 2].copy(),
-                self.covariance[index : index + 2, index : index + 2].copy(),
+                self.mean[block].copy(),
+                self.covariance[block, block].copy(),
                 "previous league state",
             )
         self.entry_priors[team, season] = prior

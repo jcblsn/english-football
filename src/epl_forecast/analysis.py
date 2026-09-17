@@ -822,6 +822,16 @@ COLUMN_MEANINGS = {
     ),
     "quality": ("Team Quality state.", "model log-strength scale", "team_strengths.quality"),
     "tilt": ("Team Tilt state.", "model log-strength scale", "team_strengths.tilt"),
+    "quality_level": (
+        "Persistent club level of Quality.",
+        "model log-strength scale",
+        "team_strengths.quality_level",
+    ),
+    "quality_form": (
+        "Form deviation of Quality from the persistent level.",
+        "model log-strength scale",
+        "team_strengths.quality_form",
+    ),
     "quality_tilt_covariance": (
         "Posterior covariance between Quality and Tilt.",
         "squared model scale",

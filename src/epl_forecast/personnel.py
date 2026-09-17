@@ -6,7 +6,7 @@ Three concepts stay separate:
 - membership: the club of a player at the forecast cutoff;
 - fixture representation: the evidence that a player is in the target matchday squad.
 
-The adjustment moves the log rates of one fixture. It never changes the persistent M7 state.
+The adjustment moves the log rates of one fixture. It never changes the persistent M10 state.
 """
 
 from collections import defaultdict
