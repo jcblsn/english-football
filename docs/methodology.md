@@ -30,6 +30,8 @@ The state evolves in calendar time, not in match rounds.
 
 The Quality level is a random walk. It does not return to the league mean, so a club that is strong or weak for many seasons keeps that level until results change it. The form returns to the level: after one year, 30% of a form deviation remains. Thus a run of results can change the forecast quickly without a permanent change of the level. The filter learns the level and the form together from the same observations. The model before M10, M7, had one Quality process that returned to the league mean with annual retention 0.85. That return made the persistent differences between clubs too small.
 
+The match likelihood sees only the difference of the Quality of two clubs, so it does not observe the common Quality of all clubs. The entry priors fix this reference: each entry prior is relative to the mean of its division, and each season of entrants ties the division to that reference again. Thus the uncertainty of the common Quality does not increase without a limit, although the level is a random walk. A forecast between two clubs with filtered states does not depend on the common Quality. A forecast for an entrant depends on it a little, because the entrant prior is relative to the division.
+
 The league level and the home advantage follow slow random walks. A long gap between matches adds uncertainty.
 
 ## Observations: goals and xG
@@ -60,7 +62,9 @@ A club that did not play the division last season gets an entry prior. One rule 
 2. A coefficient on its strength in the division it came from last season.
 3. A coefficient on its own older seasons in the target division. The weight of an old season decays with its age. The model averages over several decay rates.
 
-The coefficients come from earlier clubs that made the same transition. Only transitions whose target season finished before the entry date are used. The prior carries residual, coefficient and source-measurement uncertainty. The prior gives the Quality level. The form of an entering club starts at zero with the stationary uncertainty of the form process.
+The coefficients come from earlier clubs that made the same transition. Only transitions whose target season finished before the entry date are used. The prior carries residual, coefficient and source-measurement uncertainty.
+
+The training label of the prior is the strength of an entering club over its whole entry season, relative to the mean of the clubs of that season, with the measurement noise of the label removed. The prior therefore describes the persistent level of the entrant. It does not describe the variation of Quality in the season. For this reason the prior gives the Quality level, and the form of an entering club starts at zero with the stationary uncertainty of the form process. The total Quality uncertainty of an entrant is the prior uncertainty plus the form uncertainty. A pre-merge check that gave the whole prior uncertainty to the sum of level and form made entrant match forecasts and season distributions worse.
 
 Each division reads only the divisions that the calibration found useful:
 

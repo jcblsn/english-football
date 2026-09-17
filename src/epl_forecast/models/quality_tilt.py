@@ -11,6 +11,10 @@ from epl_forecast.models.poisson import PoissonMixture
 from epl_forecast.models.promotion import TeamPrior
 from epl_forecast.models.quality_tilt_scores import GammaPoissonMixture, ScoreMixture
 
+ENTRY_DESCRIPTION = (
+    "transition-aware entry prior on Quality and Tilt; with a form process, the prior is on the "
+    "level and form starts from its stationary distribution"
+)
 QT_FROM_AD = np.array([[0.5, 0.5], [0.5, -0.5]])
 AD_FROM_QT = np.array([[1, 1], [1, -1]])
 
@@ -70,6 +74,22 @@ class QualityTiltFilter(DynamicAttackDefense):
         if not self.form_sd:
             return np.eye(2)
         return np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+
+    def dynamics_description(self):
+        def process(retention, sd):
+            if retention == 1:
+                return f"random walk, SD {sd:g} per root year"
+            return f"AR(1), annual retention {retention:g}, innovation SD {sd:g}"
+
+        if not self.form_sd:
+            return f"Quality {process(self.quality_retention, self.quality_sd)}; " + (
+                f"Tilt {process(self.tilt_retention, self.tilt_sd)}"
+            )
+        return (
+            f"Quality = level + form; level {process(self.quality_retention, self.quality_sd)}; "
+            f"form {process(self.form_retention, self.form_sd)}; "
+            f"Tilt {process(self.tilt_retention, self.tilt_sd)}"
+        )
 
     def form_stationary_variance(self):
         return self.form_sd**2 / (1 - self.form_retention**2)
@@ -273,8 +293,9 @@ class BayesianQualityTilt:
             "inference": "daily joint Laplace filters with approximate Bayesian model weights",
             "weight_evidence": "chronological joint daily predictive likelihood (Laplace)",
             "effective_specifications": float(1 / (self.weights @ self.weights)),
-            "future_states": "calendar-time Quality/Tilt and league/home transitions",
-            "promotion": "frozen M4 promoted-population prior transformed to Quality/Tilt",
+            "future_states": "calendar-time club and league/home transitions",
+            "quality_dynamics": self.members[0].dynamics_description(),
+            "entry": ENTRY_DESCRIPTION,
             "specifications": [
                 {
                     **spec,

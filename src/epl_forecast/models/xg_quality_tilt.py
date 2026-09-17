@@ -75,7 +75,8 @@ class XGQualityTiltFilter(CenteredQualityTiltFilter):
                 "chance_probability": self.chance_probability,
                 "xg_matches": self.xg_updates,
                 "xg_availability": "retrospective next-day assumption; late records skipped",
-                "equivalence": "M5 dynamics; Poisson goal marginal; joint goals/xG likelihood",
+                "quality_dynamics": self.dynamics_description(),
+                "goal_marginal": "Poisson goals; joint goals/xG likelihood",
             }
         )
         return self

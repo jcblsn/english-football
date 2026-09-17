@@ -95,6 +95,10 @@ def test_canonical_observations_and_factory(small_history):
     }
     model = make_model(spec).fit(small_history, small_history[-1].available_on)
     assert model.fit_diagnostics["xg_matches"] == len(small_history)
+    assert model.fit_diagnostics["quality_dynamics"].startswith(
+        "Quality = level + form; level random walk, SD 0.08"
+    )
+    assert not any("M4" in str(v) or "M5" in str(v) for v in model.fit_diagnostics.values())
     with pytest.raises(ValueError, match="Unknown model kind"):
         make_model({"kind": "centered_quality_tilt"})
 

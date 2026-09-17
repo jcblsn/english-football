@@ -179,6 +179,21 @@ With 12 competition-season clusters, the 95% interval of the hindcast score NLL 
 
 Both results are exposed to selection. The matchday-squad representation was chosen after a decomposition on the same seasons.
 
+### Retrospective match scores on M10
+
+κ and the hindcast were made with M7 as the structural model. Before the M10 merge, the same shifts were applied to rolling M10 forecasts of the same 5,450 matches: the history-only estimate with the earlier-season κ of the table above, and the same estimate with the released κ. No coefficient was fitted again. The M7 forecasts of this check, made with the M10 branch code and the current data, reproduce the archived M7 control scores to within 5e-15. The values are candidate minus structural M10, and negative is better.
+
+| Scope | Matches | Hindcast H/D/A log loss | Hindcast Brier | Hindcast score NLL | Released κ score NLL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| All | 5,450 | −0.00109 | −0.00068 | −0.00123 | −0.00120 |
+| Premier League | 2,280 | −0.00150 | −0.00089 | −0.00112 | −0.00112 |
+| Championship | 3,170 | −0.00079 | −0.00053 | −0.00131 | −0.00125 |
+| Opening five matches | 577 | −0.00025 | +0.00003 | −0.00069 | −0.00023 |
+| 2025/26 | 907 | −0.00059 | −0.00024 | −0.00192 | −0.00191 |
+| Realized absolute D difference at least 0.20 | 403 | −0.00961 | −0.00689 | −0.01559 | −0.01675 |
+
+The 95% interval of the hindcast score NLL difference is [−0.00202, −0.00048], and 10 of 12 cluster effects are below zero. The log loss interval is [−0.00177, −0.00051]. The gain on M10 is 81% of the gain on M7 in score NLL: the difference of the two gains is +0.00029 [+0.00023, +0.00037], with the same sign in all 12 clusters. Thus the M10 form follows a small part of the same short changes of strength, but no slice reverses the benefit. The opening five matches have the smallest gain on both structural models. The adjustment therefore stays in `v0.3.0` with its frozen values. The research is in `docs/experiments/m10_quality_dynamics/premerge_memo.md` on the `research-m10-quality-dynamics` branch.
+
 ### Measurement at forecast horizons
 
 In the development matches of 9–15 September 2026, before the release, the cutoff-safe estimator tracked the realized D_away − D_home with correlation 0.84 at 3 days (15 fixtures), 0.88 at 24 hours (20) and 0.92 at 90 minutes (23). No 6-day fixture was finished. These samples are too small for a forecast score.
@@ -256,7 +271,9 @@ Model version v0.2.1 changes the source rule for Premier League availability. A 
 
 ### Prospective evaluation
 
-The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with the structural M7 control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.
+The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with a structural control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.
+
+The structural control is the product structural model of the fixture's forecast day. For a fixture forecast after the `v0.3.0` release, the control is M10, and the candidate is M10 with the shift. A fixture forecast before the release keeps M7 as its control. The review reports the two groups separately and applies the removal conditions to the M10 group.
 
 The monitoring population is frozen to Premier League and Championship regular-season fixtures in 2026/27 that kick off from 17 September 2026 00:00 UTC. The archive uses research freeze commit `6fc7d818bc08f2c8fec0c836bdc87eb817dc1285`. It does not refit κ, the matchday-squad propensity table, the availability values or the unresolved limit.
 

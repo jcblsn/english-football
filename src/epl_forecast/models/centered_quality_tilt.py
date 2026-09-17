@@ -46,7 +46,7 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
     """Infer centered contrasts; the final Tilt slot is temporal scoring memory.
 
     Memory has no direct coefficient in any observed match rate. Its mean
-    reversion drives future scoring level, preserving the original M5 process.
+    reversion drives future scoring level, as in the uncentered filter.
     """
 
     def __init__(self, independent_poisson=False, **kwargs):
@@ -135,7 +135,7 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
                 "scoring_memory": "mean-reverting common Tilt; transition-only rate loading",
                 "centering_population": list(self.team_index),
                 "inference": "daily joint Laplace Gaussian filter in centered coordinates",
-                "equivalence": "exact linear transformation of M5 priors, dynamics and likelihood",
+                "equivalence": "exact linear transformation of the uncentered priors, dynamics and likelihood",
             }
         )
         return self
