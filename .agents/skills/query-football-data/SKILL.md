@@ -14,8 +14,8 @@ Before you query, identify the required population, grain, measure, comparison, 
 Do not infer table or column semantics from names. Query the live catalog first:
 
 ```sh
-uv run python .agents/skills/query-football-data/scripts/query.py --catalog 'probability stage'
-uv run python .agents/skills/query-football-data/scripts/query.py --describe forecast_match_stages
+.agents/skills/query-football-data/scripts/query --catalog 'probability stage'
+.agents/skills/query-football-data/scripts/query --describe forecast_match_stages
 ```
 
 Read the "Interactive analysis" section of `docs/data.md` only when you need maintained guidance about a relation, timing, or a join. Do not create a separate schema summary. Treat `analysis.catalog`, `analysis.column_catalog`, and `docs/data.md` as the contract.
@@ -25,7 +25,15 @@ Read the "Interactive analysis" section of `docs/data.md` only when you need mai
 Run SQL through the bounded query helper:
 
 ```sh
-uv run python .agents/skills/query-football-data/scripts/query.py --sql 'SELECT competition_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
+.agents/skills/query-football-data/scripts/query --sql 'SELECT competition_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
+```
+
+Use `--sql-file <file>` for long SQL, or use `--sql-file -` to read SQL from stdin. Repeat `--query <name> <sql>` to run several named statements in one analysis session:
+
+```sh
+.agents/skills/query-football-data/scripts/query \
+  --query coverage 'SELECT count(*) AS matches FROM analysis.matches' \
+  --query competitions 'SELECT competition_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
 ```
 
 Use `--cutoff <ISO-8601 timestamp>` when the question specifies an evidence cutoff. The cutoff meaning comes from the catalog and `docs/data.md`; do not apply one time field as a substitute for another.
@@ -46,7 +54,7 @@ For an unfamiliar question, use a short sequence: discover candidate relations, 
 
 ## Protect context
 
-The helper returns compact JSON and limits rows, long cells, and total output by default. It reports each type of truncation. Narrow the SQL before you increase a limit. Increase `--max-rows`, `--max-cell-chars`, or `--max-output-chars` only when the omitted detail is necessary for the answer.
+The helper returns compact JSON and limits rows, long cells, and total output by default. It reports each type of truncation. It rounds floating-point output to six significant digits without changing SQL calculations. Use `--full-precision` only when the extra digits are necessary. Narrow the SQL before you increase a limit. Increase `--max-rows`, `--max-cell-chars`, or `--max-output-chars` only when the omitted detail is necessary for the answer.
 
 Do not print large JSON columns. Extract the required keys with DuckDB JSON functions. Do not dump a full relation, a full catalog, or raw artifacts into context to discover their shape.
 

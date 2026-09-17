@@ -1,0 +1,11 @@
+#!/bin/zsh
+
+script_dir=${0:A:h}
+repo_root=${script_dir:h:h:h:h}
+project_env="$repo_root/.venv"
+
+if [[ -n ${VIRTUAL_ENV:-} && ${VIRTUAL_ENV:A} != ${project_env:A} ]]; then
+    unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT
+fi
+
+exec uv run --project "$repo_root" python "$script_dir/query.py" "$@"
