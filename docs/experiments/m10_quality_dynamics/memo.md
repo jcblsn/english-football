@@ -15,13 +15,13 @@ Status: retrospective development evidence, 17 September 2026. Branch: `research
 
 ## Recommendation
 
-M10 is Quality = L + F. L is a random walk with σ_L = 0.08. F is an AR(1) process with ρ_F = 0.3 and σ_F = 0.07. Everything else is M7. The forecasts are better than M7 in the pooled test, in the Premier League and in League One. They are neutral in the Championship and mixed in League Two. The season panels are better in the Premier League and League One, neutral in League Two and mixed in the Championship, and the early-season intervals are better calibrated in every division. The evidence is sufficient to merge M10, with the reservations of Sections 7 and 8.
+M10 is Quality = L + F. L is a random walk with σ_L = 0.08. F is an AR(1) process with ρ_F = 0.3 and σ_F = 0.07. Everything else is M7. The forecasts are better than M7 in the pooled test, in the Premier League and in League One. They are a little better in the Championship, with an interval that includes zero, and mixed in League Two. The season panels are better in the Premier League and League One, neutral in League Two and mixed in the Championship, and the early-season intervals are better calibrated in every division. The evidence is sufficient to merge M10, with the reservations of Sections 7 and 8.
 
 ## 1. The cause
 
 M7 Quality is one AR(1) process with ρ = 0.85 and σ = 0.09. Thus the Quality of every club returns to the league mean with a half-life of 4.3 years. The results below show three parts of the weakness.
 
-1. The return to the league mean is too strong for the persistent level. In the Premier League, a random walk with the same σ decreases the log loss by 0.0021 [−0.0029, −0.0012]. Almost all of this gain is in matches with a club in the top or bottom quintile of opening Quality. The gain is −0.0004 in matches between middle clubs (`tables/comparisons.csv`, first grid).
+1. The return to the league mean is too strong for the persistent level. In the Premier League, a random walk with the same σ decreases the log loss by 0.0021 [−0.0029, −0.0012]. Almost all of this gain is in matches with a club in the top or bottom quintile of opening Quality. The gain is −0.0005 in matches between middle clubs (Premier League rows of the first grid, before the other divisions finished).
 2. The innovation scale is too small. At ρ = 0.85, σ = 0.12 is better than σ = 0.09 in all four divisions. At σ = 0.06, every ρ is worse. A larger σ makes the stationary distribution wider and the filter faster. The martingale test gives the same result: in M7, a change of Quality in the last five matches predicts a later change in the same direction in every division (slope +0.004 to +0.048, `tables/martingale.csv`). Thus M7 learns new information too slowly.
 3. One process cannot be persistent and fast together. A random walk that is fast enough to follow a change of form keeps the change for ever. The C2 structure removes this conflict. In the martingale test, the C2 slopes are the nearest to zero at five matches (−0.0003 to +0.020).
 
@@ -239,7 +239,7 @@ The reservations:
 ```sh
 uv run --with pandas --with pyarrow python scripts/research/m10_rolling.py --output runs/m10-grid --competitions <division> --candidates <candidate>
 uv run --with pandas --with pyarrow python scripts/research/m10_analysis.py
-uv run --with pandas --with pyarrow python scripts/research/m10_market.py --candidates r0.85-s0.09 r1.00-s0.09 level-s0.06-form-s0.10 r0.85-s0.12
+uv run --with pandas --with pyarrow python scripts/research/m10_market.py --candidates r0.85-s0.09 r0.85-s0.12 r1.00-s0.09 level-s0.08-form-s0.07
 uv run --with pandas --with pyarrow python scripts/research/m10_panel.py --candidate level-s0.08-form-s0.07 -- --models M10 --competition <division> --seasons <seasons> --output runs/m10-panels/c2-<division>
 uv run python scripts/evaluate_seasons.py --models M7 --competition <division> --seasons <seasons> --output runs/m10-panels/control-<division>
 uv run --with pandas python scripts/research/m10_panel_report.py
