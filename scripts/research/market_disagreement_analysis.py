@@ -1,12 +1,12 @@
-"""Tables for the M7–market disagreement memo.
+"""Make the tables of the M7–market disagreement memo.
 
-Inputs, all under runs/market-disagreement/:
-- rolling/matches.csv and rolling-early/matches.csv from market_disagreement_rolling.py
-- evidence/match_xg.json: analysis.team_match_xg for Premier League matches from July 2014,
-  exported with the query-football-data helper
-- evidence/betbrain_odds.json: the BetBrain average pre-closing odds of 2016/17–2018/19, the
-  Football-Data average before the market_average family starts in 2019/20
-- evidence/chronological.csv: research/evidence/personnel-measurement/68cba95/pm-hindcast-report
+The inputs are in runs/market-disagreement/:
+- rolling/matches.csv and rolling-early/matches.csv come from market_disagreement_rolling.py.
+- evidence/match_xg.json is analysis.team_match_xg for Premier League matches from July 2014.
+  The query-football-data helper exports it.
+- evidence/betbrain_odds.json has the BetBrain average pre-closing odds of 2016/17–2018/19.
+  Football-Data gives this average before the market_average family starts in 2019/20.
+- evidence/chronological.csv comes from research/evidence/personnel-measurement/68cba95/pm-hindcast-report.
 """
 
 import json
@@ -713,7 +713,7 @@ def outcome_experiments(d):
             train = (d.season_id < test).to_numpy()
             target = (d.season_id == test).to_numpy()
             if columns == ["club_prediction"]:
-                # Club effects from earlier seasons only; the fit weight then uses earlier seasons too.
+                # Use club effects from earlier seasons only. The weight fit also uses earlier seasons only.
                 d = d.assign(club_prediction=0.0)
                 for season in seasons:
                     if season > test:
@@ -763,7 +763,7 @@ def outcome_experiments(d):
 
 
 def dynamics_pilot(control):
-    """Product M7 against the Quality retention pilots on the same matches."""
+    """Compare the product M7 with the Quality retention pilots on the same matches."""
     runs = {"0.85": control}
     for retention in ("0.95", "1.0"):
         path = RUNS / f"retention-{retention}/matches.csv"

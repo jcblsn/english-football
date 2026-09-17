@@ -1,8 +1,8 @@
-"""Rolling M2 and M7 match forecasts with the state detail for the market disagreement study.
+"""Make rolling M2 and M7 match forecasts with state detail for the market disagreement study.
 
-The models are the product models. The runner adds counterfactual probabilities that use the
-same posterior state: the certainty-equivalent forecast removes the Gaussian state uncertainty
-of each specification and keeps the specification mixture.
+The models are the product models. The runner also calculates counterfactual probabilities from
+the same posterior state. The certainty-equivalent forecast removes the Gaussian state uncertainty
+of each specification. It keeps the specification mixture.
 """
 
 import argparse

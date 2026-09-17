@@ -1,6 +1,6 @@
 # Plan: root causes of M7–market disagreement
 
-This is a model-understanding study. It does not change M7, and it does not try to make M7 copy the market.
+This study examines the M7 model. It does not change M7. It does not try to make M7 copy the market. We wrote this plan before the analysis.
 
 | Item | Value |
 | --- | --- |
@@ -11,30 +11,32 @@ This is a model-understanding study. It does not change M7, and it does not try 
 
 ## Population and information
 
-- Premier League matches from 1 August 2023 to 16 September 2026: 1,140 matches in 2023/24–2025/26 and the finished matches of 2026/27.
-- M7 and M2 are the product models of `configs/product.toml`. Each refits every match day with results before that day. Results and xG are assumed available on the day after the match.
-- The market is the Football-Data average pre-closing price, de-vigged by proportional scaling. The closing price is kept for a sensitivity check. Historical quote times are not available.
-- The rolling forecasts are structural: they have no matchday-squad adjustment. The personnel stage is measured only on the live forecasts of 2026/27, where the unadjusted and adjusted stages exist.
-- No current market quote for the next Premier League round exists in the corpus. Case studies use the model decomposition and do not invent market values.
+- Premier League matches from 1 August 2023 to 16 September 2026. These are the 1,140 matches of 2023/24–2025/26 and the finished matches of 2026/27.
+- M7 and M2 are the product models of `configs/product.toml`. On each match day, each model fits again with the results before that day. We assume that each result and its xG are available on the day after the match.
+- The market is the Football-Data average pre-closing price. The de-vigging is proportional. We keep the closing price for a sensitivity check. The historical quote times are not available.
+- The rolling forecasts have no matchday-squad adjustment. We measure the personnel stage only on the live forecasts of 2026/27, which have the unadjusted and the adjusted stages.
+- The corpus has no market price for the next Premier League round. The case studies use the model decomposition. They do not invent market values.
 
-## Hypotheses and discriminating analyses
+## Hypotheses and tests
 
-| Hypothesis | Analysis | Result that supports it | Result that rejects it |
+Directional strength is ln(p_home / p_away).
+
+| Hypothesis | Analysis | Result that supports the hypothesis | Result that rejects the hypothesis |
 | --- | --- | --- | --- |
-| H1 generic compression | Regress market directional strength log(p_home/p_away) on the M7 value, then add club effects | Slope β well above 1, stable by season, and it stays after club effects | β falls close to 1 when club effects enter |
-| H2 persistent club misvaluation | Opponent- and venue-adjusted club effects; fit on earlier seasons and test on a later season | Club effects predict the sign and size of later residuals | Out-of-sample correlation near zero |
-| H3 state uncertainty flattening | Certainty-equivalent forecast from the same posterior means | CE removes a large share of the slope gap | CE changes little |
-| H4 xG signal | The same analyses for M2 (goals only) | Club residuals differ between M2 and M7 in a pattern tied to goal−xG gaps | M2 and M7 residuals match |
-| H5 slow adaptation | Market residual now against later change in M7 Quality | Residual predicts later Quality movement in its direction; residuals decay | No predictive relation |
-| H6 home advantage | Venue terms in the regression, split by strength gap | Material home intercept | Intercept near zero |
-| H7 personnel | Unadjusted, adjusted and market-direction in 2026/27 live forecasts | Adjustment moves M7 toward the market | Adjustment is small or moves away |
+| H1: generic compression | Regress the market directional strength on the M7 value. Then add club effects. | The slope β is much more than 1 and stable in each season. It stays when the regression has club effects. | β decreases to near 1 when the regression has club effects. |
+| H2: M7 gives some clubs a wrong value for many seasons | Club effects with adjustment for opponent and venue. Fit on earlier seasons and test on a later season. | Club effects predict the sign and size of later residuals. | The out-of-sample correlation is near zero. |
+| H3: state uncertainty makes probabilities less extreme | The certainty-equivalent forecast from the same posterior means | The CE forecast removes a large part of the slope gap. | The CE forecast changes the result by a small quantity. |
+| H4: xG signal | The same analyses for M2, which uses goals only | The M2 and M7 club residuals are different, and the difference follows the goal-minus-xG gaps. | The M2 and M7 residuals are the same. |
+| H5: slow adaptation | The current residual against the later change in M7 Quality | The residual predicts a later Quality change in its direction, and the residuals decrease. | No relation |
+| H6: home advantage | Venue terms in the regression, in groups by strength gap | A large home intercept | An intercept near zero |
+| H7: personnel | The unadjusted forecast, the adjusted forecast and the market direction in the 2026/27 live forecasts | The adjustment moves M7 toward the market. | The adjustment is small or moves M7 away from the market. |
 
 ## Scoring
 
-Information advantage for each match is ln(p_market(outcome) / p_M7(outcome)). Group it by disagreement size and by the candidate predictors. Uncertainty for club-level quantities uses resampling of club-seasons or match rounds, not independent matches.
+The information advantage of a match is ln(p_market(outcome) / p_M7(outcome)). Put it in groups by disagreement size and by each possible predictor. For quantities at club level, calculate the uncertainty by resampling club-seasons or match rounds. Do not resample independent matches.
 
-## Stop or redirect
+## Conditions to stop or change the work
 
-- If club effects fitted on earlier seasons do not predict later residuals (correlation below 0.2 and sign agreement below 60%), stop treating club identity as a mechanism.
-- If the certainty-equivalent forecast removes less than a quarter of the slope gap, do not propose an uncertainty experiment on match evidence alone.
-- A model experiment is justified only if it names a missing mechanism and can be scored on outcomes without the market.
+- Club effects from earlier seasons can fail to predict later residuals, with a correlation below 0.2 and sign agreement below 60%. If they fail, stop the use of club identity as a mechanism.
+- The certainty-equivalent forecast can remove less than one quarter of the slope gap. If it does, do not recommend an uncertainty experiment on match evidence alone.
+- Recommend a model experiment only if it names a missing mechanism. It must also have a score on outcomes without the market.

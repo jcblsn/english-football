@@ -1,4 +1,4 @@
-"""Shared loading and transforms for the market disagreement analyses."""
+"""Load and transform the data for the market disagreement analyses."""
 
 from pathlib import Path
 
@@ -40,7 +40,7 @@ def derive(d):
 
 
 def team_rows(d, residual="resid"):
-    """Two rows per match from each club's perspective; the sign follows the club."""
+    """Make two rows for each match, one for each club. The sign of each value is for that club."""
     rows = []
     for side, sign, other in (("home", 1.0, "away"), ("away", -1.0, "home")):
         t = pd.DataFrame(
@@ -66,7 +66,7 @@ def team_rows(d, residual="resid"):
 
 
 def club_design(d, clubs):
-    """+1 for the home club and −1 for the away club, so effects are opponent-adjusted."""
+    """Use +1 for the home club and −1 for the away club. Thus each effect has an adjustment for the opponent."""
     x = np.zeros((len(d), len(clubs)))
     index = {c: i for i, c in enumerate(clubs)}
     for row, (h, a) in enumerate(zip(d.home_team_id, d.away_team_id, strict=True)):
@@ -76,7 +76,7 @@ def club_design(d, clubs):
 
 
 def ridge(x, y, penalty, free=()):
-    """Least squares with a ridge on every column except the listed free columns."""
+    """Solve least squares with a ridge penalty on each column, but not on the free columns."""
     p = np.full(x.shape[1], penalty)
     p[list(free)] = 0
     return np.linalg.solve(x.T @ x + np.diag(p), x.T @ y)
