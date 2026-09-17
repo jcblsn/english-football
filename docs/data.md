@@ -118,10 +118,11 @@ Use `uv run epl-forecast data ui --no-browser` to start the local server without
 
 The UI runs queries on the local DuckDB process. It does not use MotherDuck unless you explicitly enable MotherDuck. The command uses temporary R2 secrets with separate scopes for `page324-data` and `page324-publish` only while it prepares the session file. It does not store credentials in the session file.
 
-`data query` uses the same analysis-session bootstrap. Use `--cutoff` to set the canonical evidence cutoff:
+`data query` uses the same analysis-session bootstrap. Use `--cutoff` to set the canonical evidence cutoff. The value must fall within the indexed history — a cutoff before the earliest retrieved evidence returns zero rows. Check the earliest available `retrieved_at` first if you do not already know a cutoff that the data covers:
 
 ```sh
-uv run epl-forecast data query --cutoff 2026-08-15T12:00:00+00:00 --sql 'SELECT season_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
+uv run epl-forecast data query --sql "SELECT min(retrieved_at) AS earliest FROM analysis.canonical"
+uv run epl-forecast data query --cutoff <ISO-8601 timestamp> --sql 'SELECT season_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
 ```
 
 The session reads the canonical manifest catalog from R2 and does not read local manifests or local canonical files. The `--root` option remains for command compatibility, but it cannot add local evidence to an analysis session. Raw canonical and provider views remain available for expert use.

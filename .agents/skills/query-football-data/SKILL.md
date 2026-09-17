@@ -49,6 +49,7 @@ Build focused queries:
 - Aggregate in SQL. Return supporting totals and denominators with the requested statistic.
 - Use explicit join keys that preserve the intended grain. Check `count(*)` against the relevant distinct key after a non-trivial join.
 - Use a deterministic `ORDER BY` and a small `LIMIT` for detail rows.
+- Do not alias a column to a DuckDB reserved word, such as `rows`, `first`, or `last` — the parser rejects it. Use a distinct name, such as `count_rows` or `first_day`.
 - Inspect coverage, nulls, ranges, and category values with compact aggregate queries instead of printing sample tables.
 - Keep unavailable evidence as unavailable. Do not replace null values, missing historical fields, or empty-response evidence with invented values.
 

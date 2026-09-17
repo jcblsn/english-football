@@ -1,5 +1,7 @@
 # Working in this repository
 
+`CLAUDE.md` is a symlink to this file. Edit and `git add AGENTS.md`, not `CLAUDE.md` — staging the symlink itself stages nothing when only the target's content changed.
+
 ## Writing
 
 Use ASD-STE100 Simplified Technical English for all public facing natural language text in the repo, including documents and comments.
@@ -19,6 +21,10 @@ Text in markdown files should not be hard wrapped.
 Run `scripts/verify.sh` — it formats, then lints, then tests. Order matters: `ruff check` before `ruff format` aborts on fixable layout findings.
 
 Ruff E501 is disabled, so the formatter owns line length in Python. Do not hand-split string literals to satisfy a line limit.
+
+`ruff format` can reformat a file after you last read it, most often collapsing a signature or a call site onto fewer lines. Re-read a file you are about to patch if `scripts/verify.sh` or a bare `ruff format` ran since your last view of it — a patch built against the old layout misses.
+
+A `uv` command in this repository may warn that `VIRTUAL_ENV` does not match the project environment, naming an old `epl-forecast/.venv` path. That is a stale variable inherited from the shell that started the session, left over from the repository's rename; `uv` still uses the correct project environment. Ignore the warning, or run `unset VIRTUAL_ENV` once per session to silence it.
 
 ## Data
 
