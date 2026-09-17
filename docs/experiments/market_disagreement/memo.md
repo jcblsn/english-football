@@ -12,7 +12,7 @@ Status: retrospective development evidence, 17 September 2026. Branch `research-
 6. The market residual predicts later M7 Quality movement in the same direction, but M7 closes only about 14% of the gap in 19 matches. The residual autocorrelation is 0.28 at 38 matches and 0.29 at 76 matches. Slow adaptation is real, but most of the residual is persistent, not transient.
 7. Home advantage and matchday personnel are secondary. Each changes the squared residual by about 2% or less.
 8. The market advantage is concentrated. Matches with a disagreement of at least 10 pp are 14% of matches and give 62% (2016–2026) to 75% (2023–2026) of the total market advantage. When the largest 5% of market-favouring matches are removed, M7 is equal to the market or slightly better.
-9. The experiment that the evidence supports first is a change to the Quality dynamics that makes persistent club strength less mean-reverting. Section 10 gives the pilot result.
+9. The experiment that the evidence supports first is a change to the Quality dynamics that makes persistent club strength less mean-reverting. A pilot with Quality as a random walk improves M7 log loss by 0.0024 (95% interval −0.0034 to −0.0014) over 2016–2026, without the market. It reduces the market slope from 1.22 to 1.12 and removes about a third of the residual of Manchester City, Arsenal and Liverpool. It does not change Brentford or Crystal Palace. Section 13 gives the details and the checks that the pilot does not yet include.
 
 ## 1. Data and method
 
@@ -277,7 +277,7 @@ The standard for each experiment is a chronological improvement on outcomes, wit
 
 | Experiment | Hypothesis | Pilot evidence | Recommendation |
 | --- | --- | --- | --- |
-| Less mean reversion of Quality, or a hierarchical long-run club level | H1 and H2: M7 pulls persistent club strength toward the league mean | Directional stretch improves 7 of 9 seasons (−0.0020; −0.0047 without 2019–21). Market structure points to the persistent level. Section 13 gives the dynamics pilot. | Do first |
+| Less mean reversion of Quality, or a hierarchical long-run club level | H1 and H2: M7 pulls persistent club strength toward the league mean | Directional stretch improves 7 of 9 seasons (−0.0020; −0.0047 without 2019–21). Market structure points to the persistent level. The dynamics pilot of Section 13 improves log loss by 0.0024 with an interval below zero. | Do first, as a full experiment with season panels |
 | External preseason squad-strength prior (squad value, wage bill or player ratings) | H2: missing squad information, especially for entrants and clubs such as Chelsea and Brentford | Club residuals persist and are shared with M2. Fixed entrant offset is not stable. Prior market club effects improve only 4 of 8 seasons. | Do second. It needs a source with historical timestamps. |
 | Persistent finishing skill in the observation model (a club term for goals given xG) | H4 | Market treats 40% of the goal-minus-xG gap as signal. Persistence is 0.26. A crude trailing term gives +0.0002 average gain. | Do after the dynamics test, and only as a structural term, not a trailing adjustment |
 | Faster Quality evolution | H5 | Market residual predicts Quality movement, but only 14% closes in 19 matches, and most residual is persistent | Do not do alone. Test it together with the first experiment, because a larger innovation SD also reduces the pull toward the mean. |
@@ -287,13 +287,45 @@ The standard for each experiment is a chronological improvement on outcomes, wit
 
 ## 13. Pilot: Quality dynamics
 
-PENDING
+The pilot tests H1 against H2 with a model change, not a probability adjustment. It changes one value of the M7 dynamics: the annual Quality retention. The innovation SD (0.09), Tilt dynamics, observation model, entry priors and specification mixture do not change. Each run refits every match day from the start of the history, the same as the control. The runner option is `--quality-retention`. Tables: `dynamics_pilot_summary.csv`, `dynamics_pilot_seasons.csv` and `dynamics_pilot_clubs.csv`.
+
+| Quality retention | 2016–2026 log loss | Score NLL | Market slope | Optimal outcome stretch | Squared residual | Scale share | Club share |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.85 (product) | 0.96330 | 2.92674 | 1.22 | 1.27 | 0.150 | 29% | 56% |
+| 0.95 | 0.96156 | 2.92499 | 1.15 | 1.21 | 0.126 | 18% | 46% |
+| 1.00 | 0.96090 | 2.92445 | 1.12 | 1.17 | 0.118 | 12% | 42% |
+
+Candidate minus control, 3,800 matches, 2016/17–2025/26:
+
+| Quality retention | Log loss [95% interval] | Score NLL | Seasons better on log loss | Entrant matches | Other matches |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 0.95 | −0.0017 [−0.0024, −0.0010] | −0.0018 | 8 of 10 | −0.0020 | −0.0016 |
+| 1.00 | −0.0024 [−0.0034, −0.0014] | −0.0023 | 8 of 10 | −0.0027 | −0.0023 |
+
+The two seasons that are worse are 2020/21 (+0.0001) and 2022/23 (+0.0010). 2025/26 is neutral on log loss (−0.0002) and slightly worse on score NLL (+0.0006). On the 40 matches of 2026/27, the random walk is better by 0.0040. For comparison, the market is better than M7 by 0.0133 in 2023–2026. The random walk closes about 18% of that gap (0.0023 of 0.0133).
+
+Change of opponent-adjusted club effect in 2023–2026, control to random walk: Manchester City +0.45 → +0.32, Arsenal +0.31 → +0.20, Liverpool +0.27 → +0.16, Chelsea +0.24 → +0.19. The promoted clubs move toward zero by 0.05–0.07. Brentford (−0.27 → −0.29), Crystal Palace (−0.26 → −0.26), Bournemouth (−0.09 → −0.09) and Manchester United (+0.24 → +0.22) do not change.
+
+Interpretation:
+
+- The mean reversion of Quality toward zero is a material cause of the compression. The effect is on the persistent level of clubs at the ends of the table, as Section 3 predicts. The outcome improvement does not use the market.
+- It is not the whole cause. The slope stays at 1.12, the outcome stretch at 1.17, and club identity still explains 42% of the residual.
+- The residuals that remain are the mid-table clubs with a persistent goal-minus-xG gap or with information outside both models: Brentford, Crystal Palace, Bournemouth, Wolves and Manchester United. They are the targets of the second and third experiments of Section 12.
+
+Checks that the pilot does not include, and that a full experiment must include before any change to `main`:
+
+- Season panels. A random walk increases the forward uncertainty of season paths. The M7 case rests partly on interval coverage, so the panels must show the effect on rank RPS, points CRPS and coverage in all four divisions.
+- Joint dynamics. The pilot keeps the innovation SD at 0.09. The retention and the innovation SD must be chosen together, with the chronological evidence of the specification mixture, and the choice must be made on earlier seasons only.
+- Other divisions and the entry priors, which read the fitted states of the source division.
+- Selection. This study chose the pilot after it looked at the same seasons. The gain is retrospective development evidence and needs a matched prospective record.
 
 ## Reproduce
 
 ```sh
 uv run python scripts/research/market_disagreement_rolling.py --output runs/market-disagreement/rolling
 uv run python scripts/research/market_disagreement_rolling.py --start 2016-08-01 --end 2023-08-01 --output runs/market-disagreement/rolling-early
+uv run python scripts/research/market_disagreement_rolling.py --start 2016-08-01 --quality-retention 0.95 --output runs/market-disagreement/retention-0.95
+uv run python scripts/research/market_disagreement_rolling.py --start 2016-08-01 --quality-retention 1.0 --output runs/market-disagreement/retention-1.0
 uv run python scripts/research/market_disagreement_cases.py --output runs/market-disagreement/cases
 cd scripts/research && uv run --with pandas python market_disagreement_analysis.py
 ```

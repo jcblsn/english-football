@@ -50,11 +50,7 @@ def block_interval(g, column, samples=2000):
     return np.quantile(values, [0.025, 0.975])
 
 
-def load_all():
-    frames = [
-        pd.read_csv(RUNS / f"{name}/matches.csv", parse_dates=["match_date"])
-        for name in ("rolling-early", "rolling")
-    ]
+def with_market(frames):
     d = pd.concat(frames, ignore_index=True)
     odds = json.loads((RUNS / "evidence/betbrain_odds.json").read_text())
     odds = pd.DataFrame(odds["rows"], columns=odds["columns"]).set_index("match_id")
@@ -66,7 +62,16 @@ def load_all():
     d["market_family"] = np.where(
         missing, "betbrain_average_preclosing", "market_average_preclosing"
     )
-    d = derive(d[d.mkt_p_home.notna()].reset_index(drop=True))
+    return derive(d[d.mkt_p_home.notna()].reset_index(drop=True))
+
+
+def load_all():
+    d = with_market(
+        [
+            pd.read_csv(RUNS / f"{name}/matches.csv", parse_dates=["match_date"])
+            for name in ("rolling-early", "rolling")
+        ]
+    )
     t_quality = team_rows(d)
     t_quality["long_quality"] = t_quality.groupby("team_id").quality.transform(
         lambda s: s.shift(1).rolling(114, min_periods=38).mean()
@@ -757,6 +762,99 @@ def outcome_experiments(d):
     return pd.DataFrame(rows)
 
 
+def dynamics_pilot(control):
+    """Product M7 against the Quality retention pilots on the same matches."""
+    runs = {"0.85": control}
+    for retention in ("0.95", "1.0"):
+        path = RUNS / f"retention-{retention}/matches.csv"
+        if path.exists():
+            runs[retention] = with_market([pd.read_csv(path, parse_dates=["match_date"])])
+    ids = sorted(set.intersection(*(set(r.match_id) for r in runs.values())))
+    summary, seasons, clubs = [], [], {}
+    base = control.set_index("match_id").loc[ids]
+    for retention, run in runs.items():
+        d = run.set_index("match_id").loc[ids].reset_index()
+        for window, g in (
+            ("2016-2026", d[d.season_id < "2026"]),
+            ("2023-2026", d[d.season_id.isin(HISTORY)]),
+            ("2026/27", d[d.season_id == "2026-2027"]),
+        ):
+            g = g.reset_index(drop=True)
+            y = g.outcome.map(OUTCOME_INDEX).to_numpy()
+            p = probabilities(g, "m7")
+            fit = minimize_scalar(
+                lambda b, p=p, y=y: loss(stretch(p, b), y), bounds=(0.5, 2.5), method="bounded"
+            )
+            names = sorted(set(g.home_team_id) | set(g.away_team_id))
+            one = np.ones(len(g))
+            scale = np.column_stack([one, g.m7_dir])
+            scale_fit = np.linalg.lstsq(scale, g.resid, rcond=None)[0]
+            club = np.column_stack([one, club_design(g, names)])
+            club_fit = ridge(club, g.resid.to_numpy(), PENALTY, [0])
+            square = (g.resid**2).mean()
+            summary.append(
+                {
+                    "quality_retention": retention,
+                    "window": window,
+                    "matches": len(g),
+                    "log_loss": g.m7_ll.mean(),
+                    "score_nll": -g.m7_score_log_probability.mean(),
+                    "market_slope": np.polyfit(g.m7_dir, g.mkt_dir, 1)[0],
+                    "optimal_outcome_stretch": fit.x,
+                    "mean_square_residual": square,
+                    "scale_share": 1 - ((g.resid - scale @ scale_fit) ** 2).mean() / square,
+                    "club_share": 1 - ((g.resid - club @ club_fit) ** 2).mean() / square,
+                }
+            )
+            if window == "2023-2026":
+                clubs[retention] = pd.Series(club_fit[1:] - club_fit[1:].mean(), index=names)
+        if retention == "0.85":
+            continue
+        diff = pd.DataFrame(
+            {
+                "season_id": base.season_id,
+                "match_date": base.match_date,
+                "log_loss": d.set_index("match_id").m7_ll - base.m7_ll,
+                "score_nll": base.m7_score_log_probability
+                - d.set_index("match_id").m7_score_log_probability,
+                "entrant": base.entrant.to_numpy() if "entrant" in base else False,
+            }
+        )
+        for season, g in diff.groupby("season_id"):
+            seasons.append(
+                {
+                    "quality_retention": retention,
+                    "slice": season,
+                    "matches": len(g),
+                    "log_loss": g.log_loss.mean(),
+                    "score_nll": g.score_nll.mean(),
+                }
+            )
+        history = diff[diff.season_id < "2026"]
+        for label, g in (
+            ("all 2016-2026", history),
+            ("entrant matches", history[history.entrant]),
+            ("other matches", history[~history.entrant]),
+        ):
+            low, high = block_interval(g.assign(match_date=g.match_date), "log_loss", samples=4000)
+            seasons.append(
+                {
+                    "quality_retention": retention,
+                    "slice": label,
+                    "matches": len(g),
+                    "log_loss": g.log_loss.mean(),
+                    "score_nll": g.score_nll.mean(),
+                    "ci_low": low,
+                    "ci_high": high,
+                }
+            )
+    return (
+        pd.DataFrame(summary),
+        pd.DataFrame(seasons),
+        pd.DataFrame(clubs).rename_axis("club").reset_index(),
+    )
+
+
 def main():
     TABLES.mkdir(parents=True, exist_ok=True)
     d, t = load_all()
@@ -812,6 +910,11 @@ def main():
     tables["home_advantage"] = home_advantage(d)
     tables["personnel"] = personnel_table(d, personnel)
     tables["outcome_experiments"] = outcome_experiments(d)
+    (
+        tables["dynamics_pilot_summary"],
+        tables["dynamics_pilot_seasons"],
+        tables["dynamics_pilot_clubs"],
+    ) = dynamics_pilot(d)
     for name, table in tables.items():
         table.to_csv(TABLES / f"{name}.csv", index=False, float_format="%.5g")
         print(f"\n## {name}\n{table.to_string(max_rows=60)}")
