@@ -3,7 +3,7 @@
 For Premier League matches 2016/17–2025/26, compare each candidate with the average pre-closing
 market (the BetBrain average before 2019/20): the slope of the market directional strength on the
 model directional strength, the share of the squared residual that club effects explain, and the
-club effects of 2023/24–2025/26.
+club effects of 2023/24–2025/26 with and without a scale term.
 
 Usage: uv run --with pandas --with pyarrow python scripts/research/m10_market.py --candidates r0.85-s0.09 r1.00-s0.09
 """
@@ -106,18 +106,20 @@ def main():
         clubs = sorted(set(r.home_team_id) | set(r.away_team_id))
         x = np.column_stack([np.ones(len(r)), np.log(r.p_home / r.p_away), club_design(r, clubs)])
         _, beta = explained(x, residual[recent], free=(0, 1))
+        _, raw = explained(np.delete(x, 1, axis=1), residual[recent], free=(0,))
         clubs_rows.extend(
-            {"candidate": candidate, "team_id": c, "adjusted_effect": b}
-            for c, b in zip(clubs, beta[2:], strict=True)
+            {"candidate": candidate, "team_id": c, "adjusted_effect": b, "club_effect": e}
+            for c, b, e in zip(clubs, beta[2:], raw[1:], strict=True)
         )
     TABLES.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(summaries).to_csv(TABLES / "market_summary.csv", index=False)
     clubs = pd.DataFrame(clubs_rows).pivot(
-        index="team_id", columns="candidate", values="adjusted_effect"
+        index="team_id", columns="candidate", values=["club_effect", "adjusted_effect"]
     )
-    clubs.sort_values(args.candidates[0]).to_csv(TABLES / "market_clubs.csv")
+    clubs = clubs.sort_values(("club_effect", args.candidates[0]))
+    clubs.to_csv(TABLES / "market_clubs.csv")
     print(pd.DataFrame(summaries).to_string())
-    print(clubs.sort_values(args.candidates[0]).round(2).to_string())
+    print(clubs.round(2).to_string())
 
 
 if __name__ == "__main__":

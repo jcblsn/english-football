@@ -175,15 +175,20 @@ def paired(table, candidate, control=CONTROL, mask=None):
     return joined
 
 
-def comparison_rows(table, candidates, slices):
+def comparison_rows(table, candidates, slices, control=CONTROL):
     rows = []
     for candidate in candidates:
-        base = paired(table, candidate)
+        base = paired(table, candidate, control)
         for slice_name, select in slices.items():
             j = base[select(base)]
             if j.empty:
                 continue
-            row = {"candidate": candidate, "slice": slice_name, "matches": len(j)}
+            row = {
+                "candidate": candidate,
+                "control": control,
+                "slice": slice_name,
+                "matches": len(j),
+            }
             for metric in ("log_loss", "brier", "score_nll"):
                 diff = j[metric] - j[f"{metric}_control"]
                 if metric == "brier":
@@ -279,7 +284,7 @@ def martingale(runs, names, lags=(5, 10)):
             s = pd.read_parquet(path)
             s["match_date"] = pd.to_datetime(s.match_date)
             spec = json.loads((runs / "candidates.json").read_text())[name]["dynamics"]
-            if "form_retention" in spec:
+            if "form_retention" in spec and s.get("quality_level") is None:
                 continue
             s = s.sort_values(["team_id", "match_date"])
             s = s[s.season_matches.diff().fillna(1) != 0]
@@ -289,7 +294,10 @@ def martingale(runs, names, lags=(5, 10)):
                 past = s.quality - g.quality.shift(lag)
                 future_q = g.quality.shift(-lag)
                 years = (g.match_date.shift(-lag) - s.match_date).dt.days / 365.25
-                expected = s.quality * spec["quality_retention"] ** years
+                if "form_retention" in spec:
+                    expected = s.quality_level + s.quality_form * spec["form_retention"] ** years
+                else:
+                    expected = s.quality * spec["quality_retention"] ** years
                 surprise = future_q - expected
                 m = past.notna() & surprise.notna()
                 x = np.column_stack([np.ones(m.sum()), past[m], s.quality[m]])
@@ -403,6 +411,13 @@ def main():
         }
     )
     comparison_rows(test, candidates, slices).to_csv(args.output / "comparisons.csv", index=False)
+    structural = {k: slices[k] for k in ("all", *DIVISIONS, "EFL")}
+    pd.concat(
+        [
+            comparison_rows(test, ["C2-FC"], structural, control="C1-FC"),
+            comparison_rows(test, ["C2-FC"], structural, control="r1.00-s0.09"),
+        ]
+    ).to_csv(args.output / "form_comparisons.csv", index=False)
     martingale(args.runs, names).to_csv(args.output / "martingale.csv", index=False)
     division_mean(args.runs, names).to_csv(args.output / "division_mean_quality.csv", index=False)
     table.to_parquet(args.runs / "scored.parquet", index=False)
