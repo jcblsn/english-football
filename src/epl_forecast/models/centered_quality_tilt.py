@@ -53,6 +53,8 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
         if independent_poisson:
             kwargs["dispersion"] = None
         super().__init__(**kwargs)
+        if not np.array_equal(self.team_loading[1], np.eye(self.team_dimensions)[1]):
+            raise ValueError("Centered coordinates need Tilt in the second slot of each club")
 
     def _mean_tilt_absorption(self):
         """Which league slots own the population mean of club Tilt.

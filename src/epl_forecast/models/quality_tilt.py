@@ -95,17 +95,17 @@ class QualityTiltFilter(DynamicAttackDefense):
         sd = np.array([self.quality_sd, self.tilt_sd])
         if self.form_sd:
             rho, sd = np.r_[rho, self.form_retention], np.r_[sd, self.form_sd]
+        clubs, remainder = divmod(dimensions - self.league_dimensions, len(rho))
+        if remainder:
+            raise ValueError("The state size does not match the club slots")
         factor = rho**years
         variance = sd**2 * np.array(
             [years if r == 1 else (1 - f**2) / (1 - r**2) for r, f in zip(rho, factor, strict=True)]
         )
         leading = self.league_dimensions
         return (
-            np.r_[np.ones(leading), np.tile(factor, (dimensions - leading) // len(rho))],
-            np.r_[
-                self.league_innovation_sd() ** 2 * years,
-                np.tile(variance, (dimensions - leading) // len(rho)),
-            ],
+            np.r_[np.ones(leading), np.tile(factor, clubs)],
+            np.r_[self.league_innovation_sd() ** 2 * years, np.tile(variance, clubs)],
         )
 
     def league_innovation_sd(self):
@@ -113,7 +113,7 @@ class QualityTiltFilter(DynamicAttackDefense):
         return np.array([self.annual_league_sd, self.annual_home_sd])
 
     def team_transition(self, years):
-        """Decay and innovation variance for one club's two state slots.
+        """Decay and innovation variance for the state slots of one club.
 
         This deliberately uses the club dynamics rather than any subclass
         augmentation of the state vector.
@@ -194,12 +194,13 @@ def state_summary(team, state, loading):
     ad_mean = AD_FROM_QT @ state.mean
     ad_covariance = AD_FROM_QT @ state.covariance @ AD_FROM_QT.T
     components = {}
-    if len(slots.mean) == 3:
+    if loading.shape[1] == 3:
         components = {
             "quality_level": float(slots.mean[0]),
             "quality_form": float(slots.mean[2]),
             "quality_level_sd": float(np.sqrt(slots.covariance[0, 0])),
             "quality_form_sd": float(np.sqrt(slots.covariance[2, 2])),
+            "quality_level_form_covariance": float(slots.covariance[0, 2]),
         }
     return {
         "team_id": team,

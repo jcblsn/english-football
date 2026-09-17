@@ -832,6 +832,22 @@ COLUMN_MEANINGS = {
         "model log-strength scale",
         "team_strengths.quality_form",
     ),
+    "quality_level_sd": (
+        "Posterior SD of the persistent club level.",
+        "model log-strength scale",
+        "team_strengths.quality_level_sd",
+    ),
+    "quality_form_sd": (
+        "Posterior SD of the form deviation.",
+        "model log-strength scale",
+        "team_strengths.quality_form_sd",
+    ),
+    "quality_level_form_covariance": (
+        "Posterior covariance between the club level and the form. Quality variance is the "
+        "level variance plus the form variance plus twice this covariance.",
+        "squared model scale",
+        "team_strengths.quality_level_form_covariance",
+    ),
     "quality_tilt_covariance": (
         "Posterior covariance between Quality and Tilt.",
         "squared model scale",

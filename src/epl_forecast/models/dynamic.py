@@ -280,7 +280,7 @@ class DynamicAttackDefense(BaseModel):
             "updates": self.updates,
             "state_dimensions": len(self.mean),
             "training_matches": len(ordered),
-            "posterior": "Gaussian conditional on fixed dynamics and empirical Bayes bridge",
+            "posterior": "Gaussian conditional on fixed dynamics and empirical Bayes entry priors",
         }
         return self
 
@@ -313,11 +313,11 @@ class DynamicAttackDefense(BaseModel):
 
     @property
     def attack(self):
-        return self.mean[self.league_dimensions :: 2]
+        return self.mean[self.league_dimensions :: self.team_dimensions]
 
     @property
     def defense(self):
-        return self.mean[self.league_dimensions + 1 :: 2]
+        return self.mean[self.league_dimensions + 1 :: self.team_dimensions]
 
     def _uses_fitted_state(self, team: str, season: str) -> bool:
         """Only a club the boundary bridge recognizes gives up its fitted state."""
@@ -411,7 +411,8 @@ class SampledTeamStates:
             prior = self.model.team_state(team, season)
             self._entry_draws[key] = (
                 prior.mean
-                + self._rng.standard_normal((self.size, 2)) @ np.linalg.cholesky(prior.covariance).T
+                + self._rng.standard_normal((self.size, len(prior.mean)))
+                @ np.linalg.cholesky(prior.covariance).T
             )
         return self._entry_draws[key]
 

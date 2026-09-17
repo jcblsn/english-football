@@ -412,6 +412,7 @@ def version_two_forecast_stores():
             "quality_form": 0.05,
             "quality_level_sd": 0.18,
             "quality_form_sd": 0.07,
+            "quality_level_form_covariance": -0.002,
             "attack_log_rate": 0.5,
             "defense_log_rate": -0.2,
             "attack_sd": 0.25,
@@ -634,11 +635,13 @@ def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
 
         state = session.rows(
             "SELECT quality, tilt, quality_sd, tilt_sd, quality_tilt_covariance, quality_level, "
-            "quality_form, attack_sd, defense_sd, state_source, season_matches "
+            "quality_form, quality_level_form_covariance, attack_sd, defense_sd, state_source, "
+            "season_matches "
             "FROM analysis.model_team_states"
         )[0]
         assert state["tilt"] == 0.1
         assert (state["quality_level"], state["quality_form"]) == (0.35, 0.05)
+        assert state["quality_level_form_covariance"] == -0.002
         assert state["state_source"] == "posterior"
         assert session.rows(
             "SELECT posterior_weight, chance_probability, form_retention "

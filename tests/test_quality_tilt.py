@@ -10,6 +10,9 @@ from epl_forecast.models.gaussian import score_laplace_update
 from epl_forecast.models.poisson import IndependentPoisson
 from epl_forecast.models.quality_tilt import BayesianQualityTilt, QualityTiltFilter
 from epl_forecast.models.quality_tilt_scores import GammaPoissonMixture, joint_logpmf
+from epl_forecast.schema import Fixture, Match, fixture_id
+
+PL = "eng-premier-league"
 
 
 def test_shared_tempo_probability_and_moments():
@@ -174,6 +177,13 @@ def test_form_returns_to_the_club_level(small_history):
     model = QualityTiltFilter(
         quality_retention=1.0, form_retention=0.2, form_sd=0.2, dispersion=None
     ).fit(small_history, small_history[-1].available_on)
+    summary = model.team_summary("a", small_history[-1].fixture.season_id)
+    assert summary["quality_sd"] ** 2 == pytest.approx(
+        summary["quality_level_sd"] ** 2
+        + summary["quality_form_sd"] ** 2
+        + 2 * summary["quality_level_form_covariance"]
+    )
+    assert summary["quality_level_form_covariance"] < 0
     decay, variance = model.team_transition(1.0)
     np.testing.assert_allclose(decay, [1.0, model.tilt_retention, 0.2])
     assert variance[2] == pytest.approx(0.2**2)
@@ -181,3 +191,70 @@ def test_form_returns_to_the_club_level(small_history):
         QualityTiltFilter(form_sd=0.1)
     with pytest.raises(ValueError, match="Form retention"):
         QualityTiltFilter(form_retention=1.0, form_sd=0.1)
+
+
+def rotating_seasons(first, last, clubs=20, turnover=3):
+    """A Premier League where three clubs leave and three new clubs enter each season."""
+    rng = np.random.default_rng(7)
+    matches = []
+    for year in range(first, last + 1):
+        season = f"{year}-{year + 1}"
+        offset = turnover * (year - first)
+        teams = [f"club-{i}" for i in range(offset, offset + clubs)]
+        pairs = [(h, a) for h in teams for a in teams if h != a]
+        for index, (home, away) in enumerate(pairs):
+            day = date(year, 8, 1) + timedelta(days=index // 10)
+            fixture = Fixture(fixture_id(PL, season, home, away), PL, season, day, home, away)
+            matches.append(Match(fixture, int(rng.poisson(1.5)), int(rng.poisson(1.2))))
+    return matches
+
+
+def common_quality(model, teams):
+    """Posterior mean and SD of the mean Quality of these clubs, in population coordinates."""
+    vector = np.zeros(len(model.mean))
+    for team in teams:
+        block = model._team_slice(team)
+        vector[block] = model.team_loading[0] / len(teams)
+    return vector @ model.mean, np.sqrt(vector @ model.covariance @ vector)
+
+
+def test_common_quality_direction_does_not_change_forecasts_between_fitted_clubs(small_history):
+    cutoff = small_history[-1].available_on
+    model = QualityTiltFilter(
+        quality_retention=1.0, form_retention=0.3, form_sd=0.07, dispersion=None
+    ).fit(small_history, cutoff)
+    fixture = replace(small_history[0].fixture, match_date=cutoff + timedelta(days=5))
+    before = model.forecast_moments(fixture)
+    direction = np.zeros(len(model.mean))
+    for team in model.team_index:
+        direction[model._team_slice(team)] = model.team_loading[0]
+    model.mean = model.mean + 0.3 * direction
+    model.covariance = model.covariance + 0.05 * np.outer(direction, direction)
+    for a, b in zip(before, model.forecast_moments(fixture), strict=True):
+        np.testing.assert_allclose(a, b, atol=1e-12)
+
+
+def test_entrants_keep_the_common_quality_uncertainty_bounded():
+    history = rotating_seasons(2014, 2021)
+    model = QualityTiltFilter(
+        quality_retention=1.0,
+        quality_sd=0.08,
+        form_retention=0.3,
+        form_sd=0.07,
+        tilt_retention=0.5,
+        tilt_sd=0.07,
+        dispersion=None,
+    )
+    spread = {}
+    for year in (2016, 2021):
+        season = f"{year}-{year + 1}"
+        cutoff = date(year, 7, 31)
+        model.fit([m for m in history if m.available_on <= cutoff], cutoff)
+        continuing = [
+            t
+            for t in {m.fixture.home_team_id for m in history if m.fixture.season_id == season}
+            if model._uses_fitted_state(t, season)
+        ]
+        spread[year] = common_quality(model, continuing)[1]
+    # The zero-referenced entry priors fix the frame. Without entrants, this SD increases each season.
+    assert spread[2021] < spread[2016]
