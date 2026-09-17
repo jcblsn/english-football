@@ -250,6 +250,10 @@ uv run epl-forecast materialize --site site --hindcasts
 uv run python scripts/check_publishable.py --site site
 ```
 
+### The v0.2.1 evidence corrections
+
+Model version v0.2.1 changes the source rule for Premier League availability. A usable FPL status takes priority when it disagrees with API-Football. Tests cover FPL available against API-Football unavailable, and FPL unavailable against API-Football doubtful. Both source values stay in the evidence basis. The same change deduplicates repeated captures of one transfer event. A test verifies that the event gives one membership reason, while different same-day transfer routes still leave membership unknown.
+
 ### Prospective evaluation
 
 The research branch archives the same estimator at 6 days, 3 days, 24 hours and 90 minutes before each Premier League and Championship fixture from 17 September 2026, with the structural M7 control and the realized-squad oracle. It evaluates measurement first and forecast scores by match round. The evidence is in `research/evidence/personnel-measurement/` in `page324-data`.

@@ -93,6 +93,20 @@ def start_of_day(day):
     return datetime.combine(day, time(), tzinfo=LONDON)
 
 
+def api_status_value(status):
+    return {"unavailable": 0.0, "doubtful": DOUBTFUL}.get(status)
+
+
+def fpl_status_value(status):
+    if status == "a":
+        return 1.0
+    if status == "d":
+        return DOUBTFUL
+    if status in FPL_UNAVAILABLE:
+        return 0.0
+    return None
+
+
 @dataclass(frozen=True)
 class Membership:
     state: str
@@ -182,14 +196,14 @@ class Evidence:
             for player in members:
                 self.squad_teams[player].add(team)
         day = cutoff.astimezone(LONDON).date()
-        self.transfers = defaultdict(list)
+        self.transfers = defaultdict(set)
         for row in transfers:
             if (
                 row["retrieved_at"] <= cutoff
                 and row["transfer_date"] is not None
                 and row["transfer_date"] <= day
             ):
-                self.transfers[row["player_id"]].append(
+                self.transfers[row["player_id"]].add(
                     (row["transfer_date"], row["from_team_id"], row["to_team_id"])
                 )
         self.injuries = defaultdict(list)
@@ -280,6 +294,10 @@ class Evidence:
     def availability(self, player, team, match_id, competition_id):
         """Probability that a club member is available for the matchday squad of this fixture.
 
+        A usable FPL status takes priority for a Premier League player. API-Football remains
+        in the evidence basis when the sources disagree. Without usable FPL evidence, the
+        API-Football values decide as before.
+
         Absence from an injury response is not proof of availability. The provider lists
         only the players it reports as doubtful or missing, and it publishes the list of a
         fixture a short time before kickoff. So this returns 1.0 for a player no provider
@@ -291,20 +309,18 @@ class Evidence:
         """
         values, basis = [], []
         for row in self.injuries.get((match_id, team, player), ()):
-            values.append({"unavailable": 0.0, "doubtful": DOUBTFUL}.get(row["status"]))
+            values.append(api_status_value(row["status"]))
             basis.append(f"API-Football {row['status']}: {row['reason']}")
         fpl = self.fpl.get(player)
         if competition_id == "eng-premier-league" and fpl is not None and fpl["team_id"] == team:
             status = fpl["status"]
-            if status == "a":
-                values.append(1.0)
-            elif status == "d":
-                values.append(DOUBTFUL)
-            elif status in FPL_UNAVAILABLE:
-                values.append(0.0)
-            else:
-                values.append(None)
+            fpl_value = fpl_status_value(status)
             basis.append(f"FPL {status}: {fpl['reason']}")
+            if fpl_value is None:
+                return None, (*basis, "unknown FPL status")
+            if values:
+                basis.append("FPL status takes priority")
+            return fpl_value, tuple(basis)
         if any(value is None for value in values):
             return None, (*basis, "unknown provider status")
         if not values:
@@ -472,6 +488,26 @@ def season_ids(cutoff):
     return f"{year - 1}-{year}", f"{year}-{year + 1}"
 
 
+def load_availability_evidence(data, seasons):
+    placeholders = ", ".join("?" for _ in seasons)
+    return {
+        "injuries": data.rows(
+            "SELECT match_id, team_id, player_id, competition_id, season_id, status, reason, "
+            "retrieved_at, source_sha256 FROM availability_observations "
+            "WHERE provider='api_football' "
+            f"AND scope LIKE 'fixture:%' AND season_id IN ({placeholders})",
+            list(seasons),
+        ),
+        "fpl": data.rows(
+            "SELECT player_id, team_id, season_id, status, reason, retrieved_at, source_sha256 "
+            "FROM availability_observations "
+            f"WHERE provider='fpl' AND season_id IN ({placeholders})",
+            list(seasons),
+        ),
+        "snapshots": snapshot_rows(data),
+    }
+
+
 def load_evidence(data, seasons):
     """Personnel rows from a cutoff-filtered `Dataset`; no odds and no model inputs."""
     placeholders = ", ".join("?" for _ in seasons)
@@ -495,23 +531,12 @@ def load_evidence(data, seasons):
             list(seasons),
         ),
         "transfers": data.rows(
-            "SELECT player_id, transfer_date, from_team_id, to_team_id, retrieved_at "
-            "FROM transfers_observations WHERE player_id IS NOT NULL"
+            "SELECT player_id, transfer_date, from_team_id, to_team_id, "
+            "max(retrieved_at) AS retrieved_at FROM transfers_observations "
+            "WHERE player_id IS NOT NULL GROUP BY player_id, transfer_date, from_team_id, "
+            "to_team_id"
         ),
-        "injuries": data.rows(
-            "SELECT match_id, team_id, player_id, competition_id, season_id, status, reason, "
-            "retrieved_at, source_sha256 FROM availability_observations "
-            "WHERE provider='api_football' "
-            f"AND scope LIKE 'fixture:%' AND season_id IN ({placeholders})",
-            list(seasons),
-        ),
-        "fpl": data.rows(
-            "SELECT player_id, team_id, season_id, status, reason, retrieved_at, source_sha256 "
-            "FROM availability_observations "
-            f"WHERE provider='fpl' AND season_id IN ({placeholders})",
-            list(seasons),
-        ),
-        "snapshots": snapshot_rows(data),
+        **load_availability_evidence(data, seasons),
     }
 
 

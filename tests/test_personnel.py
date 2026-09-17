@@ -197,10 +197,17 @@ def test_availability_is_scoped_to_the_team_and_fixture():
     assert evidence.availability("home-1", "home", TARGET, COMPETITION)[0] == 1.0
     doubtful = evidence_at(CUTOFF, injuries=[injury("home-1", "home", "doubtful")])
     assert doubtful.availability("home-1", "home", TARGET, COMPETITION)[0] == DOUBTFUL
-    conflict = evidence_at(
+    fpl_available = evidence_at(
         CUTOFF, injuries=[injury("home-1", "home", "unavailable")], fpl=[fpl("home-1", "home", "a")]
     )
-    assert conflict.availability("home-1", "home", TARGET, COMPETITION)[0] is None
+    availability, basis = fpl_available.availability("home-1", "home", TARGET, COMPETITION)
+    assert availability == 1.0
+    assert any(item.startswith("API-Football unavailable") for item in basis)
+    assert "FPL status takes priority" in basis
+    fpl_unavailable = evidence_at(
+        CUTOFF, injuries=[injury("home-1", "home", "doubtful")], fpl=[fpl("home-1", "home", "i")]
+    )
+    assert fpl_unavailable.availability("home-1", "home", TARGET, COMPETITION)[0] == 0.0
 
 
 def test_new_club_availability_cannot_restore_a_former_club_player():
@@ -505,6 +512,16 @@ def test_contradictory_strong_evidence_of_the_same_day_leaves_membership_unknown
         ],
     )
     assert dated.membership("home-0", "home").state == MEMBER
+
+
+def test_repeated_transfer_captures_add_one_membership_reason():
+    row = transfer("home-0", "home", "other", date(2026, 9, 10))
+    repeated = {**row, "retrieved_at": row["retrieved_at"] + timedelta(minutes=30)}
+
+    membership = evidence_at(CUTOFF, transfers=[row, repeated]).membership("home-0", "home")
+
+    assert membership.state == DEPARTED
+    assert membership.basis == ("transfer from home to other on 2026-09-10",)
 
 
 def test_a_snapshot_retrieved_after_the_cutoff_has_no_effect():

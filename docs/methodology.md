@@ -90,11 +90,11 @@ p_j is the probability that player j is in the matchday squad of the fixture:
 - Otherwise, a player who has left the club gives 0. A dated transfer from the club, or a matchday squad of another club after the last matchday squad for this club, shows a departure.
 - Otherwise, a club member gives availability × q(m, n). m is the number of the eight matchday squads that included the player, and n shows whether the last one did. q comes from Premier League and Championship matches in 2021/22–2025/26. For example, q(8, yes) is 0.959 and q(1, no) is 0.297.
 
-Availability is 0 for an API-Football unavailable status or an FPL status of i, s, n or u. It is 0.3 for a doubtful status or FPL d, and 1 otherwise. API-Football statuses must name the same club and fixture, and FPL statuses the same club. Membership comes from dated transfers and matchday squads first. Without them, the latest squad snapshot and the FPL club decide when they agree. Two strong observations of the same day that disagree leave membership unknown, because the evidence does not order them.
+Availability is 0 for an API-Football unavailable status or an FPL status of i, s, n or u. It is 0.3 for a doubtful status or FPL d, and 1 otherwise. API-Football statuses must name the same club and fixture, and FPL statuses must name the same club. For a Premier League player, a usable FPL status takes priority when API-Football disagrees. The evidence record keeps both source values. This policy is explicit so that it is easy to review if later source problems occur. Membership comes from dated transfers and matchday squads first. Without them, the latest squad snapshot and the FPL club decide when they agree. Two strong observations of the same day that disagree leave membership unknown, because the evidence does not order them.
 
 Availability 1 is not a statement that a player is fit. A provider lists only the players it reports, and API-Football publishes the list of a fixture a short time before kickoff, so absence from a response is not proof of availability. The record says which case holds: the fixture appears in an injury snapshot and the player is not named in it, or no snapshot covers the fixture. The residual risk sits in q(m, n), which was fitted without the players that the injury lists named.
 
-A player with unknown membership, or with providers that give 0 and 1, is unresolved and is left out. A club with more than 25% unresolved recent weight gets no adjustment.
+A player with unknown membership or an unknown status is unresolved and is left out. A club with more than 25% unresolved recent weight gets no adjustment.
 
 The shift is:
 

@@ -31,6 +31,9 @@ FIXTURE_DETAIL_REFRESH_SECONDS = 15 * 60
 LINEUP_WINDOW = timedelta(minutes=75)
 LINEUP_REFRESH_SECONDS = 9 * 60
 IN_PLAY_REFRESH_SECONDS = 60 * 60
+XG_SETTLEMENT_AGE = timedelta(days=3)
+MARKET_READINESS_HORIZON = timedelta(days=7)
+PERSONNEL_READINESS_HORIZON = timedelta(days=6)
 
 
 def normalized_request(fetcher, endpoint, params=None, *, retained=True, **kwargs):
@@ -419,6 +422,113 @@ def fixture_details_due(fixtures, records, now):
     return selected
 
 
+def collection_readiness(data, now):
+    """Non-blocking coverage signals for the inputs whose provider timing can vary."""
+    from epl_forecast.personnel import (
+        Evidence,
+        api_status_value,
+        fpl_status_value,
+        load_availability_evidence,
+        season_ids,
+    )
+
+    fixtures = [fixture for fixture in data.fixtures() if fixture["stage"] == "regular"]
+    current_season = season_name(now.year - (now.month < 7))
+    settled = [
+        fixture
+        for fixture in fixtures
+        if fixture["season_id"] == current_season
+        and fixture["status"] == "finished"
+        and fixture["kickoff_time"] is not None
+        and fixture["kickoff_time"] <= now - XG_SETTLEMENT_AGE
+    ]
+    xg_teams = {
+        row["match_id"]: row["teams"]
+        for row in data.rows(
+            "SELECT match_id, count(DISTINCT team_id) FILTER "
+            "(WHERE expected_goals IS NOT NULL) AS teams FROM team_statistics "
+            "WHERE season_id=? GROUP BY match_id",
+            [current_season],
+        )
+    }
+    missing_xg = [
+        {
+            "match_id": fixture["match_id"],
+            "competition_id": fixture["competition_id"],
+            "kickoff_time": fixture["kickoff_time"].isoformat(),
+            "teams_with_xg": xg_teams.get(fixture["match_id"], 0),
+        }
+        for fixture in settled
+        if xg_teams.get(fixture["match_id"], 0) < 2
+    ]
+
+    upcoming = [
+        fixture
+        for fixture in fixtures
+        if fixture["competition_id"] == "eng-premier-league"
+        and fixture["kickoff_time"] is not None
+        and now <= fixture["kickoff_time"] <= now + MARKET_READINESS_HORIZON
+    ]
+    market_matches = {
+        row["match_id"]
+        for row in data.rows(
+            "SELECT DISTINCT match_id FROM odds WHERE competition_id='eng-premier-league' "
+            "AND home_odds IS NOT NULL AND draw_odds IS NOT NULL AND away_odds IS NOT NULL"
+        )
+    }
+    missing_market = [
+        {
+            "match_id": fixture["match_id"],
+            "kickoff_time": fixture["kickoff_time"].isoformat(),
+        }
+        for fixture in upcoming
+        if fixture["match_id"] not in market_matches
+    ]
+
+    personnel_matches = {
+        fixture["match_id"]
+        for fixture in upcoming
+        if fixture["kickoff_time"] <= now + PERSONNEL_READINESS_HORIZON
+    }
+    evidence = Evidence(now, **load_availability_evidence(data, season_ids(now)))
+    disagreements = []
+    for (match_id, team_id, player_id), rows in sorted(evidence.injuries.items()):
+        if match_id not in personnel_matches:
+            continue
+        fpl = evidence.fpl.get(player_id)
+        if fpl is None or fpl["team_id"] != team_id:
+            continue
+        api_values = sorted({api_status_value(row["status"]) for row in rows}, key=str)
+        fpl_value = fpl_status_value(fpl["status"])
+        if api_values == [fpl_value]:
+            continue
+        disagreements.append(
+            {
+                "match_id": match_id,
+                "team_id": team_id,
+                "player_id": player_id,
+                "api_football_statuses": sorted({row["status"] for row in rows}),
+                "fpl_status": fpl["status"],
+            }
+        )
+
+    return {
+        "informational_only": True,
+        "status": "available",
+        "settled_finished_matches": len(settled),
+        "finished_matches_missing_xg": len(missing_xg),
+        "finished_matches_missing_xg_detail": missing_xg[:50],
+        "upcoming_premier_league_matches": len(upcoming),
+        "upcoming_matches_without_market_data": len(missing_market),
+        "upcoming_matches_without_market_data_detail": missing_market[:50],
+        "personnel_source_disagreements": len(disagreements),
+        "personnel_source_disagreement_detail": disagreements[:50],
+        "xg_settlement_days": XG_SETTLEMENT_AGE.days,
+        "market_horizon_days": MARKET_READINESS_HORIZON.days,
+        "personnel_horizon_days": PERSONNEL_READINESS_HORIZON.days,
+    }
+
+
 def collect(root=Path("data"), season=None, store=None):
     now = datetime.now(UTC)
     year = season if season is not None else now.year - (now.month < 7)
@@ -554,12 +664,27 @@ def collect(root=Path("data"), season=None, store=None):
             max_age=86400,
             context={"kind": "players", "match_id": match["match_id"]},
         )
+    try:
+        readiness_at = datetime.now(UTC)
+        data = Dataset(root, readiness_at, store=store)
+        try:
+            readiness = collection_readiness(data, readiness_at)
+        finally:
+            data.close()
+    except Exception as error:
+        readiness_at = datetime.now(UTC)
+        readiness = {
+            "informational_only": True,
+            "status": "unavailable",
+            "error": str(error),
+        }
     usage = fetcher.usage()
     report = {
-        "completed_at": datetime.now(UTC).isoformat(),
+        "completed_at": readiness_at.isoformat(),
         "status": "partial" if errors else "complete",
         "errors": errors,
         "api_football": usage,
+        "readiness": readiness,
     }
     write_json(Path(root) / "audits" / "collection.json", report)
     if usage["calls"]:

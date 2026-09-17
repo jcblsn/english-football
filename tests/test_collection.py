@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from epl_forecast.data.capture import retain
 from epl_forecast.datasets import publish
@@ -64,8 +65,6 @@ def test_final_fixture_capture_has_bounded_correction_checkpoints():
 
 
 def test_fixture_details_capture_lineups_before_kickoff():
-    from datetime import timedelta
-
     from epl_forecast.data.collect import fixture_details_due
 
     kickoff = datetime(2026, 9, 19, 14, tzinfo=UTC)
@@ -88,6 +87,59 @@ def test_fixture_details_capture_lineups_before_kickoff():
     fixtures[0]["fixture"]["status"]["short"] = "2H"
     assert fixture_details_due(fixtures, records(-1), kickoff + timedelta(minutes=50)) == []
     assert fixture_details_due(fixtures, records(-1), kickoff + timedelta(minutes=70)) == [10]
+
+
+def test_collection_readiness_reports_delayed_inputs_without_a_gate(monkeypatch):
+    from epl_forecast import personnel
+    from epl_forecast.data.collect import collection_readiness
+
+    now = datetime(2026, 9, 16, 12, tzinfo=UTC)
+    old = {
+        **scheduled_fixture(),
+        "match_id": "old",
+        "kickoff_time": now - timedelta(days=4),
+        "status": "finished",
+    }
+    uncovered = {
+        **scheduled_fixture(),
+        "match_id": "uncovered",
+        "kickoff_time": now + timedelta(days=2),
+    }
+    covered = {
+        **scheduled_fixture(),
+        "match_id": "covered",
+        "kickoff_time": now + timedelta(days=3),
+    }
+
+    class Data:
+        def fixtures(self):
+            return [old, uncovered, covered]
+
+        def rows(self, sql, parameters=None):
+            if "FROM team_statistics" in sql:
+                return [{"match_id": "old", "teams": 1}]
+            if "FROM odds" in sql:
+                return [{"match_id": "covered"}]
+            raise AssertionError(sql)
+
+    evidence = SimpleNamespace(
+        injuries={
+            ("uncovered", "arsenal", "player"): [{"status": "unavailable", "reason": "Injury"}]
+        },
+        fpl={"player": {"team_id": "arsenal", "status": "a"}},
+    )
+    monkeypatch.setattr(personnel, "load_availability_evidence", lambda *_: {})
+    monkeypatch.setattr(personnel, "Evidence", lambda *_args, **_kwargs: evidence)
+
+    report = collection_readiness(Data(), now)
+
+    assert report["informational_only"] is True
+    assert report["status"] == "available"
+    assert report["settled_finished_matches"] == 1
+    assert report["finished_matches_missing_xg"] == 1
+    assert report["upcoming_premier_league_matches"] == 2
+    assert report["upcoming_matches_without_market_data"] == 1
+    assert report["personnel_source_disagreements"] == 1
 
 
 def test_market_snapshot_changes_forecast_fingerprint(tmp_path):
