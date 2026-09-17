@@ -858,6 +858,7 @@ def _hindcast_rows(
             "hindcast_id": public["hindcast_id"],
             "competition_id": public["competition_id"],
             "season_id": public["season_id"],
+            "model_version": public["model"]["version"],
             "origin_at": public["origin_at"],
         }
         artifact_rows = {name: [] for name in names}
@@ -867,7 +868,6 @@ def _hindcast_rows(
                 "retrospective": True,
                 "generated_at": None,
                 "model_results_cutoff": public["model_results_cutoff"],
-                "model_version": public["model"]["version"],
                 "simulations": public["simulations"],
                 "played_matches": public.get("played_matches"),
                 "remaining_matches": public.get("remaining_matches"),
@@ -1374,6 +1374,7 @@ def _install_hindcasts(connection, rows: dict[str, list]) -> None:
         ("hindcast_id", "VARCHAR"),
         ("competition_id", "VARCHAR"),
         ("season_id", "VARCHAR"),
+        ("model_version", "VARCHAR"),
         ("origin_at", "TIMESTAMPTZ"),
     )
     _create_table(
@@ -1384,7 +1385,6 @@ def _install_hindcasts(connection, rows: dict[str, list]) -> None:
             ("retrospective", "BOOLEAN"),
             ("generated_at", "TIMESTAMPTZ"),
             ("model_results_cutoff", "DATE"),
-            ("model_version", "VARCHAR"),
             ("simulations", "INTEGER"),
             ("played_matches", "INTEGER"),
             ("remaining_matches", "INTEGER"),
@@ -1555,21 +1555,21 @@ def _validate_analysis(connection) -> None:
         "forecast_simulation_match_frequencies": "forecast_id, competition_id, match_id",
         "forecast_impact_fixtures": "forecast_id, competition_id, match_id",
         "forecast_impacts": "forecast_id, competition_id, match_id, event, team_id, outcome",
-        "hindcast_origins": "hindcast_id, competition_id, season_id",
-        "hindcast_teams": "hindcast_id, competition_id, season_id, team_id",
-        "hindcast_team_events": "hindcast_id, competition_id, season_id, team_id, event",
-        "hindcast_points_distribution": "hindcast_id, competition_id, season_id, team_id, points",
-        "hindcast_position_distribution": "hindcast_id, competition_id, season_id, team_id, position",
-        "hindcast_intervals": "hindcast_id, competition_id, season_id, team_id, estimate, level",
-        "hindcast_simulation_runs": "hindcast_id, competition_id, season_id",
-        "hindcast_simulation_teams": "hindcast_id, competition_id, season_id, team_id",
-        "hindcast_simulation_team_events": "hindcast_id, competition_id, season_id, team_id, event",
-        "hindcast_simulation_points_distribution": "hindcast_id, competition_id, season_id, team_id, points",
-        "hindcast_simulation_position_distribution": "hindcast_id, competition_id, season_id, team_id, position",
-        "hindcast_simulation_goal_difference_distribution": "hindcast_id, competition_id, season_id, team_id, goal_difference",
-        "hindcast_simulation_intervals": "hindcast_id, competition_id, season_id, team_id, estimate, level",
-        "hindcast_simulation_europe_probabilities": "hindcast_id, competition_id, season_id, team_id, scenario",
-        "hindcast_simulation_match_frequencies": "hindcast_id, competition_id, season_id, match_id",
+        "hindcast_origins": "hindcast_id, competition_id, season_id, model_version",
+        "hindcast_teams": "hindcast_id, competition_id, season_id, model_version, team_id",
+        "hindcast_team_events": "hindcast_id, competition_id, season_id, model_version, team_id, event",
+        "hindcast_points_distribution": "hindcast_id, competition_id, season_id, model_version, team_id, points",
+        "hindcast_position_distribution": "hindcast_id, competition_id, season_id, model_version, team_id, position",
+        "hindcast_intervals": "hindcast_id, competition_id, season_id, model_version, team_id, estimate, level",
+        "hindcast_simulation_runs": "hindcast_id, competition_id, season_id, model_version",
+        "hindcast_simulation_teams": "hindcast_id, competition_id, season_id, model_version, team_id",
+        "hindcast_simulation_team_events": "hindcast_id, competition_id, season_id, model_version, team_id, event",
+        "hindcast_simulation_points_distribution": "hindcast_id, competition_id, season_id, model_version, team_id, points",
+        "hindcast_simulation_position_distribution": "hindcast_id, competition_id, season_id, model_version, team_id, position",
+        "hindcast_simulation_goal_difference_distribution": "hindcast_id, competition_id, season_id, model_version, team_id, goal_difference",
+        "hindcast_simulation_intervals": "hindcast_id, competition_id, season_id, model_version, team_id, estimate, level",
+        "hindcast_simulation_europe_probabilities": "hindcast_id, competition_id, season_id, model_version, team_id, scenario",
+        "hindcast_simulation_match_frequencies": "hindcast_id, competition_id, season_id, model_version, match_id",
         "record_matches": "record_state, match_id",
         "record_summary": "scope",
     }
@@ -1682,7 +1682,7 @@ def _validate_analysis(connection) -> None:
         identity = (
             "forecast_id, competition_id, team_id"
             if prefix == "forecast"
-            else ("hindcast_id, competition_id, season_id, team_id")
+            else ("hindcast_id, competition_id, season_id, model_version, team_id")
         )
         for distribution in ("points", "position"):
             if connection.execute(
@@ -1724,7 +1724,8 @@ def _install_projection_view(connection) -> None:
         """
         CREATE VIEW analysis.team_projections AS
         SELECT 'live' AS product, false AS retrospective, f.forecast_id,
-               NULL::VARCHAR AS hindcast_id, f.competition_id, f.season_id, f.generated_at,
+               NULL::VARCHAR AS hindcast_id, f.competition_id, f.season_id,
+               f.public_model_version AS model_version, f.generated_at,
                NULL::TIMESTAMPTZ AS origin_at, f.state_observed_at, f.model_results_cutoff,
                t.team_id, t.team_name, t.played, t.current_points, t.mean_points,
                t.median_points, t.mean_position, t.median_position, t.position_sd,
@@ -1733,13 +1734,14 @@ def _install_projection_view(connection) -> None:
         USING (forecast_id, competition_id, season_id)
         UNION ALL
         SELECT 'hindcast' AS product, true AS retrospective, NULL::VARCHAR AS forecast_id,
-               h.hindcast_id, h.competition_id, h.season_id, h.generated_at, h.origin_at,
+               h.hindcast_id, h.competition_id, h.season_id, h.model_version,
+               h.generated_at, h.origin_at,
                NULL::TIMESTAMPTZ AS state_observed_at, h.model_results_cutoff,
                t.team_id, t.team_name, t.played, t.current_points, t.mean_points,
                t.median_points, t.mean_position, t.median_position, t.position_sd,
                t.mean_goal_difference
         FROM analysis.hindcast_teams t JOIN analysis.hindcast_origins h
-        USING (hindcast_id, competition_id, season_id, origin_at)
+        USING (hindcast_id, competition_id, season_id, model_version, origin_at)
         """
     )
 

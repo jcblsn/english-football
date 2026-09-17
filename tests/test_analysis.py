@@ -773,6 +773,97 @@ def test_hindcasts_are_pointer_driven_and_explicitly_retrospective(tmp_path):
         session.close()
 
 
+def test_the_hindcast_archive_keeps_every_published_model_version(tmp_path):
+    """The archive indexes each model version, so one origin recurs under several versions."""
+    team = {
+        "team_id": "arsenal",
+        "name": "Arsenal",
+        "played": 10,
+        "current_points": 20,
+        "mean_points": 75.0,
+        "median_points": 75,
+        "mean_position": 2.0,
+        "median_position": 2,
+        "position_sd": 1.0,
+        "mean_goal_difference": 25.0,
+        "points_intervals": {"50": [70, 80]},
+        "position_intervals": {"50": [1, 3]},
+        "points_distribution": {"74": 0.4, "75": 0.6},
+        "position_probabilities": [0.3, 0.7],
+        "events": {"title_probability": 0.2},
+    }
+
+    def documents(version, mean_points):
+        public = {
+            "schema_version": 1,
+            "product": "hindcast",
+            "retrospective": True,
+            "hindcast_id": "2025-10-01T080000Z",
+            "competition_id": "eng-premier-league",
+            "season_id": "2025-2026",
+            "origin_at": "2025-10-01T09:00:00+01:00",
+            "model_results_cutoff": "2025-10-01",
+            "simulations": 10000,
+            "played_matches": 50,
+            "remaining_matches": 330,
+            "model": {"version": version},
+            "teams": [{**team, "mean_points": mean_points}],
+        }
+        prefix = f"hindcasts/{version}/eng-premier-league/2025-2026"
+        return public, f"{prefix}/2025-10-01T080000Z.json", f"{prefix}/series.json"
+
+    older, older_href, older_series = documents("v0.2", 75.0)
+    newer, newer_href, newer_series = documents("v0.3.0", 78.0)
+    data = ObjectStore(
+        {
+            "state/manifests.json": {"schema_version": 1, "manifests": []},
+            f"runs/{older_href}": {**older, "simulation": {"teams": [team]}},
+            f"runs/{newer_href}": {**newer, "simulation": {"teams": [team]}},
+        }
+    )
+    publish_store = ObjectStore(
+        {
+            "hindcasts/index.json": {
+                "schema_version": 1,
+                "retrospective": True,
+                "updated_at": "2026-09-17T00:00:00+00:00",
+                "seasons": [{"href": older_series}, {"href": newer_series}],
+            },
+            older_series: {
+                "schema_version": 1,
+                "retrospective": True,
+                "origins": [{"href": older_href}],
+            },
+            newer_series: {
+                "schema_version": 1,
+                "retrospective": True,
+                "origins": [{"href": newer_href}],
+            },
+            older_href: older,
+            newer_href: newer,
+        }
+    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows(
+            "SELECT model_version FROM analysis.hindcast_origins ORDER BY model_version"
+        ) == [{"model_version": "v0.2"}, {"model_version": "v0.3.0"}]
+        assert session.rows(
+            "SELECT model_version, mean_points FROM analysis.hindcast_teams ORDER BY model_version"
+        ) == [
+            {"model_version": "v0.2", "mean_points": 75.0},
+            {"model_version": "v0.3.0", "mean_points": 78.0},
+        ]
+        assert session.rows(
+            "SELECT model_version, mean_points FROM analysis.team_projections ORDER BY model_version"
+        ) == [
+            {"model_version": "v0.2", "mean_points": 75.0},
+            {"model_version": "v0.3.0", "mean_points": 78.0},
+        ]
+    finally:
+        session.close()
+
+
 def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
     statements = []
 

@@ -235,10 +235,18 @@ ORDER BY c.match_id, p.side, p.discontinuity_contribution DESC NULLS LAST, e.evi
 
 `analysis.hindcast_origins` and its child relations come only from `hindcasts/index.json` and the season series to which it points. Every origin has `retrospective=true`. `origin_at` is the simulated historical origin. It is not the time at which the artifact existed. `generated_at` is null by design.
 
-`analysis.team_projections` is a convenience union of live and hindcast team estimates. Do not replace its explicit time fields with one generic `as_of` value:
+The archive keeps every published model version. The index holds one season series for each model version, competition and season, and it does not remove a superseded version. `hindcast_id` is the origin timestamp alone, so the same `hindcast_id` occurs once for each model version. The identity of a hindcast row is therefore `hindcast_id`, `competition_id`, `season_id` and `model_version` together. Filter or group by `model_version` whenever you compare or total hindcast rows. Without it, a points or position distribution totals the number of published model versions, not 1.
 
 ```sql
-SELECT product, retrospective, generated_at, origin_at, state_observed_at,
+SELECT model_version, count(*) AS origins
+FROM analysis.hindcast_origins
+GROUP BY 1 ORDER BY 1;
+```
+
+`analysis.team_projections` is a convenience union of live and hindcast team estimates. Its `model_version` is the public model version of each product. Do not replace its explicit time fields with one generic `as_of` value:
+
+```sql
+SELECT product, retrospective, model_version, generated_at, origin_at, state_observed_at,
        model_results_cutoff, competition_id, season_id, team_id, mean_points, mean_position
 FROM analysis.team_projections
 WHERE team_id = 'arsenal'
