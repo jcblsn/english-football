@@ -43,7 +43,9 @@ def m7_row(model, fixture):
     home_advantage = np.array([m.home_advantage for m in model.members])
     home_variance = np.array([m.covariance[1, 1] for m in model.members])
     difference = np.array([1.0, -1.0])
-    difference_variance = np.array([difference @ c.log_covariance @ difference for c in scores.components])
+    difference_variance = np.array(
+        [difference @ c.log_covariance @ difference for c in scores.components]
+    )
     row = {
         "m7_p_home": forecast.probabilities[0],
         "m7_p_draw": forecast.probabilities[1],
@@ -141,7 +143,9 @@ def main():
                 if quote is None:
                     p, implied = (None, None, None), None
                 else:
-                    p, implied = devig_odds(quote["home_odds"], quote["draw_odds"], quote["away_odds"])
+                    p, implied = devig_odds(
+                        quote["home_odds"], quote["draw_odds"], quote["away_odds"]
+                    )
                 row.update(
                     {
                         f"{prefix}_p_home": p[0],
