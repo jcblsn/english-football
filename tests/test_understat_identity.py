@@ -211,3 +211,74 @@ def test_shared_ingest_context_matches_one_dataset_read_per_match(tmp_path):
     assert direct == shared
     assert len(direct) == 8
     assert all(row["player_id"] is not None for row in direct)
+
+
+def test_a_later_capture_of_the_same_appearance_does_not_hide_an_earlier_one(tmp_path):
+    """A replay holds later captures; linking must still see what existed at the capture time."""
+    from epl_forecast.data.understat_ingest import IngestContext
+
+    fixture = {
+        "match_id": "m",
+        "competition_id": "eng-premier-league",
+        "season_id": "2026-2027",
+        "home_team_id": "a",
+        "away_team_id": "b",
+        "match_date": "2026-09-01",
+        "status": "finished",
+        "stage": "regular",
+        "home_goals": 0,
+        "away_goals": 0,
+    }
+
+    def api(retrieved_at, source, basis):
+        return {
+            "provider": "api_football",
+            "retrieved_at": retrieved_at,
+            "source_sha256": source * 64,
+            "evidence_basis": basis,
+            "context": {},
+        }
+
+    understat = {
+        "provider": "understat",
+        "retrieved_at": "2026-09-08T12:00:00+00:00",
+        "source_sha256": "d" * 64,
+        "evidence_basis": "captured",
+        "context": {"kind": "players", "match_id": "m"},
+    }
+    roster = {
+        "7": {
+            "player_id": "7",
+            "player": "Player Seven",
+            "position": "DC",
+            "time": "90",
+            "xG": "0",
+            "xA": "0",
+            "shots": "0",
+        }
+    }
+    payload = json.dumps({"rosters": {"h": roster, "a": {}}}).encode()
+    for shared in (False, True):
+        root = tmp_path / ("shared" if shared else "direct")
+        publish(
+            root,
+            api("2026-09-02T12:00:00+00:00", "a", "retrospective"),
+            {
+                "fixtures": [fixture],
+                "players": [{"player_id": "p7", "name": "Player Seven"}],
+                "appearances": [{"match_id": "m", "player_id": "p7", "team_id": "a"}],
+            },
+        )
+        publish(
+            root,
+            api("2026-09-11T12:00:00+00:00", "b", "captured"),
+            {"appearances": [{"match_id": "m", "player_id": "p7", "team_id": "a", "minutes": 90}]},
+        )
+        ingest(root, understat, payload, IngestContext(root) if shared else None)
+        data = Dataset(workspace=root)
+        try:
+            assert data.rows("SELECT player_id FROM player_process") == [{"player_id": "p7"}], (
+                shared
+            )
+        finally:
+            data.close()

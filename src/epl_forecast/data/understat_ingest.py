@@ -51,7 +51,8 @@ class IngestContext:
                 self.names[r["player_id"]].append((r["name"], timestamp(r["retrieved_at"])))
             self.appearances = defaultdict(list)
             for r in data.rows(
-                "SELECT DISTINCT match_id, team_id, player_id, retrieved_at FROM appearances"
+                "SELECT DISTINCT match_id, team_id, player_id, retrieved_at "
+                "FROM appearances_observations"
             ):
                 self.appearances[r["match_id"]].append(
                     (r["team_id"], r["player_id"], timestamp(r["retrieved_at"]))
@@ -162,7 +163,7 @@ def ingest(root, record, payload, context=None):
                     raise ValueError(f"Contradictory retained player mapping: Understat {uid}")
                 known[uid] = player
             appearances = data.rows(
-                "SELECT DISTINCT a.team_id, a.player_id, p.name FROM appearances a "
+                "SELECT DISTINCT a.team_id, a.player_id, p.name FROM appearances_observations a "
                 "JOIN players_observations p USING(player_id) "
                 "WHERE a.match_id=? AND p.name IS NOT NULL AND p.retrieved_at<=? "
                 "AND a.retrieved_at<=?",
