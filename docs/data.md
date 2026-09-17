@@ -12,7 +12,7 @@ The product uses provider data that stays in the private `page324-data` R2 bucke
 | Understat | Team xG for each match before API-Football xG starts | Premier League only |
 | FPL | Player status and club for the matchday-squad continuity adjustment | Premier League |
 
-The collector also captures squads, players, lineups, transfers, injuries and match statistics. The matchday-squad continuity adjustment uses lineups, squads, transfers and injuries. The persistent M7 state does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They also support research on the [research branch](research.md).
+The collector also captures squads, players, lineups, transfers, injuries and match statistics. The matchday-squad continuity adjustment uses lineups, squads, transfers and injuries. The persistent M10 state does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They also support research on the [research branch](research.md).
 
 The National League is an entry-source competition. The collector retains its historical Football-Data results so that the generic entry-prior model can use a complete source season for a club promoted to League Two. National League matches do not update the League Two filter. The product does not forecast or publish the National League.
 
@@ -227,7 +227,7 @@ ORDER BY c.match_id, p.side, p.discontinuity_contribution DESC NULLS LAST, e.evi
 
 `analysis.forecast_teams` and its event, distribution, and interval children contain the published and rounded product values. The `analysis.forecast_simulation_*` relations contain the raw private simulation output: run settings and diagnostics, team scalars, event probabilities, points, position and goal-difference distributions, intervals, conditional European probabilities, and match frequencies. The equivalent `analysis.hindcast_simulation_*` relations expose fields that each historical private hindcast actually retained. They do not fabricate removed historical fields.
 
-`analysis.model_team_states` exposes Quality, Tilt, their uncertainty and covariance, derived attack and defense state, state source, and match counts. It also keeps the complete state as JSON. `analysis.forecast_runs` exposes stable run-level model, rate, uncertainty, personnel, and market-assistance fields. `analysis.model_specifications` gives the mixture specification parameters, weights, and log evidence. Irregular fit diagnostics and provenance remain JSON.
+`analysis.model_team_states` exposes Quality, its level and form, Tilt, their uncertainty and covariance, derived attack and defense state, state source, and match counts. It also keeps the complete state as JSON. `analysis.forecast_runs` exposes stable run-level model, rate, uncertainty, personnel, and market-assistance fields. `analysis.model_specifications` gives the mixture specification parameters, weights, and log evidence. Irregular fit diagnostics and provenance remain JSON.
 
 `analysis.forecast_impact_fixtures` gives fixture-level sample, uncertainty, status, window, and carry-forward metadata. `analysis.forecast_impacts` is long-form by match, event, team, and outcome. For scheduled fixtures, its `baseline` is reconstructed from the published team event probability that the publication contract intentionally does not repeat.
 

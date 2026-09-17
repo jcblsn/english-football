@@ -11,11 +11,11 @@ The product forecasts the four divisions of the English league:
 - League One
 - League Two
 
-M7 makes every published forecast in every division. M2 is the benchmark. The [methodology](methodology.md) describes both models. M7 is frozen. A change to the structural model needs the evidence that [validation](validation.md) describes.
+M10 makes every published forecast in every division. M2 is the benchmark. The [methodology](methodology.md) describes both models. M10 is frozen. A change to the structural model needs the evidence that [validation](validation.md) describes.
 
 ## Contents of each forecast archive
 
-Each M7 archive contains:
+Each M10 archive contains:
 
 - structural H/D/A probabilities and an exact-score matrix for each remaining fixture;
 - a market-assisted H/D/A probability when a captured pre-closing quote exists;
@@ -49,9 +49,9 @@ A hindcast is a separate, retrospective product. It gives the season estimates o
 11. Each postponed or undated fixture is listed and placed on the cutoff day. Each match that started without a result is listed, is placed on the cutoff day, and gets no match forecast.
 12. The provenance records the data manifest, the model specification, the seed and the source hashes.
 
-## Why M7
+## Why M10
 
-M7 has the best retained match score and the best season distributions against M2 in the evaluation that [validation](validation.md) summarizes. It does not win every metric at every origin. The same page records where M2 is close or better.
+M7 had the best retained match score and the best season distributions against M2 in the evaluation that [validation](validation.md) summarizes. M10 replaced the Quality dynamics of M7 after a chronological comparison of match scores and season panels in all four divisions. Neither model wins every metric at every origin. The same page records where the earlier model or M2 is close or better.
 
 ## Out of scope
 

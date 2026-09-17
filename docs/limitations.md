@@ -14,7 +14,7 @@ Read the forecasts with these limits in mind.
 ## Inputs
 
 - API-Football xG starts in January 2023 in the Premier League, August 2023 in the Championship and August 2026 in League One and League Two. The League One and League Two xG has no historical evaluation. A match without xG updates the state on goals only.
-- The persistent M7 state does not use lineups, injuries, suspensions or transfers. Only the temporary continuity adjustment uses them, and only for Premier League and Championship fixtures in the next six days. League One and League Two have no adjustment.
+- The persistent M10 state does not use lineups, injuries, suspensions or transfers. Only the temporary continuity adjustment uses them, and only for Premier League and Championship fixtures in the next six days. League One and League Two have no adjustment.
 - A club without eight previous matches with complete lineup minutes, for example a club promoted from League One, has no adjustment until it has them.
 - An official team sheet enters the adjustment only when a production run captures it before the forecast cutoff.
 - API-Football publishes the injury list of a fixture only a short time before the match. An adjustment several days before kickoff therefore uses membership and FPL status, and in the Championship membership only. [Validation](validation.md#matchday-squad-continuity) records what the injury lists covered at the release.

@@ -1,12 +1,12 @@
 # Methodology
 
-M7 makes every published forecast. M2 is the benchmark. This page describes both models and the information rules that apply to them. The code is in `src/epl_forecast/models/`.
+M10 makes every published forecast. M2 is the benchmark. This page describes both models and the information rules that apply to them. The code is in `src/epl_forecast/models/`.
 
-## M7 team state
+## M10 team state
 
 Each club has two latent strengths on the log scale:
 
-- Quality (Q) is relative strength. Q is (attack + defense) / 2.
+- Quality (Q) is relative strength. Q is (attack + defense) / 2. Q is the sum of two parts: a persistent club level and a form deviation from that level.
 - Tilt (T) is openness. T is (attack − defense) / 2. A positive Tilt raises the expected goals of both teams.
 
 The state also holds a league scoring level (L) and a home advantage (H). The expected goals of each team in a match are:
@@ -24,14 +24,17 @@ The state evolves in calendar time, not in match rounds.
 
 | Component | Annual retention | Annual innovation SD |
 | --- | ---: | ---: |
-| Quality | 0.85 | 0.09 |
+| Quality level | 1.00 | 0.08 |
+| Quality form | 0.30 | 0.07 |
 | Tilt | 0.50 | 0.07 |
 
-The league level and the home advantage follow slow random walks. A long gap between matches adds uncertainty. Previous seasons persist, with decay.
+The Quality level is a random walk. It does not return to the league mean, so a club that is strong or weak for many seasons keeps that level until results change it. The form returns to the level: after one year, 30% of a form deviation remains. Thus a run of results can change the forecast quickly without a permanent change of the level. The filter learns the level and the form together from the same observations. The model before M10, M7, had one Quality process that returned to the league mean with annual retention 0.85. That return made the persistent differences between clubs too small.
+
+The league level and the home advantage follow slow random walks. A long gap between matches adds uncertainty.
 
 ## Observations: goals and xG
 
-For each team in a match, M7 assumes a latent number of chances N:
+For each team in a match, M10 assumes a latent number of chances N:
 
 ```text
 N | rate, p  ~ Poisson(rate / p)
@@ -41,13 +44,13 @@ goals | N, p ~ Binomial(N, p)
 
 The goals then have a Poisson(rate) marginal distribution. Thus score forecasts stay coherent with the observation model. The xG is the provider's team xG for the match. It is not a count and it is not a sum of shot values.
 
-The chance probability p controls how noisy xG is. M7 uses three values of p (0.1, 0.2 and 0.35) with equal prior weight. Each value gives one filter. The chronological evidence of each filter updates its weight. Forecasts use the weighted mixture of the three filters.
+The chance probability p controls how noisy xG is. M10 uses three values of p (0.1, 0.2 and 0.35) with equal prior weight. Each value gives one filter. The chronological evidence of each filter updates its weight. Forecasts use the weighted mixture of the three filters.
 
-M7 uses API-Football team xG from the first match with API-Football xG in each division: 18 January 2023 in the Premier League, 4 August 2023 in the Championship and 15 August 2026 in League One and League Two. Before that date, the Premier League uses Understat team xG. The two providers never measure the same match in M7. A match without xG updates the state on goals only. Each division's filter updates only on the matches of that division.
+M10 uses API-Football team xG from the first match with API-Football xG in each division: 18 January 2023 in the Premier League, 4 August 2023 in the Championship and 15 August 2026 in League One and League Two. Before that date, the Premier League uses Understat team xG. The two providers never measure the same match in M10. A match without xG updates the state on goals only. Each division's filter updates only on the matches of that division.
 
 ## Inference
 
-M7 is a daily Gaussian filter. All matches on one date update the state together, after the forecasts for that date. Each update uses a Laplace approximation at the posterior mode and keeps the full state covariance. This is approximate Bayesian filtering. It does not sample complete latent histories.
+M10 is a daily Gaussian filter. All matches on one date update the state together, after the forecasts for that date. Each update uses a Laplace approximation at the posterior mode and keeps the full state covariance. This is approximate Bayesian filtering. It does not sample complete latent histories.
 
 ## Clubs that enter a division
 
@@ -57,7 +60,7 @@ A club that did not play the division last season gets an entry prior. One rule 
 2. A coefficient on its strength in the division it came from last season.
 3. A coefficient on its own older seasons in the target division. The weight of an old season decays with its age. The model averages over several decay rates.
 
-The coefficients come from earlier clubs that made the same transition. Only transitions whose target season finished before the entry date are used. The prior carries residual, coefficient and source-measurement uncertainty.
+The coefficients come from earlier clubs that made the same transition. Only transitions whose target season finished before the entry date are used. The prior carries residual, coefficient and source-measurement uncertainty. The prior gives the Quality level. The form of an entering club starts at zero with the stationary uncertainty of the form process.
 
 Each division reads only the divisions that the calibration found useful:
 
@@ -124,7 +127,7 @@ Simulated scores do not update the state. The simulator then builds the table an
 
 ## Market-assisted probabilities
 
-The market-assisted H/D/A probability pools M7 with the de-vigged average pre-closing odds. The pool is a logarithmic pool with one weight. The weight was fitted chronologically on 2023/24–2025/26 and is 1.0. Thus the market-assisted probability is currently the de-vigged market probability. It is published only when a captured quote exists. It never enters the season simulation or the exact-score grid. `configs/market_pool.json` holds the fit.
+The market-assisted H/D/A probability pools M10 with the de-vigged average pre-closing odds. The pool is a logarithmic pool with one weight. The weight was fitted chronologically on 2023/24–2025/26 and is 1.0. Thus the market-assisted probability is currently the de-vigged market probability. It is published only when a captured quote exists. It never enters the season simulation or the exact-score grid. `configs/market_pool.json` holds the fit.
 
 ## M2 benchmark
 

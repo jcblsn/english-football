@@ -10,11 +10,11 @@ Text in markdown files should not be hard wrapped.
 
 ## Branches
 
-- `main` is the product line. It holds only what the four-division M7 product needs: operation, data collection, simulation, verification, publication, prospective scoring, the evidence guide in `evidence/`, tests and current docs. Generated evidence stays in private R2 storage.
+- `main` is the product line. It holds only what the four-division M10 product needs: operation, data collection, simulation, verification, publication, prospective scoring, the evidence guide in `evidence/`, tests and current docs. Generated evidence stays in private R2 storage.
 - Do model research on a new `research-<topic>` branch from current `main`, one branch for each workstream. The `research` branch and the `research-anchor` tag are an archive of the history before the product consolidation, not a base for new work. See `docs/research.md`.
 - Move an improvement to `main` only as one focused pull request, with the evidence that `docs/validation.md` describes. Do not merge the whole `research` branch into `main`.
 - Do not add experiment reports, one-off scripts, parameter searches or superseded models to `main`.
-- M7 is frozen on `main`. Do not change model statistics in a cleanup or a refactor.
+- M10 is frozen on `main`. Do not change model statistics in a cleanup or a refactor.
 
 ## Verifying
 

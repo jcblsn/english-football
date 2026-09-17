@@ -21,7 +21,7 @@ The forecasts also show how much each fixture in the next seven days can move ea
 
 ## Model
 
-One model, M7, makes every published forecast. M7 gives each club a latent strength and a latent openness. These change over time. Goals and expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. For Premier League and Championship fixtures in the next six days, a temporary adjustment for matchday-squad continuity moves the expected goals of the two clubs. It uses recent minutes, squads, transfers, injury lists, FPL statuses and team sheets. It does not change the persistent strengths. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
+One model, M10, makes every published forecast. M10 gives each club a latent strength and a latent openness. The strength has a persistent level and a form that returns to that level. These change over time. Goals and expected goals (xG) update them each day. Clubs that change division start from priors learned from earlier clubs that made the same move. For Premier League and Championship fixtures in the next six days, a temporary adjustment for matchday-squad continuity moves the expected goals of the two clubs. It uses recent minutes, squads, transfers, injury lists, FPL statuses and team sheets. It does not change the persistent strengths. Each simulated season draws the uncertain team strengths and lets them change until the last match. A simpler Poisson model, M2, is the benchmark.
 
 See the [methodology](docs/methodology.md) and the [season simulation rules](docs/simulation.md).
 
@@ -52,8 +52,8 @@ uv run epl-forecast operate
 ## Validation
 
 - Every forecast archive passes the checks in the [product contract](docs/mvp.md) before publication. For example, event probabilities must sum to the places that the rules award.
-- Historical season panels compare M7 with M2 in every division: rank, points and event scores at five points in each season.
-- A match scoreboard compares M7 with M2 and with the betting market.
+- Historical season panels compare the structural model with M2 in every division: rank, points and event scores at five points in each season.
+- A match scoreboard compares M10 with M2 and with the betting market.
 - The prospective record scores each published forecast after the match.
 
 The [validation summary](docs/validation.md) gives the results and the commands to reproduce them.
@@ -61,7 +61,7 @@ The [validation summary](docs/validation.md) gives the results and the commands 
 ## Limitations
 
 - xG comes from API-Football. It starts in 2023 in the Premier League and the Championship and in August 2026 in League One and League Two. A match without xG updates the model on goals only.
-- The persistent M7 state does not use lineups, injuries, suspensions or transfers. The temporary matchday-squad continuity adjustment uses personnel evidence for Premier League and Championship fixtures in the next six days. It does not forecast personnel changes beyond the available evidence.
+- The persistent M10 state does not use lineups, injuries, suspensions or transfers. The temporary matchday-squad continuity adjustment uses personnel evidence for Premier League and Championship fixtures in the next six days. It does not forecast personnel changes beyond the available evidence.
 - The historical evaluation is retrospective, and it covers only nine to eleven seasons in each division.
 - Some playoff and scheduling details are explicit approximations.
 
@@ -72,11 +72,11 @@ See all [limitations](docs/limitations.md).
 | Document | Content |
 | --- | --- |
 | [Product contract](docs/mvp.md) | What each forecast contains and the checks it must pass |
-| [Methodology](docs/methodology.md) | The M7 model and the M2 benchmark |
+| [Methodology](docs/methodology.md) | The M10 model and the M2 benchmark |
 | [Season simulation](docs/simulation.md) | Division rules, playoffs, sanctions and fixture dates |
 | [Data and provenance](docs/data.md) | Providers, storage, identity and data commands |
 | [Operations](docs/operations.md) | Running, scheduling, publishing and the forecast record |
-| [Validation](docs/validation.md) | Evidence for M7 and how to reproduce it |
+| [Validation](docs/validation.md) | Evidence for M10 and how to reproduce it |
 | [Limitations](docs/limitations.md) | What the forecasts do not cover |
 | [Research history](docs/research.md) | Where the experiments and older models are kept |
 

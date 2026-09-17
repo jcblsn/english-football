@@ -1,6 +1,6 @@
 # Validation
 
-Four kinds of evidence support M7. This page gives the results and the commands to reproduce them.
+Four kinds of evidence support the structural model. This page gives the results and the commands to reproduce them. M10 replaced M7 in model version `v0.3.0`. The sections before [M10 Quality dynamics](#m10-quality-dynamics) report evidence that was made with M7, and they name M7.
 
 1. Product checks on every forecast archive.
 2. Historical season panels in all four divisions.
@@ -91,7 +91,7 @@ Over the full window, M7 has a lower log loss, Brier score and score NLL than M2
 
 The calibration error of M7 is higher than that of M2. Both models are worse than the betting market. For this reason, the market-assisted probability uses the market price with weight 1.0. See [methodology](methodology.md#market-assisted-probabilities).
 
-Match scores are only a part of the case for M7. The difference between the models is larger in the season panels, because the state uncertainty of M7 matters most for season distributions.
+Match scores were only a part of the case for M7. The difference between the models is larger in the season panels, because the state uncertainty of M7 matters most for season distributions.
 
 ## National League entry source
 
@@ -267,6 +267,45 @@ The first review is after the matches of 26 October 2026. The second review is a
 
 Remove or correct the adjustment at once if an audit finds a semantic or data error, such as a wrong club, a truncated squad, an identity split or an observation retrieved after the cutoff. A review that meets no removal condition keeps the adjustment without changing its frozen values.
 
+## M10 Quality dynamics
+
+M10 changes only the Quality dynamics of M7. M7 Quality returned to the league mean with annual retention 0.85. M10 Quality is a random-walk club level plus a form that returns to the level. The research is on the `research-m10-quality-dynamics` branch, in `docs/experiments/m10_quality_dynamics/`. Its plan was recorded before the candidate results, and its memo holds every table. All results are retrospective development evidence.
+
+### Selection
+
+The candidates were a grid of single AR(1) Quality processes, a chronological selection and an evidence-weighted average over that grid, and a level-plus-form grid. Each candidate made rolling daily forecasts in all four divisions from 2012/13. For each test season, the selection used only the pooled score NLL of earlier seasons. The level-plus-form selection chose the same point in every test season from 2015/16. The single-process selection changed between seasons and was worse on the same matches.
+
+### Match forecasts
+
+M10 minus M7 on 22,132 matches in 2015/16–2025/26. The intervals resample 28-day blocks in each season.
+
+| Scope | Log loss [95% interval] | Score NLL [95% interval] |
+| --- | --- | --- |
+| All divisions | −0.00107 [−0.00151, −0.00062] | −0.00076 [−0.00128, −0.00022] |
+| Premier League | −0.00268 [−0.00363, −0.00170] | −0.00267 [−0.00412, −0.00121] |
+| Championship | −0.00064 [−0.00136, +0.00008] | −0.00039 [−0.00124, +0.00048] |
+| League One | −0.00125 [−0.00202, −0.00051] | −0.00074 [−0.00175, +0.00027] |
+| League Two | −0.00019 [−0.00095, +0.00055] | +0.00018 [−0.00063, +0.00095] |
+
+The pooled log loss is lower in 10 of 11 seasons. The failure is 2020/21. The gain is largest for clubs at the strong and weak ends of the table. In the EFL divisions, M10 is worse than M7 in the first five matches of a club, and better later.
+
+On the Premier League scoreboard of 1,140 matches in 2023/24–2025/26, M10 has log loss 0.97595 and score NLL 2.96244. M7 with API-Football xG has 0.97830 and 2.96335. The market pool refit on the M10 predictions gives weight 1.0 again.
+
+### Season panels
+
+M10 and M7 used the same seasons, origins, seed 20260908 and 10,000 paths as the M2 panels above. The intervals resample whole seasons.
+
+| Division | Points CRPS lower for M10 | Interval below zero | Rank RPS | 90% points coverage |
+| --- | --- | --- | --- | --- |
+| Premier League | 5 of 5 origins | 3 of 5 | Lower at 5 of 5, intervals include zero | Increases at every origin |
+| Championship | 4 of 5, equal at preseason | 1 of 5 | Worse at preseason, +0.0007 [+0.0002, +0.0012] | Increases at every origin |
+| League One | 5 of 5 origins | 4 of 5 | Changes by less than 0.001 | Increases at every origin |
+| League Two | 4 of 5 origins | 1 of 5 | Changes by less than 0.0005 | Increases at every origin |
+
+M7 season intervals were too narrow early in the season. M10 intervals are 1.7–3.2 points wider at preseason and closer to the nominal coverage. In the Championship, the preseason title, promotion and playoff Brier scores are worse.
+
+The evidence against M10 is the flat League Two result and the weaker early-season EFL forecasts. The prospective record must confirm the change.
+
 ## Prospective record
 
 `record.json` scores each published match forecast after the result. It uses the last live forecast made before kickoff. The record starts fresh with the production publication surface, so it has too few matches for a conclusion. It will become the main test of the product.
@@ -293,7 +332,7 @@ uv run python scripts/report_seasons.py --evaluation runs/rescore-league-one --o
 With access to `page324-data`, run a season panel again and archive it. The history comes from R2:
 
 ```sh
-OPENBLAS_NUM_THREADS=1 uv run python scripts/evaluate_seasons.py --competition eng-league-one --models M2 M7 --seasons 2015 2016 2017 2018 2021 2022 2023 2024 2025 --output runs/panel-league-one
+OPENBLAS_NUM_THREADS=1 uv run python scripts/evaluate_seasons.py --competition eng-league-one --models M2 M10 --seasons 2015 2016 2017 2018 2021 2022 2023 2024 2025 --output runs/panel-league-one
 uv run python scripts/archive_seasons.py --evaluation runs/panel-league-one --output runs/evidence/eng-league-one/forecast_marginals.json.gz
 ```
 

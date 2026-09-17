@@ -37,7 +37,7 @@ Each collection run that sends requests to API-Football writes one usage record 
 
 `audits/collection.json` also has an informational readiness summary. It reports finished matches that still have incomplete xG after three days, Premier League matches in the next seven days that have no market data, and FPL and API-Football availability disagreements in the personnel horizon. These signals do not stop collection, forecasting or publication.
 
-A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because M7 does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
+A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because the structural model does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
 
 Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. The script reads only the R2 catalog. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance. Later routine runs add only new batches to the compact catalog. Compaction does not delete earlier R2 objects. Compaction can run while production collects, because each catalog update is a conditional write that keeps the batches of the other writer.
 
@@ -72,6 +72,7 @@ The public version is part of the production fingerprint. When you change it, ev
 | `v0.1` | 15 September 2026 | The National League became an entry source for clubs promoted to League Two, and M7 observed API-Football team xG in every division. |
 | `v0.2` | 15 September 2026 | Premier League and Championship fixtures in the next six days get a temporary matchday-squad continuity adjustment. The persistent M7 state does not change. See [methodology](methodology.md#matchday-squad-continuity) and [validation](validation.md#matchday-squad-continuity). |
 | `v0.2.1` | 16 September 2026 | A usable FPL availability status takes priority over API-Football for a Premier League player. Repeated captures of one transfer event count as one membership reason. |
+| `v0.3.0` | Not yet merged | M10 replaces M7. Club Quality is a persistent level, which does not return to the league mean, plus a form that returns to the level. See [methodology](methodology.md#dynamics) and [validation](validation.md#m10-quality-dynamics). |
 
 A new version needs new hindcasts. The hindcast edition of a version freezes its model code, so the `v0.1` hindcasts cannot describe `v0.2`.
 
