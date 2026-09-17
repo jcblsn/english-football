@@ -1,0 +1,4 @@
+interface:
+  display_name: "Query Football Data"
+  short_description: "Analyze the authoritative football data"
+  default_prompt: "Use $query-football-data to answer a question from the repository analytical data."
