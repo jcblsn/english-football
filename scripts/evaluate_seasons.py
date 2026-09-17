@@ -31,14 +31,12 @@ SPECS = {
 }
 
 
-def competition_config(name, competition, train_competitions=None, data_root=None):
+def competition_config(name, competition, train_competitions=None):
     config_path, model_id = SPECS[name]
     config = load_config(Path(config_path))
     config["competition_id"] = competition
     for spec in config["models"]:
         spec.setdefault("parameters", {})["competition_id"] = competition
-        if data_root is not None and "data_root" in spec["parameters"]:
-            spec["parameters"]["data_root"] = str(data_root)
         if train_competitions and "train_competitions" in spec:
             spec["train_competitions"] = list(train_competitions)
     return config, model_id
@@ -48,7 +46,6 @@ def main():
     load_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--simulations", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=20260908)
     parser.add_argument("--seasons", nargs="+", type=int, default=list(range(2015, 2026)))
@@ -61,7 +58,7 @@ def main():
         help="Replace the multi-division training set of every spec that declares one",
     )
     args = parser.parse_args()
-    data = Dataset(args.data)
+    data = Dataset()
     try:
         matches = data.matches()
         manifest = data.provenance()
@@ -69,7 +66,7 @@ def main():
     finally:
         data.close()
     configs = {
-        name: competition_config(name, args.competition, args.train_competitions, args.data)[0]
+        name: competition_config(name, args.competition, args.train_competitions)[0]
         for name in args.models
     }
     metadata = {

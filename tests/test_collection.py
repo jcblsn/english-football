@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from epl_forecast.data.capture import retain
 from epl_forecast.datasets import publish
 from epl_forecast.pipeline import information_fingerprint
 
@@ -22,19 +21,6 @@ def scheduled_fixture(competition=COMPETITION):
         "home_goals": None,
         "away_goals": None,
     }
-
-
-def test_normalize_rejects_corrupted_raw_capture(tmp_path):
-    import pytest
-
-    from epl_forecast.data.collect import normalize
-
-    record = retain(
-        tmp_path, "fpl", "https://example.test", b"{}", "2026-09-08T00:00:00+00:00", "prospective"
-    )
-    (tmp_path / record["raw_path"]).write_bytes(b"modified")
-    with pytest.raises(ValueError, match="hash mismatch"):
-        normalize(tmp_path)
 
 
 def test_final_fixture_capture_has_bounded_correction_checkpoints():
@@ -145,7 +131,7 @@ def test_collection_readiness_reports_delayed_inputs_without_a_gate(monkeypatch)
 def test_market_snapshot_changes_forecast_fingerprint(tmp_path):
     from epl_forecast.datasets import Dataset
 
-    before = Dataset(tmp_path)
+    before = Dataset(workspace=tmp_path)
     try:
         first = information_fingerprint(before, COMPETITION)
     finally:
@@ -174,7 +160,7 @@ def test_market_snapshot_changes_forecast_fingerprint(tmp_path):
             ],
         },
     )
-    after = Dataset(tmp_path)
+    after = Dataset(workspace=tmp_path)
     try:
         second = information_fingerprint(after, COMPETITION)
     finally:
@@ -202,7 +188,7 @@ def test_retrieval_time_alone_does_not_change_the_forecast_fingerprint(tmp_path)
         "context": {},
     }
     publish(tmp_path, request, {"fixtures": [scheduled_fixture()], "odds": [odds]})
-    before = Dataset(tmp_path)
+    before = Dataset(workspace=tmp_path)
     try:
         first = information_fingerprint(before, COMPETITION)
     finally:
@@ -216,7 +202,7 @@ def test_retrieval_time_alone_does_not_change_the_forecast_fingerprint(tmp_path)
         },
         {"odds": [odds]},
     )
-    after = Dataset(tmp_path)
+    after = Dataset(workspace=tmp_path)
     try:
         assert information_fingerprint(after, COMPETITION) == first
     finally:
@@ -233,7 +219,7 @@ def test_unused_availability_does_not_change_the_forecast_fingerprint(tmp_path):
         "source_sha256": "a" * 64,
         "context": {},
     }
-    before = Dataset(tmp_path)
+    before = Dataset(workspace=tmp_path)
     try:
         first = information_fingerprint(before, COMPETITION)
     finally:
@@ -255,7 +241,7 @@ def test_unused_availability_does_not_change_the_forecast_fingerprint(tmp_path):
             ]
         },
     )
-    after = Dataset(tmp_path)
+    after = Dataset(workspace=tmp_path)
     try:
         assert information_fingerprint(after, COMPETITION) == first
     finally:
@@ -265,7 +251,7 @@ def test_unused_availability_does_not_change_the_forecast_fingerprint(tmp_path):
 def test_one_competition_schedule_does_not_change_another_fingerprint(tmp_path):
     from epl_forecast.datasets import Dataset
 
-    before = Dataset(tmp_path)
+    before = Dataset(workspace=tmp_path)
     try:
         first = information_fingerprint(before, COMPETITION)
     finally:
@@ -281,7 +267,7 @@ def test_one_competition_schedule_does_not_change_another_fingerprint(tmp_path):
         },
         {"fixtures": [scheduled_fixture("eng-league-two")]},
     )
-    after = Dataset(tmp_path)
+    after = Dataset(workspace=tmp_path)
     try:
         assert information_fingerprint(after, COMPETITION) == first
     finally:

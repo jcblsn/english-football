@@ -31,7 +31,6 @@ def test_r2_configuration_names_every_missing_setting(monkeypatch):
 
 def test_dataset_reads_manifest_catalog_and_parquet_from_a_store(tmp_path):
     remote = tmp_path / "remote"
-    local = tmp_path / "local"
     request = {
         "provider": "test",
         "retrieved_at": "2026-09-14T12:00:00+00:00",
@@ -59,7 +58,7 @@ def test_dataset_reads_manifest_catalog_and_parquet_from_a_store(tmp_path):
         def configure_duckdb(self, connection):
             pass
 
-    data = Dataset(local, store=Store())
+    data = Dataset(store=Store())
     try:
         assert data.rows("SELECT team_id, name FROM teams") == [
             {"team_id": "arsenal", "name": "Arsenal"}
@@ -67,3 +66,55 @@ def test_dataset_reads_manifest_catalog_and_parquet_from_a_store(tmp_path):
         assert json.loads(json.dumps(data.provenance()))["batches"] == [manifest["batch_id"]]
     finally:
         data.close()
+
+
+class CatalogStore:
+    def __init__(self, directory, manifests):
+        self.directory = directory
+        self.manifests = manifests
+
+    def get_json(self, key, default=None):
+        return {"manifests": self.manifests} if key == "state/manifests.json" else default
+
+    def uri(self, key):
+        return str(self.directory / key)
+
+    def configure_duckdb(self, connection):
+        pass
+
+
+def team_request(source):
+    return {
+        "provider": "test",
+        "retrieved_at": "2026-09-14T12:00:00+00:00",
+        "evidence_basis": "captured",
+        "source_sha256": source * 64,
+    }
+
+
+def test_a_workspace_adds_only_batches_that_are_not_in_r2(tmp_path):
+    remote = tmp_path / "remote"
+    workspace = tmp_path / "workspace"
+    tables = {"teams": [{"team_id": "arsenal", "name": "Arsenal", "api_id": 1}]}
+    manifest = publish(remote, team_request("a"), tables)
+    stale = publish(workspace, team_request("a"), tables)
+    assert stale["batch_id"] == manifest["batch_id"]
+    for file in stale["files"]:
+        (workspace / file["path"]).unlink()
+    publish(workspace, team_request("b"), {"teams": [{"team_id": "chelsea", "name": "Chelsea"}]})
+
+    data = Dataset(store=CatalogStore(remote, [manifest]), workspace=workspace)
+    try:
+        assert data.rows("SELECT team_id FROM teams ORDER BY 1") == [
+            {"team_id": "arsenal"},
+            {"team_id": "chelsea"},
+        ]
+    finally:
+        data.close()
+
+
+def test_a_dataset_needs_r2_or_a_capture_workspace(monkeypatch):
+    for name in ("R2_ACCOUNT_ID", "R2_DATA_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValueError, match="R2 data bucket or a capture workspace"):
+        Dataset()

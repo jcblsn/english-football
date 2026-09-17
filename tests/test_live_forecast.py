@@ -1,3 +1,4 @@
+import json
 import math
 
 import numpy as np
@@ -54,6 +55,29 @@ def test_a_neutral_personnel_stage_equals_the_unadjusted_stage():
         assert stages["unadjusted"][f"p_{side}"] == stages["personnel_adjusted"][f"p_{side}"]
 
 
+class Catalog:
+    """A fake R2 data bucket that holds every batch published in one directory."""
+
+    def __init__(self, directory):
+        self.directory = directory
+
+    def get_json(self, key, default=None):
+        if key != "state/manifests.json":
+            return default
+        manifests = sorted(self.directory.glob("manifests/*.json"))
+        return {"manifests": [json.loads(path.read_text()) for path in manifests]}
+
+    def uri(self, key):
+        return str(self.directory / key)
+
+    def configure_duckdb(self, connection):
+        pass
+
+
+def catalog(directory):
+    return Catalog(directory)
+
+
 def test_a_postponed_fixture_waits_on_the_cutoff_day(tmp_path):
     from datetime import UTC, date, datetime
 
@@ -88,7 +112,7 @@ def test_a_postponed_fixture_waits_on_the_cutoff_day(tmp_path):
     ]
     publish(tmp_path, evidence, {"fixtures": rows})
     cutoff = datetime(2026, 9, 11, 12, tzinfo=UTC)
-    live = load_live_season(tmp_path, cutoff, "eng-league-one", "2026-2027")
+    live = load_live_season(cutoff, "eng-league-one", "2026-2027", catalog(tmp_path))
     (waiting,) = live.remaining
     assert waiting.match_date == date(2026, 9, 11)
     assert live.details[waiting.match_id]["status"] == "unscheduled"
@@ -130,7 +154,7 @@ def test_a_match_that_started_without_a_result_waits_on_the_cutoff_day(tmp_path)
     ]
     publish(tmp_path, evidence, {"fixtures": rows})
     live = load_live_season(
-        tmp_path, datetime(2026, 9, 11, 12, tzinfo=UTC), "eng-league-one", "2026-2027"
+        datetime(2026, 9, 11, 12, tzinfo=UTC), "eng-league-one", "2026-2027", catalog(tmp_path)
     )
     (waiting,) = live.remaining
     assert waiting.match_date == date(2026, 9, 11)

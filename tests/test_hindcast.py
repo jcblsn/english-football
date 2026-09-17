@@ -18,7 +18,6 @@ from epl_forecast.hindcast import (
     publish_index,
     publish_origin,
     publish_season,
-    run_hindcasts,
     simulate_origin,
     weekly_origins,
 )
@@ -181,13 +180,6 @@ def test_an_edition_refuses_a_changed_model():
     claim_edition(store, dict(manifest))
     with pytest.raises(ValueError, match="different model"):
         claim_edition(store, {**manifest, "model_code": {"model.py": "b"}})
-
-
-def test_hindcasts_refuse_a_local_workspace_with_contents(tmp_path):
-    (tmp_path / "manifests").mkdir()
-    (tmp_path / "manifests/old.json").write_text("{}")
-    with pytest.raises(ValueError, match="must be empty"):
-        run_hindcasts(Store(), Store(), tmp_path)
 
 
 def test_an_origin_uses_only_results_available_on_its_day(full_season, monkeypatch):

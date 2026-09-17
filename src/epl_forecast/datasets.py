@@ -1,4 +1,4 @@
-"""Canonical local datasets; no network or provider payload interpretation."""
+"""Canonical datasets read from R2 and from the workspace of one capture; no payload interpretation."""
 
 import json
 from collections import defaultdict
@@ -201,35 +201,41 @@ def publish(root, request, tables):
 
 
 class Dataset:
-    def __init__(
-        self,
-        root=Path("data"),
-        cutoff=None,
-        manifests=None,
-        store=None,
-        *,
-        include_local=True,
-    ):
-        self.root = Path(root)
+    """Canonical evidence from the R2 catalog and, during a capture, from its temporary workspace.
+
+    A workspace file is read only for a batch that is not yet in the R2 catalog, so a local file
+    never replaces R2 evidence.
+    """
+
+    def __init__(self, cutoff=None, *, store=None, workspace=None, manifests=None):
         self.store = store if store is not None else r2_store_if_configured("R2_DATA_BUCKET")
-        self.include_local = include_local
+        self.workspace = Path(workspace) if workspace is not None else None
+        if self.store is None and self.workspace is None:
+            raise ValueError("A dataset needs the R2 data bucket or a capture workspace")
         self.cutoff = timestamp(cutoff) if cutoff is not None else None
+        self.local_batches = set()
         if manifests is None:
+            remote = (
+                self.store.get_json("state/manifests.json", {}).get("manifests", [])
+                if self.store
+                else []
+            )
             local = (
                 [
                     json.loads(p.read_text())
-                    for p in sorted((self.root / "manifests").glob("*.json"))
+                    for p in sorted((self.workspace / "manifests").glob("*.json"))
                 ]
-                if include_local
+                if self.workspace
                 else []
             )
-            catalog = self.store.get_json("state/manifests.json", {}) if self.store else {}
-            remote = catalog.get("manifests", [])
+            remote_batches = {m["batch_id"] for m in remote}
+            self.local_batches = {m["batch_id"] for m in local} - remote_batches
             manifests = list({m["batch_id"]: m for m in [*remote, *local]}.values())
-        self.manifests = manifests
+        elif self.store is None:
+            self.local_batches = {m["batch_id"] for m in manifests}
         self.manifests = [
             m
-            for m in self.manifests
+            for m in manifests
             if self.cutoff is None
             or m.get("covers_history")
             or timestamp(m["request"]["retrieved_at"]) <= self.cutoff
@@ -242,15 +248,8 @@ class Dataset:
             paths = []
             for manifest in self.manifests:
                 for file in manifest["files"]:
-                    if file["table"] != table:
-                        continue
-                    local_path = self.root / file["path"]
-                    if self.include_local and local_path.exists():
-                        paths.append(str(local_path))
-                    elif self.store:
-                        paths.append(self.store.uri(file["path"]))
-                    else:
-                        paths.append(str(local_path))
+                    if file["table"] == table:
+                        paths.append(self._location(manifest, file))
             if paths:
                 self.con.execute(f"CREATE TABLE {table}_empty ({schema}, {COMMON})")
                 self.con.read_parquet(
@@ -294,6 +293,11 @@ class Dataset:
                     "normalization_version DESC NULLS LAST)=1"
                 )
 
+    def _location(self, manifest, file) -> str:
+        if manifest["batch_id"] in self.local_batches:
+            return str(self.workspace / file["path"])
+        return self.store.uri(file["path"])
+
     def close(self):
         self.con.close()
 
@@ -312,13 +316,10 @@ class Dataset:
     def verify(self):
         for m in self.manifests:
             for f in m["files"]:
-                local = self.root / f["path"]
                 digest = (
-                    file_hash(local)
-                    if local.exists()
+                    file_hash(self.workspace / f["path"])
+                    if m["batch_id"] in self.local_batches
                     else sha256_bytes(self.store.get_bytes(f["path"]))
-                    if self.store
-                    else None
                 )
                 if digest != f["sha256"]:
                     raise ValueError(f"Parquet checksum mismatch: {f['path']}")
@@ -393,8 +394,8 @@ class Dataset:
         )
 
 
-def load_dataset(directory=Path("data"), cutoff=None):
-    data = Dataset(directory, cutoff)
+def load_dataset(cutoff=None, store=None):
+    data = Dataset(cutoff, store=store)
     try:
         return data.matches(), data.rows("SELECT * FROM odds"), data.provenance()
     finally:
@@ -442,11 +443,3 @@ def select_xg_observations(understat, api):
         r for r in understat if r["match_date"] < first.get(r["match_id"].split(":")[0], "9")
     ]
     return sorted([*earlier, *api], key=lambda row: (row["match_date"], row["match_id"]))
-
-
-def load_player_history(root=Path("data")):
-    data = Dataset(root)
-    try:
-        return data.player_history()
-    finally:
-        data.close()

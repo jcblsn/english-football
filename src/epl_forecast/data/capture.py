@@ -1,10 +1,8 @@
 """Immutable HTTP captures and resumable local request checkpoints."""
 
-import fcntl
 import json
 import os
 import time
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -21,10 +19,6 @@ class QuotaReached(SourceAccessError):
     pass
 
 
-class WriterBusy(SourceAccessError):
-    pass
-
-
 def api_key():
     value = os.environ.get("API_FOOTBALL_KEY")
     if not value and Path(".env").exists():
@@ -34,18 +28,6 @@ def api_key():
     if not value:
         raise SourceAccessError("Set API_FOOTBALL_KEY in the environment or ignored .env")
     return value
-
-
-@contextmanager
-def writer_lock(root):
-    root = Path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / "writer.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise WriterBusy("Another local data writer is running") from None
-        yield
 
 
 def retain(root, provider, url, payload, retrieved_at, evidence_basis, context=None):
@@ -69,8 +51,8 @@ def retain(root, provider, url, payload, retrieved_at, evidence_basis, context=N
 
 
 class Fetcher:
-    def __init__(self, root=Path("data"), reserve=0, store=None):
-        self.root, self.reserve, self.store = Path(root), reserve, store
+    def __init__(self, root, store=None):
+        self.root, self.store = Path(root), store
         self.last_call = 0.0
         self.interval = 0.26
         self.remaining = None
@@ -145,8 +127,8 @@ class Fetcher:
             )
         for attempt in range(4):
             if api:
-                if self.remaining is not None and self.remaining <= self.reserve:
-                    raise QuotaReached("Daily backfill budget exhausted; resume after midnight UTC")
+                if self.remaining is not None and self.remaining <= 0:
+                    raise QuotaReached("The API-Football daily quota is exhausted")
                 time.sleep(max(0, self.interval - (time.monotonic() - self.last_call)))
                 self.last_call = time.monotonic()
                 self.api_calls += 1

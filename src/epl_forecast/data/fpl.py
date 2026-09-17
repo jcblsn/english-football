@@ -31,7 +31,7 @@ def ingest(root, record, payload):
     teams = {t["id"]: aliases[t["name"]] for t in b["teams"]}
     current = next((e["id"] for e in b["events"] if e["is_current"]), None)
     upcoming = next((e["id"] for e in b["events"] if e["is_next"]), None)
-    data = Dataset(root)
+    data = Dataset(workspace=root)
     try:
         players = data.rows("SELECT * FROM players_observations")
         known = {}

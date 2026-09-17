@@ -8,7 +8,7 @@ This page states how the product runs, what it publishes and where it keeps old 
 uv run epl-forecast operate
 ```
 
-`operate` does these steps:
+`operate` does these steps. It keeps the capture and the private archive in temporary directories that it deletes at the end of the run.
 
 1. It loads compact operational state from `page324-data`.
 2. It collects each data source when that source is eligible. A retained response that is still inside its refresh interval is not requested, downloaded or normalized again. The run reads a retained body only when collection needs it, for example to find the teams in a fixture list.
@@ -26,7 +26,6 @@ A failed or unverified division does not publish. Other verified divisions in th
 | `--force` | Run even if the effective inputs did not change. |
 | `--no-collect` | Use the canonical archive as it is. |
 | `--simulations 10000` | Set the number of season paths. The publication floor is 1,000. |
-| `--runs`, `--data` | Set ephemeral workspace locations. |
 
 ## Schedule and refresh rules
 
@@ -40,7 +39,7 @@ Each collection run that sends requests to API-Football writes one usage record 
 
 A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because M7 does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
 
-Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. The script compacts from an empty workspace, so local files do not enter the R2 history. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance. Later routine runs add only new batches to the compact catalog. Compaction does not delete earlier R2 objects.
+Routine production does not compact canonical data. Run `uv run python scripts/compact_r2.py` as maintenance after 250 incremental batches collect. The script reads only the R2 catalog. Use `--force` only when an earlier compaction is useful. Compaction keeps row retrieval times, so historical cutoff reads give the same result before and after maintenance. Later routine runs add only new batches to the compact catalog. Compaction does not delete earlier R2 objects.
 
 GitHub Actions is the normal production writer. The workflow concurrency group prevents two production runs at the same time, but it does not know about local commands. Maintenance and migration writes to R2 must not overlap production. Before such a write, run `gh workflow disable production.yml`, make sure that no production run is in progress, do the write, then run `gh workflow enable production.yml`.
 
@@ -120,7 +119,7 @@ A hindcast is a retrospective forecast of a completed season. It is a separate p
 uv run epl-forecast hindcast --workers 7
 ```
 
-The command makes hindcasts for the four divisions in 2021/22–2025/26. Use `--competition` and `--seasons` to make a part of the archive. The `--data` workspace must be empty. The command reads the canonical history from `page324-data`. It does not use the files in the repository `data/` directory.
+The command makes hindcasts for the four divisions in 2021/22–2025/26. Use `--competition` and `--seasons` to make a part of the archive. The command reads the canonical history from `page324-data`.
 
 The rules for each hindcast:
 

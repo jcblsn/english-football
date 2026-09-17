@@ -50,6 +50,16 @@ class Store:
         pass
 
 
+def seeded_store(directory):
+    """A fake R2 bucket whose canonical catalog holds every batch published in the directory."""
+    store = Store(directory)
+    manifests = [
+        json.loads(path.read_text()) for path in sorted(directory.glob("manifests/*.json"))
+    ]
+    store.put_json("state/manifests.json", manifest_state(manifests))
+    return store
+
+
 def request(url, retrieved_at, source="a"):
     return {
         "provider": "test",
@@ -186,8 +196,8 @@ def test_compaction_preserves_row_level_cutoffs(tmp_path):
         },
         {"odds": [{**odds, "home_odds": 2.5}]},
     )
-    store = Store(tmp_path / "remote")
-    result = compact_canonical(root, store)
+    store = seeded_store(root)
+    result = compact_canonical(store)
     manifest = json.loads(store.objects[f"manifests/{result['batch_id']}.json"])
     compacted = tmp_path / "compacted"
     for file in manifest["files"]:
@@ -195,8 +205,8 @@ def test_compaction_preserves_row_level_cutoffs(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(store.objects[file["path"]])
     data = Dataset(
-        compacted,
         datetime(2026, 9, 13, 18, tzinfo=UTC),
+        workspace=compacted,
         manifests=[manifest],
         store=None,
     )
@@ -204,7 +214,7 @@ def test_compaction_preserves_row_level_cutoffs(tmp_path):
         assert data.rows("SELECT home_odds FROM odds") == [{"home_odds": 2.0}]
     finally:
         data.close()
-    repeated = compact_canonical(root, store)
+    repeated = compact_canonical(store)
     assert repeated["rows"] == result["rows"]
 
 
@@ -268,7 +278,7 @@ def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
     )
 
     def personnel_at(directory, manifests, cutoff):
-        data = Dataset(directory, cutoff, manifests=manifests, store=None)
+        data = Dataset(cutoff, workspace=directory, manifests=manifests, store=None)
         try:
             evidence = Evidence(cutoff, **load_evidence(data, ["2026-2027"]))
             estimate = team_continuity(
@@ -289,8 +299,8 @@ def test_compaction_keeps_the_snapshots_that_select_the_evidence(tmp_path):
     assert source_before[0] == {"arsenal": {"p1"}}
     assert source_after[0] == {"arsenal": set()}
 
-    store = Store(tmp_path / "remote")
-    result = compact_canonical(root, store)
+    store = seeded_store(root)
+    result = compact_canonical(store)
     manifest = json.loads(store.objects[f"manifests/{result['batch_id']}.json"])
     compacted = tmp_path / "compacted"
     for file in manifest["files"]:
@@ -323,7 +333,6 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
         raise AssertionError("A retained response inside its interval must not be requested")
 
     monkeypatch.setattr(collection.api, "LEAGUES", {})
-    monkeypatch.setattr(collection, "COMPETITIONS", {})
     monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)
@@ -332,7 +341,7 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
 
     collect_and_sync(tmp_path / "incremental", store)
     assert len(store.get_json("state/manifests.json")["manifests"]) == 3
-    compact_canonical(tmp_path / "maintenance", store)
+    compact_canonical(store)
     catalog = store.objects["state/manifests.json"]
     requests = store.objects["state/collection.json"]
     assert len(json.loads(catalog)["manifests"]) == 1
@@ -370,7 +379,6 @@ def test_api_football_usage_records_only_runs_that_call_the_provider(tmp_path, m
     monkeypatch.setenv("API_FOOTBALL_KEY", "test-only-credential")
     monkeypatch.setattr(capture.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(collection.api, "LEAGUES", {39: "eng-premier-league"})
-    monkeypatch.setattr(collection, "COMPETITIONS", {})
     monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)

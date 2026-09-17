@@ -890,7 +890,6 @@ def open_analysis_session(
     *,
     data_store=None,
     publish_store=None,
-    root: Path = Path("data"),
     include_derived: bool = True,
     session_directory: Path | None = None,
 ) -> AnalysisSession:
@@ -903,13 +902,13 @@ def open_analysis_session(
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
     if session_directory is None:
-        return _build_analysis_session(cutoff, data_store, publish_store, root, include_derived)
+        return _build_analysis_session(cutoff, data_store, publish_store, include_derived)
     slot, identity = _session_identity(cutoff, data_store, publish_store, include_derived)
     path = session_directory / f"{slot}-{identity}.duckdb"
     if not path.exists():
         session_directory.mkdir(parents=True, exist_ok=True)
         temporary = session_directory / f".{path.stem}.{os.getpid()}.tmp"
-        session = _build_analysis_session(cutoff, data_store, publish_store, root, include_derived)
+        session = _build_analysis_session(cutoff, data_store, publish_store, include_derived)
         try:
             _write_session_file(session.connection, temporary)
         finally:
@@ -924,9 +923,9 @@ def open_analysis_session(
 
 
 def _build_analysis_session(
-    cutoff, data_store, publish_store, root: Path, include_derived: bool
+    cutoff, data_store, publish_store, include_derived: bool
 ) -> AnalysisSession:
-    dataset = Dataset(root, cutoff, store=data_store, include_local=False)
+    dataset = Dataset(cutoff, store=data_store)
     try:
         if include_derived:
             publish_store.configure_duckdb(dataset.con, name="page324_publish")

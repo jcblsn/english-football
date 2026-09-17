@@ -13,6 +13,19 @@ def match_on(day: date, home: str, away: str, hg: int, ag: int, season="2020-202
     return Match(fixture, hg, ag)
 
 
+@pytest.fixture(autouse=True)
+def no_r2_environment(monkeypatch):
+    """Tests use fake stores; a developer shell with R2 settings must not reach the real buckets."""
+    for name in (
+        "R2_ACCOUNT_ID",
+        "R2_DATA_BUCKET",
+        "R2_PUBLISH_BUCKET",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def small_history():
     teams = ["a", "b", "c", "d"]

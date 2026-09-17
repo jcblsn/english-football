@@ -279,7 +279,7 @@ def identity_keys(root):
     cached = _IDENTITY_KEYS.get(str(root))
     if cached is not None and cached[0] == stamp:
         return cached[1]
-    data = Dataset(root)
+    data = Dataset(workspace=root)
     try:
         keys = (
             {
@@ -371,7 +371,7 @@ def source_snapshots(record, body, tables, root):
             fixture_keys = identity_keys(root)[1]
             match_ids = {fixture_keys[value] for value in missing if value in fixture_keys}
             if match_ids:
-                data = Dataset(root)
+                data = Dataset(workspace=root)
                 try:
                     placeholders = ", ".join("?" for _ in match_ids)
                     known = data.rows(

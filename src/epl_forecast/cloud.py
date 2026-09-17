@@ -9,12 +9,6 @@ from epl_forecast.datasets import KEYS, SCHEMAS, Dataset
 from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
 
 
-def read_manifests(root: Path) -> list[dict]:
-    return [
-        json.loads(path.read_text()) for path in sorted((Path(root) / "manifests").glob("*.json"))
-    ]
-
-
 def collection_state(records: list[dict]) -> dict:
     latest = {}
     for record in sorted(records, key=lambda row: row["retrieved_at"]):
@@ -127,11 +121,13 @@ def sync_tree(root: Path, store: R2Store, prefix: str) -> dict:
     return {"uploaded": len(pending), "files": len(paths), "prefix": prefix}
 
 
-def compact_canonical(root: Path, store: R2Store) -> dict:
-    root = Path(root)
-    remote = store.get_json("state/manifests.json", {}).get("manifests", [])
+def compact_canonical(store: R2Store) -> dict:
+    """Compact the R2 canonical catalog into one batch and switch the catalog to it."""
     source = list(
-        {manifest["batch_id"]: manifest for manifest in [*remote, *read_manifests(root)]}.values()
+        {
+            manifest["batch_id"]: manifest
+            for manifest in store.get_json("state/manifests.json", {}).get("manifests", [])
+        }.values()
     )
     batch_id = sha256_bytes(
         json_bytes(
@@ -143,7 +139,7 @@ def compact_canonical(root: Path, store: R2Store) -> dict:
     )
     with tempfile.TemporaryDirectory(prefix="page324-compact-") as temporary:
         staging = Path(temporary)
-        data = Dataset(root, store=store)
+        data = Dataset(store=store, manifests=source)
         files = []
         rows = {}
         try:

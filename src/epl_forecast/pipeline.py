@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from datetime import UTC, datetime
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from epl_forecast.cloud import sync_data, sync_tree
 from epl_forecast.competitions import COMPETITION_IDS
-from epl_forecast.data.capture import SourceAccessError, writer_lock
+from epl_forecast.data.capture import SourceAccessError
 from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
 from epl_forecast.personnel import current_adjustments
@@ -54,15 +55,13 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(command, text=True, capture_output=True, check=False, cwd=REPOSITORY)
 
 
-def run_forecast(data: Path, league: str, cutoff: datetime, output: Path, simulations: int):
+def run_forecast(league: str, cutoff: datetime, output: Path, simulations: int):
     return _run(
         [
             sys.executable,
             "-m",
             "epl_forecast.cli",
             "forecast",
-            "--data",
-            str(data),
             "--competition",
             league,
             "--cutoff",
@@ -79,7 +78,7 @@ def run_forecast(data: Path, league: str, cutoff: datetime, output: Path, simula
     )
 
 
-def verify_archive(data: Path, archive: Path, output: Path):
+def verify_archive(archive: Path, output: Path):
     return _run(
         [
             sys.executable,
@@ -88,8 +87,6 @@ def verify_archive(data: Path, archive: Path, output: Path):
             "verify",
             "--archive",
             str(archive),
-            "--data",
-            str(data),
             "--output",
             str(output),
         ]
@@ -177,34 +174,6 @@ def information_fingerprint(data, competition_id: str):
     return sha256_bytes(json.dumps(records, default=str, sort_keys=True).encode())
 
 
-def install_launch_agent(label, arguments, root, interval_seconds, logs=None):
-    """Install and start a per-user launchd job, replacing any earlier one."""
-    import os
-    import plistlib
-
-    root = Path(root).resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    logs = logs or label.rsplit(".", 1)[-1]
-    path = Path.home() / "Library/LaunchAgents" / f"{label}.plist"
-    config = {
-        "Label": label,
-        "ProgramArguments": list(arguments),
-        "WorkingDirectory": str(REPOSITORY),
-        "StartInterval": int(interval_seconds),
-        "RunAtLoad": True,
-        "ProcessType": "Background",
-        "StandardOutPath": str(root / f"{logs}.log"),
-        "StandardErrorPath": str(root / f"{logs}-errors.log"),
-        "EnvironmentVariables": {"OPENBLAS_NUM_THREADS": "1"},
-    }
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", f"{domain}/{label}"], capture_output=True, check=False)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(plistlib.dumps(config))
-    subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
-    return path
-
-
 MODEL_CODE = (
     Path("src/epl_forecast/models"),
     Path("src/epl_forecast/competitions.py"),
@@ -244,18 +213,15 @@ def production_fingerprint(data_fingerprint: str, model_version: str) -> str:
     )
 
 
-def collect_and_sync(data: Path, data_store) -> tuple[dict, dict]:
-    """Collect into the workspace, then upload only the objects that this collection created."""
-    with writer_lock(data):
-        old_manifests = set((data / "manifests").glob("*.json"))
-        old_requests = set((data / "requests").glob("*.json"))
-        collection = collect(data, store=data_store)
-        synced = sync_data(
-            data,
-            data_store,
-            manifest_paths=list(set((data / "manifests").glob("*.json")) - old_manifests),
-            request_paths=list(set((data / "requests").glob("*.json")) - old_requests),
-        )
+def collect_and_sync(workspace: Path, data_store) -> tuple[dict, dict]:
+    """Collect into an empty workspace, then upload the objects that this collection created."""
+    collection = collect(workspace, store=data_store)
+    synced = sync_data(
+        workspace,
+        data_store,
+        manifest_paths=list((workspace / "manifests").glob("*.json")),
+        request_paths=list((workspace / "requests").glob("*.json")),
+    )
     return collection, synced
 
 
@@ -264,8 +230,6 @@ def due(state: dict, fingerprint: str, competition: str) -> bool:
 
 
 def operate(
-    data: Path = Path("data"),
-    runs: Path = Path("runs/product"),
     simulations: int = 10000,
     force: bool = False,
     collect_first: bool = True,
@@ -274,7 +238,6 @@ def operate(
 ) -> dict:
     operation_started = time.monotonic()
     progress("operation_started", collect_first=collect_first, force=force)
-    data, runs = Path(data), Path(runs)
     data_store = data_store if data_store is not None else r2_store_if_configured("R2_DATA_BUCKET")
     publish_store = (
         publish_store if publish_store is not None else r2_store_if_configured("R2_PUBLISH_BUCKET")
@@ -287,7 +250,10 @@ def operate(
         collection_started = time.monotonic()
         progress("collection_started")
         try:
-            result["collection"], result["data_sync"] = collect_and_sync(data, data_store)
+            with tempfile.TemporaryDirectory(prefix="page324-capture-") as workspace:
+                result["collection"], result["data_sync"] = collect_and_sync(
+                    Path(workspace), data_store
+                )
         except SourceAccessError as error:
             progress("collection_failed", detail=str(error))
             return {"status": "skipped", "reason": str(error)}
@@ -301,7 +267,7 @@ def operate(
     model_version = policy["product"]["model_version"]
     fingerprint_started = time.monotonic()
     progress("fingerprint_started", model_version=model_version)
-    dataset = Dataset(data, now, store=data_store)
+    dataset = Dataset(now, store=data_store)
     try:
         fingerprints = {
             competition_id: production_fingerprint(
@@ -333,14 +299,46 @@ def operate(
         )
         return result
     run_id = forecast_id(now)
-    attempt = runs / run_id
+    with tempfile.TemporaryDirectory(prefix="page324-run-") as runs:
+        return _forecast_and_publish(
+            result,
+            Path(runs) / run_id,
+            run_id,
+            now,
+            pending,
+            fingerprints,
+            outcomes,
+            state,
+            policy,
+            simulations,
+            data_store,
+            publish_store,
+            operation_started,
+        )
+
+
+def _forecast_and_publish(
+    result,
+    attempt: Path,
+    run_id: str,
+    now: datetime,
+    pending: list[str],
+    fingerprints: dict,
+    outcomes,
+    state: dict,
+    policy: dict,
+    simulations: int,
+    data_store,
+    publish_store,
+    operation_started: float,
+) -> dict:
     impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
     documents, failures = [], []
     for league in pending:
         archive = attempt / league
         forecast_started = time.monotonic()
         progress("forecast_started", competition_id=league)
-        forecast = run_forecast(data, league, now, archive, simulations)
+        forecast = run_forecast(league, now, archive, simulations)
         write_immutable(
             attempt / f"{league}-forecast.log", (forecast.stdout + forecast.stderr).encode()
         )
@@ -362,7 +360,7 @@ def operate(
         reports = attempt / f"{league}-verification"
         verification_started = time.monotonic()
         progress("verification_started", competition_id=league)
-        verification = verify_archive(data, archive, reports)
+        verification = verify_archive(archive, reports)
         write_immutable(
             attempt / f"{league}-verify.log", (verification.stdout + verification.stderr).encode()
         )

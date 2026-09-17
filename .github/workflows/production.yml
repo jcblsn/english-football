@@ -43,8 +43,6 @@ jobs:
         id: operate
         run: >-
           uv run epl-forecast operate
-          --data "${RUNNER_TEMP}/data"
-          --runs "${RUNNER_TEMP}/runs"
           ${{ inputs.force && '--force' || '' }}
 
   # Deploy the site only after a run that published a new forecast.
