@@ -342,6 +342,36 @@ The production M10 of the `m10-quality-dynamics` release branch reproduces the s
 
 At one cutoff on 17 September 2026, from R2, the forecasts of commit `f9332cd` pass every product check: 4,581 in the Premier League, 6,289 in the Championship, 6,413 in League One and 6,399 in League Two. The only uncommitted change in that run was this page. The Premier League has 10 personnel records and 10 adjusted fixtures, and the Championship has 12 records and 9 adjusted fixtures. The archives give the M10 dynamics in the fit diagnostics and the level–form covariance of each club.
 
+### The v0.3.0 hindcast archive
+
+The `v0.3.0` hindcast archive replaces no earlier edition. The `v0.0` and `v0.2` archives stay, and the index lists all three versions. The archive uses the Wednesday origin protocol of [operations](operations.md#the-origin-protocol).
+
+| Item | Value |
+| --- | --- |
+| Commit | `9b2f3a1` on the release branch. Its model code is the same as the released `main` at `26ffec0`. |
+| Generation | One local run of `uv run epl-forecast hindcast --workers 7` on 17 September 2026 simulated all 823 origins |
+| Public model version | `v0.3.0` |
+| Structural model | M10 |
+| Edition digest | `41260fe09fc7916df439752aef30dde689949d2d1b4bec6436539b553f0307d5` |
+| Origin protocol | Each Wednesday at 09:00 Europe/London |
+| Seed and paths | 20260905, 10,000 |
+| Scope | Four divisions, 2021/22–2025/26 |
+
+The command in [the v0.2 hindcast archive](#the-v02-hindcast-archive) gives the edition digest from the released code.
+
+The archive holds 823 weekly documents in 20 season series. Every origin falls on a Wednesday at 09:00 Europe/London, every weekly document that a series lists exists, and every per-club array holds one value for each origin. Each series has one private simulation output for each origin.
+
+| Division | Origins | Fixtures with an adjustment | Origins with at least one |
+| --- | ---: | ---: | ---: |
+| Premier League | 212 | 1,803 | 174 |
+| Championship | 204 | 2,287 | 173 |
+| League One | 203 | 0 | 0 |
+| League Two | 204 | 0 | 0 |
+
+The adjustment counts equal the `v0.2` counts. This is the expected result, because the history-only personnel estimate does not use the structural model.
+
+The whole publication surface materializes and passes the boundary: 2,538 documents, which include the 823 `v0.3.0`, 823 `v0.2` and 825 `v0.0` weekly hindcasts, their 60 season series and the hindcast index.
+
 ### Retrospective and prospective evidence
 
 All M10 evidence on this page is retrospective: the dynamics were selected and checked on seasons that were already played, and several of these seasons also gave the hypotheses. At the merge, no M10 forecast has been scored prospectively. The [prospective record](#prospective-record) of `v0.3.0` is the confirmation. Its first test is the early-season EFL forecasts, where the retrospective evidence is against M10: in the partial 2026/27 season before the merge, M10 was worse than M7 in League One and League Two.
