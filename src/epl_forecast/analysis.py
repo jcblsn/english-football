@@ -353,7 +353,10 @@ CATALOG_ROWS += (
         "private forecast match personnel records",
         "Personnel evidence selected at the forecast state observation time.",
         True,
-        "Status explains why an adjustment was neutral, applied, or unavailable.",
+        "usable_for_shift uses only the evidence of that team. status is applied or neutral when "
+        "the match has a shift. Otherwise it is the team's own reason "
+        "(discontinuity_unavailable or unresolved_weight_too_high), other_team_unusable, "
+        "or shift_unavailable.",
     ),
     (
         "forecast_personnel_players",
@@ -755,6 +758,12 @@ COLUMN_MEANINGS = {
         "Expected away goals from a score-generating stage.",
         "goals",
         "score_distribution.away_rate",
+    ),
+    "usable_for_shift": (
+        "True when this team's own discontinuity and unresolved weight meet the shift rule. "
+        "The other team can still make the match shift unavailable.",
+        None,
+        "personnel.team_unusable_reason applied to the team record",
     ),
     "discontinuity": (
         "Resolved expected missing player weight for the team.",

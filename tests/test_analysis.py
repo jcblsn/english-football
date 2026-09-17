@@ -536,6 +536,30 @@ def test_historical_stages_do_not_fabricate_discarded_unadjusted_probabilities(t
         session.close()
 
 
+def test_team_usability_uses_only_the_evidence_of_that_team(tmp_path):
+    data, publish_store = version_two_forecast_stores()
+    private = data.objects["runs/forecasts/2026-09-10T120000Z/eng-premier-league/forecast.json"]
+    second = private["matches"][1]
+    second["personnel"] = {
+        "home_log_rate_shift": None,
+        "home": {"discontinuity": 0.2, "unresolved_weight": 0.5, "reference_matches": []},
+        "away": {"discontinuity": 0.1, "unresolved_weight": 0.0, "reference_matches": []},
+    }
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        rows = session.rows(
+            "SELECT side, usable_for_shift, status FROM analysis.forecast_personnel_teams "
+            "WHERE match_id = ? ORDER BY side DESC",
+            [second["match_id"]],
+        )
+    finally:
+        session.close()
+    assert rows == [
+        {"side": "home", "usable_for_shift": False, "status": "unresolved_weight_too_high"},
+        {"side": "away", "usable_for_shift": True, "status": "other_team_unusable"},
+    ]
+
+
 def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
     data, publish_store = version_two_forecast_stores()
     session = open_analysis_session(data_store=data, publish_store=publish_store)

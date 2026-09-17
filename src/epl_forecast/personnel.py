@@ -444,11 +444,19 @@ def team_continuity(evidence, team, match_id, competition_id, previous_matches):
     return result
 
 
+def team_unusable_reason(team):
+    """Why one club's own evidence cannot enter a shift, or None when it can."""
+    if team.get("discontinuity") is None:
+        return "discontinuity_unavailable"
+    if team.get("unresolved_weight") is None or team["unresolved_weight"] > MAX_UNRESOLVED:
+        return "unresolved_weight_too_high"
+    return None
+
+
 def home_log_rate_shift(home, away):
     """κ(D_away − D_home) for the home log rate, or None when either club is not usable."""
-    for team in (home, away):
-        if team["discontinuity"] is None or team["unresolved_weight"] > MAX_UNRESOLVED:
-            return None
+    if team_unusable_reason(home) or team_unusable_reason(away):
+        return None
     return KAPPA * (away["discontinuity"] - home["discontinuity"])
 
 
