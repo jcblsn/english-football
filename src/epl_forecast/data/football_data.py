@@ -266,7 +266,7 @@ def ingest_latest_odds(root, record, payload):
     if not {"Div", "Date", "HomeTeam", "AwayTeam"}.issubset(reader.fieldnames or []):
         raise ValueError("Latest odds response lacks fixture identity columns")
     aliases = team_aliases()
-    data = Dataset(root, record["retrieved_at"])
+    data = Dataset(record["retrieved_at"], workspace=root)
     fixtures = {f["match_id"]: f for f in data.fixtures()}
     data.close()
     scheduled = {(f["competition_id"], f["season_id"]) for f in fixtures.values()}

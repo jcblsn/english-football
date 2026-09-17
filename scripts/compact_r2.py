@@ -2,8 +2,6 @@
 
 import argparse
 import json
-import tempfile
-from pathlib import Path
 
 from epl_forecast.cloud import compact_canonical, compaction_due
 from epl_forecast.storage import R2Store, load_environment
@@ -19,9 +17,7 @@ def main() -> None:
     if not args.force and not compaction_due(store, args.max_incremental_batches):
         print(json.dumps({"status": "not_due"}, indent=2))
         return
-    # An empty workspace keeps local files out of the compacted R2 history.
-    with tempfile.TemporaryDirectory(prefix="page324-compact-root-") as root:
-        result = compact_canonical(Path(root), store)
+    result = compact_canonical(store)
     print(json.dumps(result, indent=2))
 
 

@@ -70,7 +70,7 @@ def test_legacy_partitions_have_typed_nulls_and_replay_version_wins(tmp_path):
             ],
         },
     )
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT rating, tackles FROM appearances") == [
         {"rating": None, "tackles": None}
     ]
@@ -90,7 +90,7 @@ def test_legacy_partitions_have_typed_nulls_and_replay_version_wins(tmp_path):
             ]
         },
     )
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT rating, tackles FROM appearances") == [
         {"rating": 7.5, "tackles": None}
     ]

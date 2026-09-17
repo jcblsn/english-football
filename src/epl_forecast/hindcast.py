@@ -4,7 +4,6 @@ import os
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import UTC, date, datetime, time, timedelta
-from pathlib import Path
 
 from epl_forecast.cli import fitted_model, load_config
 from epl_forecast.competitions import COMPETITION_IDS, competition
@@ -134,13 +133,13 @@ def table_at(teams: list[str], played: list, adjustments: list[dict]) -> dict[st
 
 
 def model_config(competition_id: str, observations: list[dict]) -> dict:
-    """The product configuration, with xG read once from the R2 history instead of a local root."""
+    """The product configuration, with xG read once from the R2 history for every origin."""
     config = load_config(PRODUCT_CONFIG)
     config["competition_id"] = competition_id
     for spec in config["models"]:
         parameters = spec.setdefault("parameters", {})
         parameters["competition_id"] = competition_id
-        if parameters.pop("data_root", None) is not None:
+        if parameters.pop("canonical_xg", False):
             parameters["observations"] = observations
     return config
 
@@ -387,7 +386,6 @@ def publish_index(publish_store, entries: list[dict], policy: dict) -> dict:
 def run_hindcasts(
     data_store,
     publish_store,
-    workspace: Path,
     competitions=COMPETITION_IDS,
     seasons=SEASONS,
     simulations: int = 10000,
@@ -395,17 +393,12 @@ def run_hindcasts(
     log=print,
 ) -> dict:
     """Make every missing weekly hindcast, then the season series and the index. A rerun resumes."""
-    workspace = Path(workspace)
-    if workspace.exists() and any(workspace.iterdir()):
-        raise ValueError(
-            f"The hindcast workspace must be empty: {workspace}. The history comes from page324-data."
-        )
     if simulations < MINIMUM_SIMULATIONS:
         raise ValueError(f"Hindcasts need at least {MINIMUM_SIMULATIONS} simulated paths")
     policy = load_policy()
     model_version = policy["product"]["model_version"]
     claim_edition(data_store, edition(model_version, simulations))
-    data = Dataset(workspace, store=data_store)
+    data = Dataset(store=data_store)
     try:
         matches = data.matches()
         observations = data.xg_observations()

@@ -52,10 +52,7 @@ def save_rows(path: Path, rows: list[dict]) -> None:
 
 def evaluate_command(args) -> None:
     config = load_config(args.config)
-    for spec in config["models"]:
-        if "data_root" in spec["parameters"]:
-            spec["parameters"]["data_root"] = str(args.data)
-    matches, odds, manifest = load_dataset(args.data)
+    matches, odds, manifest = load_dataset()
     start = date.fromisoformat(config[f"{args.split}_start"])
     end = date.fromisoformat(config[f"{args.split}_end"])
     new_run_directory(args.output)
@@ -89,16 +86,15 @@ def evaluate_command(args) -> None:
 
 
 def forecast_command(args) -> None:
-    live = load_live_season(args.data, args.cutoff, args.competition, args.season)
+    live = load_live_season(args.cutoff, args.competition, args.season)
     check_freshness(live, args.max_snapshot_age_hours)
     config = load_config(args.config)
     config["competition_id"] = live.competition_id
     for model in config["models"]:
         model.setdefault("parameters", {})["competition_id"] = live.competition_id
-        if "data_root" in model.get("parameters", {}):
-            model["parameters"]["data_root"] = str(args.data)
+        if model.get("parameters", {}).get("canonical_xg"):
             model["parameters"]["data_cutoff"] = live.observed_at.isoformat()
-    history, odds, manifest = load_dataset(args.data, live.observed_at)
+    history, odds, manifest = load_dataset(live.observed_at)
     history = [
         match
         for match in history
@@ -107,7 +103,7 @@ def forecast_command(args) -> None:
     ] + live.played
     as_of = live.observed_at.astimezone(LONDON).date()
     model, spec, training = fitted_model(history, config, args.model, as_of)
-    data = Dataset(args.data, live.observed_at)
+    data = Dataset(live.observed_at)
     try:
         personnel = current_adjustments(
             data,
@@ -129,7 +125,7 @@ def forecast_command(args) -> None:
     adjustments = (
         json.loads(args.adjustments.read_text())
         if args.adjustments
-        else load_sanctions(args.data, live.observed_at).known_adjustments(
+        else load_sanctions(live.observed_at).known_adjustments(
             live.competition_id, live.season_id, as_of
         )
     )
@@ -187,38 +183,9 @@ def forecast_command(args) -> None:
 
 
 def operate_command(args) -> None:
-    import shutil
+    from epl_forecast.pipeline import operate
 
-    from epl_forecast.pipeline import install_launch_agent, operate
-
-    if args.install_launch_agent:
-        uv = shutil.which("uv")
-        if uv is None:
-            raise ValueError("uv must be installed")
-        path = install_launch_agent(
-            "org.epl-forecast.operate",
-            [
-                uv,
-                "run",
-                "--locked",
-                "epl-forecast",
-                "operate",
-                "--data",
-                str(args.data.resolve()),
-                "--runs",
-                str(args.runs.resolve()),
-                "--simulations",
-                str(args.simulations),
-            ],
-            args.runs,
-            3600,
-            logs="operate",
-        )
-        print(f"Installed the product pipeline agent: {path}")
-        return
     result = operate(
-        data=args.data,
-        runs=args.runs,
         simulations=args.simulations,
         force=args.force,
         collect_first=not args.no_collect,
@@ -234,7 +201,7 @@ def operate_command(args) -> None:
 def verify_command(args) -> None:
     from epl_forecast.verification import verify_archives
 
-    report = verify_archives(args.archive, args.data, args.output)
+    report = verify_archives(args.archive, args.output)
     if report["failures"]:
         raise SystemExit(f"{report['failures']} product checks failed")
 
@@ -265,7 +232,6 @@ def hindcast_command(args) -> None:
     result = run_hindcasts(
         R2Store.from_environment("R2_DATA_BUCKET"),
         R2Store.from_environment("R2_PUBLISH_BUCKET"),
-        args.data,
         tuple(args.competition or COMPETITION_IDS),
         tuple(args.seasons),
         args.simulations,
@@ -284,7 +250,6 @@ def parser() -> argparse.ArgumentParser:
     forecast.add_argument("--competition", choices=COMPETITION_IDS, default=COMPETITION_IDS[0])
     forecast.add_argument("--season")
     forecast.add_argument("--config", type=Path, default=Path("configs/product.toml"))
-    forecast.add_argument("--data", type=Path, default=Path("data"))
     forecast.add_argument("--output", type=Path)
     forecast.add_argument("--model", default="M7-xg-v1")
     forecast.add_argument("--simulations", type=int, default=10000)
@@ -298,18 +263,14 @@ def parser() -> argparse.ArgumentParser:
     operate = commands.add_parser(
         "operate", help="Collect, forecast every division, verify and publish derived artifacts"
     )
-    operate.add_argument("--data", type=Path, default=Path("data"))
-    operate.add_argument("--runs", type=Path, default=Path("runs/product"))
     operate.add_argument("--simulations", type=int, default=10000)
     operate.add_argument("--force", action="store_true")
     operate.add_argument("--no-collect", action="store_true")
-    operate.add_argument("--install-launch-agent", action="store_true")
     operate.set_defaults(func=operate_command)
     verify = commands.add_parser(
         "verify", help="Check forecast archives against the product contract"
     )
     verify.add_argument("--archive", type=Path, nargs="+", required=True)
-    verify.add_argument("--data", type=Path, default=Path("data"))
     verify.add_argument("--output", type=Path, required=True)
     verify.set_defaults(func=verify_command)
     datawrapper = commands.add_parser(
@@ -341,12 +302,6 @@ def parser() -> argparse.ArgumentParser:
     )
     hindcast.add_argument("--competition", action="append", choices=COMPETITION_IDS)
     hindcast.add_argument("--seasons", nargs="+", type=int, default=list(range(2021, 2026)))
-    hindcast.add_argument(
-        "--data",
-        type=Path,
-        default=Path("runs/hindcast-workspace"),
-        help="An empty workspace; the history comes from page324-data",
-    )
     hindcast.add_argument("--simulations", type=int, default=10000)
     hindcast.add_argument("--workers", type=int, default=4)
     hindcast.set_defaults(func=hindcast_command)
@@ -354,7 +309,6 @@ def parser() -> argparse.ArgumentParser:
         "evaluate", help="Score rolling historical match forecasts for M7 and M2"
     )
     evaluate.add_argument("--config", type=Path, default=Path("configs/product.toml"))
-    evaluate.add_argument("--data", type=Path, default=Path("data"))
     evaluate.add_argument("--output", type=Path, required=True)
     evaluate.add_argument(
         "--split", choices=["development", "validation", "holdout"], required=True

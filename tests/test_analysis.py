@@ -90,9 +90,7 @@ def test_analysis_matches_and_xg_are_the_product_selectors(tmp_path):
         },
     )
     store = Store(remote, [manifest])
-    session = open_analysis_session(
-        data_store=store, include_derived=False, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=store, include_derived=False)
     try:
         assert session.rows("SELECT * FROM analysis.matches") == session.dataset.fixtures()
         assert (
@@ -127,7 +125,6 @@ def test_remote_only_session_ignores_local_manifests_and_post_cutoff_rows(tmp_pa
         "2026-01-03T00:00:00+00:00",
         data_store=Store(remote, [old, late]),
         include_derived=False,
-        root=local,
     )
     try:
         assert session.rows("SELECT home_goals FROM analysis.matches") == [{"home_goals": 2}]
@@ -179,9 +176,7 @@ def test_personnel_views_keep_latest_successful_empty_snapshots(tmp_path):
             ]
         },
     )
-    session = open_analysis_session(
-        data_store=Store(remote, [old, empty]), include_derived=False, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=Store(remote, [old, empty]), include_derived=False)
     try:
         assert session.rows(
             "SELECT team_id, row_count, player_id FROM analysis.squad_memberships"
@@ -193,7 +188,6 @@ def test_personnel_views_keep_latest_successful_empty_snapshots(tmp_path):
         "2026-01-02T23:00:00+00:00",
         data_store=Store(remote, [old, empty]),
         include_derived=False,
-        root=tmp_path / "empty",
     )
     try:
         assert historical.rows(
@@ -499,9 +493,7 @@ def version_two_forecast_stores():
 def test_forecasts_follow_archive_pointers_and_keep_private_matches_distinct(tmp_path):
     data, publish_store = forecast_stores()
     data.objects["runs/forecasts/failed/eng-premier-league/forecast.json"] = {"schema_version": 1}
-    session = open_analysis_session(
-        data_store=data, publish_store=publish_store, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         assert session.rows("SELECT forecast_id FROM analysis.forecasts") == [
             {"forecast_id": "2026-09-10T120000Z"}
@@ -525,9 +517,7 @@ def test_forecasts_follow_archive_pointers_and_keep_private_matches_distinct(tmp
 
 def test_historical_stages_do_not_fabricate_discarded_unadjusted_probabilities(tmp_path):
     data, publish_store = forecast_stores()
-    session = open_analysis_session(
-        data_store=data, publish_store=publish_store, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         rows = session.rows(
             "SELECT match_id, stage, available, availability_reason, p_home "
@@ -548,9 +538,7 @@ def test_historical_stages_do_not_fabricate_discarded_unadjusted_probabilities(t
 
 def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
     data, publish_store = version_two_forecast_stores()
-    session = open_analysis_session(
-        data_store=data, publish_store=publish_store, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         comparison = session.rows(
             "SELECT * FROM analysis.forecast_match_stage_comparison WHERE personnel_applied"
@@ -643,9 +631,7 @@ def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
 
 def test_catalogs_cover_every_analysis_relation_and_column(tmp_path):
     data, publish_store = version_two_forecast_stores()
-    session = open_analysis_session(
-        data_store=data, publish_store=publish_store, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         assert (
             session.rows(
@@ -675,7 +661,7 @@ def test_a_successful_public_forecast_requires_its_private_run(tmp_path):
     data, publish_store = forecast_stores()
     del data.objects["runs/forecasts/2026-09-10T120000Z/eng-premier-league/forecast.json"]
     with pytest.raises(ValueError, match="pointer does not resolve"):
-        open_analysis_session(data_store=data, publish_store=publish_store, root=tmp_path / "empty")
+        open_analysis_session(data_store=data, publish_store=publish_store)
 
 
 def test_hindcasts_are_pointer_driven_and_explicitly_retrospective(tmp_path):
@@ -735,9 +721,7 @@ def test_hindcasts_are_pointer_driven_and_explicitly_retrospective(tmp_path):
             href: public,
         }
     )
-    session = open_analysis_session(
-        data_store=data, publish_store=publish_store, root=tmp_path / "empty"
-    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         origin = session.rows(
             "SELECT retrospective, generated_at, origin_at FROM analysis.hindcast_origins"

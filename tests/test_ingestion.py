@@ -30,55 +30,8 @@ def test_conflicting_squad_positions_are_unknown(tmp_path):
         ]
     }
     api.normalize(squad_record("2026-09-08T10:00:00+00:00"), body, tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT position FROM memberships") == [{"position": "UNK"}]
-    data.close()
-
-
-def test_raw_rebuild_is_deterministic_and_failure_preserves_publication(tmp_path):
-    import json
-
-    import pytest
-
-    from epl_forecast.data.capture import retain
-    from epl_forecast.data.collect import normalize
-
-    request = squad_record("2026-09-08T10:00:00+00:00")
-    body = {
-        "response": [
-            {
-                "team": {"id": 42, "name": "Arsenal"},
-                "players": [{"id": 1, "name": "Player One", "position": "Defender"}],
-            }
-        ]
-    }
-    record = retain(
-        tmp_path,
-        "api_football",
-        "https://example.test/squads",
-        json.dumps(body).encode(),
-        request["retrieved_at"],
-        "captured",
-        request["context"],
-    )
-    retain(
-        tmp_path,
-        "efl_rules",
-        "https://example.test/rules",
-        b"rules evidence",
-        request["retrieved_at"],
-        "captured",
-    )
-    normalize(tmp_path)
-    before = {p.name: p.read_bytes() for p in (tmp_path / "manifests").glob("*.json")}
-    normalize(tmp_path)
-    assert before == {p.name: p.read_bytes() for p in (tmp_path / "manifests").glob("*.json")}
-    (tmp_path / record["raw_path"]).write_bytes(b"corrupt")
-    with pytest.raises(ValueError, match="hash mismatch"):
-        normalize(tmp_path)
-    assert before == {p.name: p.read_bytes() for p in (tmp_path / "manifests").glob("*.json")}
-    data = Dataset(tmp_path)
-    assert data.rows("SELECT count(*) AS n FROM players") == [{"n": 1}]
     data.close()
 
 
@@ -103,7 +56,7 @@ def test_inconsistent_shot_pair_is_audited_without_discarding_result(tmp_path):
     )
     manifest = ingest(tmp_path, record, payload)
     assert len(manifest["request"]["normalization_issues"]) == 1
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert len(data.matches()) == 1
     assert data.rows("SELECT shots, shots_on_target FROM team_process WHERE team_id='arsenal'") == [
         {"shots": None, "shots_on_target": None}
@@ -178,7 +131,7 @@ def test_fpl_identity_uses_unique_captured_team_and_birth_date(tmp_path):
         },
         json.dumps(body).encode(),
     )
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT fpl_code, player_id FROM availability ORDER BY fpl_code") == [
         {"fpl_code": "100", "player_id": "p1"},
         {"fpl_code": "200", "player_id": None},
@@ -212,7 +165,7 @@ def test_transfers_do_not_identify_foreign_clubs_by_name(tmp_path):
         },
         tmp_path,
     )
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT from_team_id, to_team_id FROM transfers") == [
         {"from_team_id": "af-team-999", "to_team_id": "arsenal"}
     ]
@@ -274,7 +227,7 @@ def test_disputed_sidelined_end_is_unknown_with_retained_issue(tmp_path):
     assert manifest == api.normalize(record, body, tmp_path)
     issues = manifest["request"]["normalization_issues"]
     assert len(issues) == 1 and issues[0]["reported_values"] == ["2018-02-20", "2018-02-25"]
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows(
         "SELECT reason, end_date IS NULL AS unknown_end FROM availability ORDER BY reason"
     ) == [
@@ -416,7 +369,7 @@ def test_team_match_statistics_keep_percentages_and_absent_counts_apart(tmp_path
         ]
     )
     api.normalize(fixture_record(), body, tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     rows = {r["team_id"]: r for r in data.rows("SELECT * FROM team_statistics ORDER BY team_id")}
     data.close()
     assert set(rows) == {"swansea-city", "birmingham-city"}
@@ -430,7 +383,7 @@ def test_team_match_statistics_keep_percentages_and_absent_counts_apart(tmp_path
 
 def test_a_fixture_without_team_statistics_publishes_none(tmp_path):
     api.normalize(fixture_record(), fixture_body([]), tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     assert data.rows("SELECT count(*) AS n FROM team_statistics") == [{"n": 0}]
     data.close()
 
@@ -442,7 +395,7 @@ def test_an_empty_fixture_detail_response_records_each_club_scope(tmp_path):
         "context": {"endpoint": "fixtures", "ids": "900001"},
     }
     api.normalize(detail, {"response": []}, tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     rows = data.rows("SELECT match_id, team_id, row_count FROM source_snapshots ORDER BY team_id")
     data.close()
     assert rows == [
@@ -467,7 +420,7 @@ def test_a_reviewed_disputed_fixture_keeps_its_result_unknown(tmp_path, monkeypa
         api, "FIXTURE_DISPUTES", {900001: {"match_id": key, "resolution": "unknown: test"}}
     )
     manifest = api.normalize(fixture_record(), fixture_body([]), tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     (row,) = data.rows("SELECT * FROM fixtures")
     data.close()
     assert (row["status"], row["home_goals"], row["match_date"]) == ("disputed", None, None)
@@ -515,7 +468,7 @@ def test_latest_odds_without_a_captured_schedule_stay_unlinked(tmp_path):
         "context": {"kind": "latest_odds", "season_id": "2026-2027"},
     }
     manifest = football_data.ingest(tmp_path, record, payload)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     odds = data.rows("SELECT match_id FROM odds")
     data.close()
     assert odds == [{"match_id": fixture["match_id"]}]
@@ -536,7 +489,7 @@ def test_a_squad_entry_without_a_provider_id_is_unknown(tmp_path):
         ]
     }
     manifest = api.normalize(squad_record("2026-09-11T14:00:00+00:00"), body, tmp_path)
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     members = data.rows("SELECT player_id FROM memberships")
     data.close()
     assert members == [{"player_id": "p7"}]

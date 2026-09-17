@@ -8,7 +8,7 @@ from pathlib import Path
 from epl_forecast.datasets import Dataset
 from epl_forecast.sanctions import load_registry
 from epl_forecast.season_evaluation import entry_cohorts, final_cutoff, realized_truth
-from epl_forecast.storage import file_hash, write_json
+from epl_forecast.storage import file_hash, load_environment, write_json
 
 KEEP = (
     "competition_id",
@@ -33,14 +33,14 @@ def marginal(forecast):
 
 
 def main():
+    load_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evaluation", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--data", type=Path, default=Path("data"))
     args = parser.parse_args()
     manifest = json.loads((args.evaluation / "manifest.json").read_text())
     competition = manifest["competition_id"]
-    data = Dataset(args.data)
+    data = Dataset()
     try:
         matches = data.matches()
         sanctions = load_registry(data)

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from epl_forecast.datasets import Dataset, timestamp
@@ -24,11 +23,11 @@ class LiveSeason:
     competition_id: str = "eng-premier-league"
 
 
-def load_live_season(root=Path("data"), cutoff=None, competition="eng-premier-league", season=None):
+def load_live_season(cutoff=None, competition="eng-premier-league", season=None, store=None):
     cutoff = timestamp(cutoff) if cutoff else datetime.now(UTC)
     year = cutoff.year - (cutoff.month < 7)
     season = season or f"{year}-{year + 1}"
-    data = Dataset(root, cutoff)
+    data = Dataset(cutoff, store=store)
     try:
         records = [
             r

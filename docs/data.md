@@ -18,13 +18,13 @@ The National League is an entry-source competition. The collector retains its hi
 
 ## Credentials and quota
 
-Set `API_FOOTBALL_KEY` and the R2 settings in the environment or in an ignored `.env` file. Do not put a key in a committed file. The Pro plan gives 7,500 requests each day. A backfill keeps 1,000 requests free for current collection.
+Set `API_FOOTBALL_KEY` and the R2 settings in the environment or in an ignored `.env` file. Do not put a key in a committed file. The Pro plan gives 7,500 requests each day.
 
 ## Storage
 
-R2 is the durable store and the authoritative history. A run uses `data/` only as an ephemeral workspace.
+R2 is the durable store and the only source of canonical evidence. There is no local data directory, and no command accepts a data workspace path.
 
-A historical run, for example a hindcast or a season panel, must read the canonical history from `page324-data`. Give it an empty workspace, such as a new directory under `runs/`. Do not use files that an earlier run left in the repository `data/` directory as input. `Dataset` reads local manifests together with the R2 catalog, so an old local workspace can change the history that a run sees.
+`Dataset` reads the canonical catalog and Parquet files from `page324-data`. Collection is the only exception. `operate` captures new responses into a temporary workspace that it creates for that run. During the capture, `Dataset` also reads the batches in that workspace that are not yet in the R2 catalog. A workspace file never replaces an R2 file. The run uploads the new objects to R2 and then deletes the workspace.
 
 | R2 key | Content |
 | --- | --- |
@@ -40,7 +40,7 @@ A historical run, for example a hindcast or a season panel, must read the canoni
 | `runs/forecasts/` | Private forecast archives, logs and verification reports. |
 | `runs/hindcasts/` | The private simulation output of each weekly hindcast and the frozen model of each public model version. See [operations](operations.md#hindcasts). |
 
-DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping. The local writer lock also protects one workspace.
+DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping.
 
 ## Canonical tables
 
@@ -56,7 +56,7 @@ The row is what makes an empty response readable. Without it, a reader cannot te
 
 `epl_forecast.snapshots` selects the one latest snapshot of a scope at a cutoff, ordered by retrieval time and then by content hash. Every reader uses that one selector, so the personnel evidence and the FPL ingestion cannot define "the latest captured squad" differently.
 
-Snapshot rows are written when a response is normalized. Retained captures from before this table existed have no snapshot rows. `uv run epl-forecast data normalize` replays every raw capture and creates them. Until that replay runs against a workspace, a reader of that history sees no squad, injury or FPL scope and falls back to membership from matchday squads alone, which is what a hindcast already does.
+Snapshot rows are written when a response is normalized. A capture that no replay has normalized since this table was added has no snapshot rows. A reader of that history sees no squad, injury or FPL scope and falls back to membership from matchday squads alone, which is what a hindcast already does.
 
 ## Production contracts of the player tables
 
@@ -96,19 +96,18 @@ A regular-season match ID is `competition:season:home:away`. A postponement does
 ## Commands
 
 ```sh
-uv run epl-forecast data collect      # capture due forecast and entry-source observations
-uv run epl-forecast data audit        # check hashes and fixtures; write data/audits/coverage.json
-uv run epl-forecast data backfill --start 2010 --max-requests 200
-uv run epl-forecast data normalize    # rebuild the canonical store from raw captures
+uv run epl-forecast data audit        # check R2 hashes and fixtures; write audits/coverage.json to R2
 uv run epl-forecast data ui           # open the prepared local DuckDB UI
 uv run epl-forecast data query --sql 'SELECT competition_id, count(*) FROM analysis.matches GROUP BY 1'
 ```
 
-`data normalize` replays every raw capture into a new local workspace. It replaces the local canonical files only after the new files pass their checks. Stop scheduled runs first.
+`operate` is the only command that collects. There is no command that replays raw captures. A replay after a change to normalization must read the raw captures from R2 in a temporary workspace and publish the result to R2, as compaction does.
+
+`data audit` reads the whole canonical history from R2, so it takes minutes. Its report shows the history at the time of the audit.
 
 Routine synchronization uploads only objects from the current collection. It does not list the full bucket. Canonical compaction is a maintenance task, not part of each collection. Run `uv run python scripts/compact_r2.py` after the incremental-batch threshold is reached. The default threshold is 250 batches.
 
-A backfill of history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
+Captured history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
 
 ## Interactive analysis
 
@@ -125,7 +124,7 @@ uv run epl-forecast data query --sql "SELECT min(retrieved_at) AS earliest FROM 
 uv run epl-forecast data query --cutoff <ISO-8601 timestamp> --sql 'SELECT season_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
 ```
 
-The session reads the canonical manifest catalog from R2 and does not read local manifests or local canonical files. The `--root` option remains for command compatibility, but it cannot add local evidence to an analysis session. Raw canonical and provider views remain available for expert use.
+The session reads the canonical manifest catalog from R2. Raw canonical and provider views remain available for expert use.
 
 R2 is the only source of truth for an analysis session. `data query`, `data ui`, and the query skill helper keep the prepared `analysis` schema in one read-only DuckDB session file in the `page324-analysis` directory of the system temporary directory. The session file is a disposable copy. Nothing in the repository or in `runs/` holds analysis data.
 

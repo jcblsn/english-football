@@ -16,11 +16,10 @@ def make_model(spec: dict):
         raise ValueError(f"Unknown model kind: {spec.get('kind')}") from error
     parameters = dict(spec.get("parameters", {}))
     competition = parameters.pop("competition_id", "eng-premier-league")
-    data_root = parameters.pop("data_root", None)
-    if data_root is not None:
+    if parameters.pop("canonical_xg", False):
         from epl_forecast.datasets import Dataset
 
-        data = Dataset(data_root, parameters.pop("data_cutoff", None))
+        data = Dataset(parameters.pop("data_cutoff", None))
         try:
             parameters["observations"] = data.xg_observations()
         finally:

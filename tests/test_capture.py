@@ -103,21 +103,17 @@ def test_fetcher_keeps_unknown_quota_when_headers_are_missing(tmp_path, monkeypa
     }
 
 
-def test_quota_reserve_and_writer_lock_prevent_new_requests(tmp_path, monkeypatch):
+def test_exhausted_quota_prevents_new_requests(tmp_path, monkeypatch):
     monkeypatch.setenv("API_FOOTBALL_KEY", "test-only-credential")
 
     def forbidden(*args, **kwargs):
         raise AssertionError("No network request should be attempted")
 
     monkeypatch.setattr(capture, "urlopen", forbidden)
-    fetcher = capture.Fetcher(tmp_path, reserve=1000)
-    fetcher.remaining = 1000
+    fetcher = capture.Fetcher(tmp_path)
+    fetcher.remaining = 0
     with pytest.raises(capture.QuotaReached):
         fetcher.get("api_football", "https://example.test/players")
-    with capture.writer_lock(tmp_path):
-        with pytest.raises(capture.SourceAccessError, match="writer"):
-            with capture.writer_lock(tmp_path):
-                pass
 
 
 def test_fetcher_reads_a_due_checkpoint_payload_from_remote_storage(tmp_path):

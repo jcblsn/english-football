@@ -58,7 +58,7 @@ class Checks:
         return [r for r in self.results if not r["passed"]]
 
 
-def verify(archive: Path, data: Path) -> dict:
+def verify(archive: Path) -> dict:
     forecast = json.loads((archive / "forecast.json").read_text())
     run = json.loads((archive / "run.json").read_text())
     checks = Checks()
@@ -296,7 +296,7 @@ def verify(archive: Path, data: Path) -> dict:
         "reviewed rules evidence is carried when it exists",
         simulation["ranking_rules_evidence"] == reviewed_rules_evidence(competition, season),
     )
-    dataset = Dataset(data, observed)
+    dataset = Dataset(observed)
     try:
         expected_adjustments = load_registry(dataset).known_adjustments(
             competition, season, cutoff_day
@@ -432,11 +432,11 @@ def verify(archive: Path, data: Path) -> dict:
     }
 
 
-def verify_archives(archives: list[Path], data: Path, output: Path) -> dict:
+def verify_archives(archives: list[Path], output: Path) -> dict:
     """Verify each archive, write one report and print every failed check."""
     report = {"execution": execution_provenance(), "archives": {}}
     for archive in archives:
-        report["archives"][str(archive)] = verify(archive, data)
+        report["archives"][str(archive)] = verify(archive)
     report["failures"] = sum(a["failures"] for a in report["archives"].values())
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "verification.json", report)

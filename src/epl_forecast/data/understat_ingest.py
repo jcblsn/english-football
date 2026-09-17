@@ -33,7 +33,7 @@ class IngestContext:
     """
 
     def __init__(self, root):
-        data = Dataset(root)
+        data = Dataset(workspace=root)
         try:
             self.fixtures = {r["match_id"]: r for r in data.fixtures()}
             self.links = [
@@ -88,7 +88,7 @@ class IngestContext:
 def ingest(root, record, payload, context=None):
     body = json.loads(gzip.decompress(payload) if payload.startswith(b"\x1f\x8b") else payload)
     request = record["context"]
-    data = None if context is not None and request["kind"] == "players" else Dataset(root)
+    data = None if context is not None and request["kind"] == "players" else Dataset(workspace=root)
     try:
         fixtures = context.fixtures if data is None else {r["match_id"]: r for r in data.fixtures()}
         if request["kind"] == "league":

@@ -58,7 +58,7 @@ class Store:
 def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypatch, capsys):
     """One division that cannot be forecast leaves the others published."""
 
-    def fake_forecast(data, league, cutoff, output, simulations):
+    def fake_forecast(league, cutoff, output, simulations):
         if league == "eng-championship":
             return Completed(1)
         output.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
         (output / "run.json").write_text(json.dumps(sample_run()))
         return Completed(0)
 
-    def fake_verify(data, archive, output):
+    def fake_verify(archive, output):
         output.mkdir(parents=True, exist_ok=True)
         (output / "verification.json").write_text(
             json.dumps({"archives": {str(archive): {"checks": [], "failures": 0}}})
@@ -80,11 +80,8 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
         pipeline, "information_fingerprint", lambda dataset, competition: "fingerprint"
     )
     monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {})
-    runs = tmp_path / "runs"
     data_store, publish_store = Store(), Store()
     result = pipeline.operate(
-        data=tmp_path / "data",
-        runs=runs,
         force=True,
         collect_first=False,
         data_store=data_store,
@@ -135,13 +132,13 @@ def test_a_public_model_version_change_makes_every_division_due():
 
 
 def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypatch):
-    def fake_forecast(data, league, cutoff, output, simulations):
+    def fake_forecast(league, cutoff, output, simulations):
         output.mkdir(parents=True, exist_ok=True)
         (output / "forecast.json").write_text(json.dumps(sample_forecast(competition=league)))
         (output / "run.json").write_text(json.dumps(sample_run()))
         return Completed(0)
 
-    def fake_verify(data, archive, output):
+    def fake_verify(archive, output):
         output.mkdir(parents=True, exist_ok=True)
         (output / "verification.json").write_text(
             json.dumps({"archives": {str(archive): {"checks": [], "failures": 0}}})
@@ -158,8 +155,6 @@ def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypa
     writes = []
     data_store, publish_store = Store("private", writes), Store("public", writes)
     result = pipeline.operate(
-        data=tmp_path / "data",
-        runs=tmp_path / "runs",
         force=True,
         collect_first=False,
         data_store=data_store,

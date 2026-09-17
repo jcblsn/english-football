@@ -86,7 +86,6 @@ jobs:
       - name: Make and publish the hindcasts
         run: >-
           uv run epl-forecast hindcast
-          --data "${RUNNER_TEMP}/hindcast-workspace"
           --simulations "${{ inputs.simulations }}"
           --workers "${{ inputs.workers }}"
           --seasons ${{ inputs.seasons }}

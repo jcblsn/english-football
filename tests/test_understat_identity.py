@@ -71,7 +71,7 @@ def test_understat_uses_retained_exact_names_without_future_or_ambiguous_links(t
         "context": {"kind": "players", "match_id": "m"},
     }
     ingest(tmp_path, source, json.dumps({"rosters": {"h": roster, "a": {}}}).encode())
-    data = Dataset(tmp_path)
+    data = Dataset(workspace=tmp_path)
     try:
         records = {
             r["understat_id"]: r["player_id"] for r in data.rows("SELECT * FROM player_process")
@@ -197,7 +197,7 @@ def test_shared_ingest_context_matches_one_dataset_read_per_match(tmp_path):
         context = IngestContext(root) if shared else None
         for record in records:
             ingest(root, record, _understat_payload(record["context"]["match_id"]), context)
-        data = Dataset(root)
+        data = Dataset(workspace=root)
         try:
             return data.rows(
                 "SELECT match_id, understat_id, player_id, minutes, xg, xa, shots "

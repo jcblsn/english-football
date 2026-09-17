@@ -33,4 +33,4 @@ eng-championship = ["eng-premier-league", "eng-championship"]
 eng-league-one = ["eng-championship", "eng-league-one", "eng-league-two"]
 eng-league-two = ["eng-league-one", "eng-league-two", "eng-national-league"]
 [models.parameters]
-data_root = "data"
+canonical_xg = true

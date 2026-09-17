@@ -278,10 +278,10 @@ def load_registry(dataset) -> SanctionRegistry:
     return SanctionRegistry(dataset.rows("SELECT * FROM standings"), dataset.matches())
 
 
-def load_sanctions(directory=Path("data"), cutoff=None) -> SanctionRegistry:
+def load_sanctions(cutoff=None, store=None) -> SanctionRegistry:
     from epl_forecast.datasets import Dataset
 
-    data = Dataset(directory, cutoff)
+    data = Dataset(cutoff, store=store)
     try:
         return load_registry(data)
     finally:
