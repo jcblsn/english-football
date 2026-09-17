@@ -1,0 +1,22 @@
+candidate,comparison,metric,mean,low,high,clusters_below_zero,clusters
+M7,hindcast minus control,hda_log_loss,-0.001263,-0.001973,-0.000664,11,12
+M7,hindcast minus control,brier,-0.000807,-0.001252,-0.000401,11,12
+M7,hindcast minus control,score_nll,-0.001524,-0.002371,-0.000738,11,12
+M7,frozen minus control,hda_log_loss,-0.001253,-0.001968,-0.000640,11,12
+M7,frozen minus control,brier,-0.000801,-0.001248,-0.000390,11,12
+M7,frozen minus control,score_nll,-0.001513,-0.002376,-0.000704,11,12
+M7,oracle minus control,hda_log_loss,-0.002659,-0.004289,-0.001368,12,12
+M7,oracle minus control,brier,-0.001816,-0.002902,-0.000933,12,12
+M7,oracle minus control,score_nll,-0.003653,-0.005142,-0.002430,12,12
+M10,hindcast minus control,hda_log_loss,-0.001086,-0.001771,-0.000509,11,12
+M10,hindcast minus control,brier,-0.000677,-0.001096,-0.000296,11,12
+M10,hindcast minus control,score_nll,-0.001230,-0.002023,-0.000477,10,12
+M10,frozen minus control,hda_log_loss,-0.001061,-0.001752,-0.000457,9,12
+M10,frozen minus control,brier,-0.000663,-0.001086,-0.000265,9,12
+M10,frozen minus control,score_nll,-0.001195,-0.002009,-0.000411,8,12
+M10,oracle minus control,hda_log_loss,-0.002425,-0.004035,-0.001148,12,12
+M10,oracle minus control,brier,-0.001641,-0.002701,-0.000779,11,12
+M10,oracle minus control,score_nll,-0.003212,-0.004640,-0.002041,12,12
+M10 minus M7,hindcast gain on M10 minus hindcast gain on M7,hda_log_loss,0.000178,0.000148,0.000209,0,12
+M10 minus M7,hindcast gain on M10 minus hindcast gain on M7,brier,0.000130,0.000100,0.000164,0,12
+M10 minus M7,hindcast gain on M10 minus hindcast gain on M7,score_nll,0.000294,0.000232,0.000370,0,12
