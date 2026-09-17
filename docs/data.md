@@ -42,6 +42,8 @@ R2 is the durable store and the only source of canonical evidence. There is no l
 
 DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping.
 
+The catalogs `state/manifests.json` and `state/collection.json` are the only mutable objects that collection and compaction share. Each update reads the object and its ETag, applies the change to that version, and writes with a condition on the ETag. When another writer changed the object first, R2 refuses the write, and the update starts again from the new version. Two writers therefore cannot remove each other's batches or request records. Compaction keeps the batches that arrive while it runs.
+
 ## Canonical tables
 
 `src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`. `source_snapshots` records which provider responses a reader has seen.

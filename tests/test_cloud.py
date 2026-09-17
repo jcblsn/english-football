@@ -1,6 +1,9 @@
+import hashlib
 import io
 import json
 from datetime import UTC, datetime
+
+import pytest
 
 from epl_forecast.cloud import (
     collection_state,
@@ -8,14 +11,17 @@ from epl_forecast.cloud import (
     compaction_due,
     manifest_state,
     sync_data,
+    update_state,
 )
 from epl_forecast.datasets import Dataset, publish
+from epl_forecast.storage import ConditionalWriteFailed
 
 
 class Store:
     def __init__(self, directory=None):
         self.objects = {}
         self.directory = directory
+        self.before_conditional_write = None
 
     def keys(self, prefix=""):
         return (key for key in self.objects if key.startswith(prefix))
@@ -38,6 +44,20 @@ class Store:
 
     def put_json(self, key, value, immutable=False):
         self.objects[key] = json.dumps(value).encode()
+
+    def get_json_versioned(self, key, default=None):
+        if key not in self.objects:
+            return default, None
+        return json.loads(self.objects[key]), hashlib.sha256(self.objects[key]).hexdigest()
+
+    def put_json_if(self, key, value, version):
+        if self.before_conditional_write is not None:
+            hook, self.before_conditional_write = self.before_conditional_write, None
+            hook(key)
+        current = hashlib.sha256(self.objects[key]).hexdigest() if key in self.objects else None
+        if current != version:
+            raise ConditionalWriteFailed(key)
+        self.put_json(key, value)
 
     def download(self, key, destination):
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -147,6 +167,58 @@ def test_routine_data_sync_reads_only_the_current_collection(tmp_path):
     assert "requests/current.json" in store.objects
     assert "requests/old.json" not in store.objects
     assert set(store.get_json("state/collection.json")["latest_by_url"]) == {current["url"]}
+
+
+def test_a_concurrent_catalog_update_is_kept_after_a_retry():
+    store = Store()
+    store.put_json("state/manifests.json", manifest_state([{"batch_id": "old"}]))
+
+    def other_writer(key):
+        current = store.get_json(key)
+        store.put_json(key, manifest_state([*current["manifests"], {"batch_id": "other"}]))
+
+    store.before_conditional_write = other_writer
+    result = update_state(
+        store,
+        "state/manifests.json",
+        lambda current: manifest_state([*current["manifests"], {"batch_id": "mine"}]),
+    )
+    batches = {batch["batch_id"] for batch in store.get_json("state/manifests.json")["manifests"]}
+    assert batches == {"old", "other", "mine"}
+    assert result == store.get_json("state/manifests.json")
+
+
+def test_a_state_update_stops_after_repeated_conflicts(monkeypatch):
+    store = Store()
+
+    def always_conflict(key, value, version):
+        raise ConditionalWriteFailed(key)
+
+    monkeypatch.setattr(store, "put_json_if", always_conflict)
+    with pytest.raises(ConditionalWriteFailed, match="changed on each"):
+        update_state(store, "state/collection.json", lambda current: {"latest_by_url": {"a": 1}})
+
+
+def test_compaction_keeps_a_batch_that_arrives_during_compaction(tmp_path):
+    root = tmp_path / "source"
+    common = {"provider": "test", "evidence_basis": "captured", "context": {}}
+    team = {"team_id": "arsenal", "name": "Arsenal"}
+    publish(
+        root,
+        {**common, "retrieved_at": "2026-09-13T12:00:00+00:00", "source_sha256": "a" * 64},
+        {"teams": [team]},
+    )
+    store = seeded_store(root)
+    late = {"batch_id": "late", "request": {"retrieved_at": "2026-09-14T12:00:00+00:00"}}
+
+    def collection_during_compaction(key):
+        current = store.get_json(key)
+        store.put_json(key, manifest_state([*current["manifests"], late]))
+
+    store.before_conditional_write = collection_during_compaction
+    result = compact_canonical(store)
+    batches = [batch["batch_id"] for batch in store.get_json("state/manifests.json")["manifests"]]
+    assert sorted(batches) == sorted([result["batch_id"], "late"])
 
 
 def test_compaction_is_due_after_enough_incremental_batches():

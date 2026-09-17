@@ -6,7 +6,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from epl_forecast.datasets import KEYS, SCHEMAS, Dataset
-from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
+from epl_forecast.storage import (
+    ConditionalWriteFailed,
+    R2Store,
+    file_hash,
+    json_bytes,
+    sha256_bytes,
+)
+
+STATE_WRITE_ATTEMPTS = 8
 
 
 def collection_state(records: list[dict]) -> dict:
@@ -14,6 +22,24 @@ def collection_state(records: list[dict]) -> dict:
     for record in sorted(records, key=lambda row: row["retrieved_at"]):
         latest[record["url"]] = record
     return {"schema_version": 1, "latest_by_url": latest}
+
+
+def update_state(store: R2Store, key: str, change) -> dict:
+    """Apply a change to a mutable state object with compare-and-swap, and retry on a conflict.
+
+    The change receives the current value. Two writers can then never replace each other's update.
+    """
+    for _ in range(STATE_WRITE_ATTEMPTS):
+        current, version = store.get_json_versioned(key, {})
+        updated = change(current)
+        if version is not None and updated == current:
+            return current
+        try:
+            store.put_json_if(key, updated, version)
+        except ConditionalWriteFailed:
+            continue
+        return updated
+    raise ConditionalWriteFailed(f"{key} changed on each of {STATE_WRITE_ATTEMPTS} attempts")
 
 
 def manifest_state(manifests: list[dict]) -> dict:
@@ -79,15 +105,22 @@ def sync_data(
     ]
     for path in audits:
         store.upload(path, path.relative_to(root).as_posix())
-    remote_manifests = store.get_json("state/manifests.json", {}).get("manifests", [])
-    remote_requests = list(
-        store.get_json("state/collection.json", {}).get("latest_by_url", {}).values()
-    )
-    manifests = manifest_state([*remote_manifests, *new_manifests])
-    requests = collection_state([*remote_requests, *new_requests])
     if changed:
-        store.put_json("state/manifests.json", manifests)
-        store.put_json("state/collection.json", requests)
+        manifests = update_state(
+            store,
+            "state/manifests.json",
+            lambda current: manifest_state([*current.get("manifests", []), *new_manifests]),
+        )
+        requests = update_state(
+            store,
+            "state/collection.json",
+            lambda current: collection_state(
+                [*current.get("latest_by_url", {}).values(), *new_requests]
+            ),
+        )
+    else:
+        manifests = store.get_json("state/manifests.json", {"manifests": []})
+        requests = store.get_json("state/collection.json", {"latest_by_url": {}})
     return {
         "uploaded": uploaded,
         "audits": len(audits),
@@ -184,5 +217,17 @@ def compact_canonical(store: R2Store) -> dict:
         for file in files:
             store.upload(staging / file["path"], file["path"], immutable=True)
         store.put_json(f"manifests/{batch_id}.json", manifest, immutable=True)
-        store.put_json("state/manifests.json", manifest_state([manifest]))
+        compacted = {source_manifest["batch_id"] for source_manifest in source}
+
+        def replace_compacted(current: dict) -> dict:
+            batches = current.get("manifests", [])
+            missing = compacted - {batch["batch_id"] for batch in batches}
+            if missing:
+                raise ValueError(
+                    "The R2 catalog lost compacted batches during compaction; run it again"
+                )
+            later = [batch for batch in batches if batch["batch_id"] not in compacted]
+            return manifest_state([manifest, *later])
+
+        update_state(store, "state/manifests.json", replace_compacted)
     return {"batch_id": batch_id, "files": len(files), "rows": rows}

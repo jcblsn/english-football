@@ -52,6 +52,10 @@ def load_environment(path: Path = Path(".env")) -> None:
             os.environ[name] = value.strip().strip("\"'")
 
 
+class ConditionalWriteFailed(RuntimeError):
+    """Another writer changed the object after this writer read it."""
+
+
 @dataclass(frozen=True)
 class R2Config:
     account_id: str
@@ -118,6 +122,36 @@ class R2Store:
             return json.loads(self.get_bytes(key))
         except FileNotFoundError:
             return default
+
+    def get_json_versioned(self, key: str, default=None) -> tuple[Any, str | None]:
+        """The JSON value and its ETag, or the default and None when the object is absent."""
+        try:
+            response = self.client.get_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
+                return default, None
+            raise
+        return json.loads(response["Body"].read()), response["ETag"]
+
+    def put_json_if(self, key: str, value, version: str | None) -> None:
+        """Write only when the object still has this ETag, or is still absent when it is None."""
+        payload = json_bytes(value)
+        condition = {"IfMatch": version} if version is not None else {"IfNoneMatch": "*"}
+        try:
+            self.client.put_object(
+                Bucket=self.config.bucket,
+                Key=key,
+                Body=payload,
+                Metadata={"sha256": sha256_bytes(payload)},
+                ContentType="application/json",
+                **condition,
+            )
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in {"PreconditionFailed", "ConditionalRequestConflict"} or status in {409, 412}:
+                raise ConditionalWriteFailed(key) from None
+            raise
 
     def put_bytes(
         self,

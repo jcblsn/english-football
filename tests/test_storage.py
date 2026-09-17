@@ -2,9 +2,10 @@ import json
 import os
 
 import pytest
+from botocore.exceptions import ClientError
 
 from epl_forecast.datasets import Dataset, publish
-from epl_forecast.storage import R2Config, load_environment
+from epl_forecast.storage import ConditionalWriteFailed, R2Config, R2Store, load_environment
 
 
 def test_environment_file_only_fills_missing_values(tmp_path, monkeypatch):
@@ -118,3 +119,27 @@ def test_a_dataset_needs_r2_or_a_capture_workspace(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="R2 data bucket or a capture workspace"):
         Dataset()
+
+
+def test_a_conditional_r2_write_sends_its_condition_and_reports_a_conflict():
+    calls = []
+
+    class Client:
+        def put_object(self, **arguments):
+            calls.append(arguments)
+            if arguments.get("IfMatch") == "stale":
+                raise ClientError(
+                    {
+                        "Error": {"Code": "PreconditionFailed"},
+                        "ResponseMetadata": {"HTTPStatusCode": 412},
+                    },
+                    "PutObject",
+                )
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client())
+    store.put_json_if("state/manifests.json", {"manifests": []}, None)
+    store.put_json_if("state/manifests.json", {"manifests": []}, "current")
+    with pytest.raises(ConditionalWriteFailed):
+        store.put_json_if("state/manifests.json", {"manifests": []}, "stale")
+    assert calls[0]["IfNoneMatch"] == "*" and "IfMatch" not in calls[0]
+    assert calls[1]["IfMatch"] == "current" and "IfNoneMatch" not in calls[1]
