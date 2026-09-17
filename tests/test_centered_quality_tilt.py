@@ -32,10 +32,11 @@ def test_coordinates_invertible_and_rate_identifiable(teams):
         assert np.linalg.matrix_rank(scoring) == teams
 
 
+@pytest.mark.parametrize("form", [{}, {"form_retention": 0.3, "form_sd": 0.15}])
 @pytest.mark.parametrize("dispersion", [None, 20.0])
-def test_daily_filter_entries_forecasts_and_paths_equivalent(small_history, dispersion):
-    original = QualityTiltFilter(dispersion=dispersion)
-    centered = CenteredQualityTiltFilter(dispersion=dispersion)
+def test_daily_filter_entries_forecasts_and_paths_equivalent(small_history, dispersion, form):
+    original = QualityTiltFilter(dispersion=dispersion, **form)
+    centered = CenteredQualityTiltFilter(dispersion=dispersion, **form)
     for i, match in enumerate(small_history):
         cutoff = match.available_on
         history = small_history[: i + 1]

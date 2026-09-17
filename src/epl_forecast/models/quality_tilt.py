@@ -28,19 +28,30 @@ class QualityTiltFilter(DynamicAttackDefense):
         dispersion=20.0,
         quadrature_order=9,
         independent_poisson=False,
+        form_retention=None,
+        form_sd=None,
     ):
         if independent_poisson:
             dispersion = None
+        if (form_retention is None) != (form_sd is None):
+            raise ValueError("Give both the form retention and the form SD, or neither")
         for retention in (quality_retention, tilt_retention):
             if not np.isfinite(retention) or not 0 < retention <= 1:
                 raise ValueError("Retention must be in (0, 1]")
-        for sd in (quality_sd, tilt_sd, annual_home_sd):
+        if form_retention is not None and (
+            not np.isfinite(form_retention) or not 0 < form_retention < 1
+        ):
+            raise ValueError("Form retention must be in (0, 1)")
+        for sd in (quality_sd, tilt_sd, annual_home_sd, *(() if form_sd is None else (form_sd,))):
             if not np.isfinite(sd) or sd <= 0:
                 raise ValueError("State standard deviations must be positive")
         if dispersion is not None and (not np.isfinite(dispersion) or dispersion <= 0):
             raise ValueError("dispersion must be positive or None for independent Poisson")
         self.quality_retention, self.tilt_retention = quality_retention, tilt_retention
         self.quality_sd, self.tilt_sd = quality_sd, tilt_sd
+        self.form_retention, self.form_sd = form_retention, form_sd
+        # Quality is the persistent club level, plus a form deviation when a form process is given.
+        self.team_dimensions = 2 if form_sd is None else 3
         self.annual_home_sd, self.dispersion = annual_home_sd, dispersion
         super().__init__(
             annual_league_sd=annual_league_sd,
@@ -53,30 +64,47 @@ class QualityTiltFilter(DynamicAttackDefense):
         super()._reset()
         self.log_evidence = 0.0
 
+    @property
+    def team_loading(self):
+        """Rows are Quality and Tilt; columns are the club slots: level, Tilt and form."""
+        if not self.form_sd:
+            return np.eye(2)
+        return np.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+
+    def form_stationary_variance(self):
+        return self.form_sd**2 / (1 - self.form_retention**2)
+
     def _entry_prior(self, team, season, as_of):
         prior = super()._entry_prior(team, season, as_of)
-        return TeamPrior(
-            QT_FROM_AD @ prior.mean, QT_FROM_AD @ prior.covariance @ QT_FROM_AD.T, prior.source
-        )
+        mean, covariance = QT_FROM_AD @ prior.mean, QT_FROM_AD @ prior.covariance @ QT_FROM_AD.T
+        if self.form_sd:
+            # An entry prior describes Quality; the form of an entering club is unknown.
+            mean = np.r_[mean, 0.0]
+            covariance = np.pad(covariance, ((0, 1), (0, 1)))
+            covariance[2, 2] = self.form_stationary_variance()
+        return TeamPrior(mean, covariance, prior.source)
 
     def _team_transforms(self, fixture=None):
-        return np.array([[1, 1], [-1, 1]]), np.array([[-1, 1], [1, 1]])
+        loading = self.team_loading
+        return np.array([[1, 1], [-1, 1]]) @ loading, np.array([[-1, 1], [1, 1]]) @ loading
 
     def transition(self, years, dimensions):
         if years < 0:
             raise ValueError("Cannot evolve a state backwards")
         rho = np.array([self.quality_retention, self.tilt_retention])
         sd = np.array([self.quality_sd, self.tilt_sd])
+        if self.form_sd:
+            rho, sd = np.r_[rho, self.form_retention], np.r_[sd, self.form_sd]
         factor = rho**years
         variance = sd**2 * np.array(
             [years if r == 1 else (1 - f**2) / (1 - r**2) for r, f in zip(rho, factor, strict=True)]
         )
         leading = self.league_dimensions
         return (
-            np.r_[np.ones(leading), np.tile(factor, (dimensions - leading) // 2)],
+            np.r_[np.ones(leading), np.tile(factor, (dimensions - leading) // len(rho))],
             np.r_[
                 self.league_innovation_sd() ** 2 * years,
-                np.tile(variance, (dimensions - leading) // 2),
+                np.tile(variance, (dimensions - leading) // len(rho)),
             ],
         )
 
@@ -91,7 +119,7 @@ class QualityTiltFilter(DynamicAttackDefense):
         augmentation of the state vector.
         """
         leading = self.league_dimensions
-        decay, variance = QualityTiltFilter.transition(self, years, leading + 2)
+        decay, variance = QualityTiltFilter.transition(self, years, leading + self.team_dimensions)
         return decay[leading:], variance[leading:]
 
     def _advance(self, day):
@@ -109,13 +137,17 @@ class QualityTiltFilter(DynamicAttackDefense):
         )
         self.log_evidence += evidence
 
+    def _quality_tilt(self):
+        blocks = self.mean[self.league_dimensions :].reshape(-1, self.team_dimensions)
+        return blocks @ self.team_loading.T
+
     @property
     def attack(self):
-        return self.mean[self.league_dimensions :: 2] + self.mean[self.league_dimensions + 1 :: 2]
+        return self._quality_tilt().sum(axis=1)
 
     @property
     def defense(self):
-        return self.mean[self.league_dimensions :: 2] - self.mean[self.league_dimensions + 1 :: 2]
+        return self._quality_tilt() @ np.array([1, -1])
 
     def forecast_moments(self, fixture):
         self.validate_fixture(fixture)
@@ -152,12 +184,23 @@ class QualityTiltFilter(DynamicAttackDefense):
 
     def team_summary(self, team, season):
         state = self.team_state(team, season)
-        return state_summary(team, state)
+        return state_summary(team, state, self.team_loading)
 
 
-def state_summary(team, state):
+def state_summary(team, state, loading):
+    """Quality, Tilt and attack/defense moments of one club state in its own slots."""
+    slots = state
+    state = TeamPrior(loading @ slots.mean, loading @ slots.covariance @ loading.T, slots.source)
     ad_mean = AD_FROM_QT @ state.mean
     ad_covariance = AD_FROM_QT @ state.covariance @ AD_FROM_QT.T
+    components = {}
+    if len(slots.mean) == 3:
+        components = {
+            "quality_level": float(slots.mean[0]),
+            "quality_form": float(slots.mean[2]),
+            "quality_level_sd": float(np.sqrt(slots.covariance[0, 0])),
+            "quality_form_sd": float(np.sqrt(slots.covariance[2, 2])),
+        }
     return {
         "team_id": team,
         "quality": float(state.mean[0]),
@@ -170,6 +213,7 @@ def state_summary(team, state):
         "attack_sd": float(np.sqrt(ad_covariance[0, 0])),
         "defense_sd": float(np.sqrt(ad_covariance[1, 1])),
         "state_source": state.source,
+        **components,
     }
 
 
@@ -260,7 +304,9 @@ class BayesianQualityTilt:
         deviations = means - mean
         covariance = np.einsum("i,ijk->jk", self.weights, [s.covariance for s in states])
         covariance += (deviations.T * self.weights) @ deviations
-        summary = state_summary(team, TeamPrior(mean, covariance, states[0].source))
+        summary = state_summary(
+            team, TeamPrior(mean, covariance, states[0].source), self.members[0].team_loading
+        )
         summary["season_matches"] = self.members[0].appearances[team, season]
         return summary
 
@@ -333,9 +379,9 @@ class ForwardQualityTiltStates:
                     decay, variance = model.team_transition((day - self.as_of).days / 365.25)
                     entry_mean = prior.mean * decay
                     entry_cov = prior.covariance * np.outer(decay, decay) + np.diag(variance)
-                    entries[key] = entry_mean + self.rng.standard_normal((len(positions), 2)) @ (
-                        np.linalg.cholesky(entry_cov).T
-                    )
+                    entries[key] = entry_mean + self.rng.standard_normal(
+                        (len(positions), len(entry_mean))
+                    ) @ (np.linalg.cholesky(entry_cov).T)
         years = (fixture.match_date - day).days / 365.25
         if years:
             decay, variance = model.transition(years, values.shape[1])
@@ -350,9 +396,9 @@ class ForwardQualityTiltStates:
         def team_value(team):
             key = team, fixture.season_id
             if key in entries:
-                return entries[key]
-            index = model.league_dimensions + 2 * model.team_index[team]
-            return values[:, index : index + 2]
+                return entries[key] @ model.team_loading.T
+            block = model._team_slice(team)
+            return values[:, block] @ model.team_loading.T
 
         home, away = team_value(fixture.home_team_id), team_value(fixture.away_team_id)
         quality, tilt = home[:, 0] - away[:, 0], home[:, 1] + away[:, 1]

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pytest
@@ -151,3 +151,33 @@ def test_exported_variance_decomposition_and_tail_diagnostics():
     assert diagnostics["p_total_goals_ge6"] == pytest.approx(
         grid[np.indices(grid.shape).sum(axis=0) >= 6].sum(), abs=1e-10
     )
+
+
+def test_negligible_form_reproduces_single_quality_process(small_history):
+    cutoff = small_history[-1].available_on
+    single = QualityTiltFilter(quality_retention=1.0, dispersion=None).fit(small_history, cutoff)
+    split = QualityTiltFilter(
+        quality_retention=1.0, form_retention=0.5, form_sd=1e-7, dispersion=None
+    ).fit(small_history, cutoff)
+    assert split.team_dimensions == 3 and len(split.mean) == 2 + 3 * len(split.team_index)
+    assert split.log_evidence == pytest.approx(single.log_evidence, abs=1e-8)
+    np.testing.assert_allclose(split.attack, single.attack, atol=1e-8)
+    fixture = replace(small_history[0].fixture, match_date=cutoff + timedelta(days=40))
+    for a, b in zip(single.forecast_moments(fixture), split.forecast_moments(fixture), strict=True):
+        np.testing.assert_allclose(a, b, atol=1e-8)
+    summary = split.team_summary("a", fixture.season_id)
+    assert summary["quality"] == pytest.approx(summary["quality_level"] + summary["quality_form"])
+    assert summary["quality_form_sd"] < 1e-6
+
+
+def test_form_returns_to_the_club_level(small_history):
+    model = QualityTiltFilter(
+        quality_retention=1.0, form_retention=0.2, form_sd=0.2, dispersion=None
+    ).fit(small_history, small_history[-1].available_on)
+    decay, variance = model.team_transition(1.0)
+    np.testing.assert_allclose(decay, [1.0, model.tilt_retention, 0.2])
+    assert variance[2] == pytest.approx(0.2**2)
+    with pytest.raises(ValueError, match="both"):
+        QualityTiltFilter(form_sd=0.1)
+    with pytest.raises(ValueError, match="Form retention"):
+        QualityTiltFilter(form_retention=1.0, form_sd=0.1)

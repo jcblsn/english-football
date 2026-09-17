@@ -12,23 +12,23 @@ from epl_forecast.models.quality_tilt import QualityTiltFilter
 
 
 @lru_cache(maxsize=128)
-def tilt_coordinates(teams, absorption=(2.0, 0.0)):
-    """Map population coordinates to league slots, Quality, Tilt contrasts and scoring memory.
+def tilt_coordinates(teams, absorption=(2.0, 0.0), team_dimensions=2):
+    """Map population coordinates to league slots, club slots, Tilt contrasts and scoring memory.
 
     Every club Tilt enters both teams' log rates with the same sign, so the
     population mean of Tilt is a scoring level. `absorption` gives the coefficient
     with which that mean enters each slot of the leading league block, and the
-    corresponding slot takes ownership of it here.
+    corresponding slot takes ownership of it here. Tilt is the second slot of each club.
     """
     if type(teams) is not int or teams < 0:
         raise ValueError("Team count must be a nonnegative integer")
     league = len(absorption)
     if league < 2 or league % 2:
         raise ValueError("The leading league block needs an even number of slots")
-    size = league + 2 * teams
+    size = league + team_dimensions * teams
     transform, inverse = np.eye(size), np.eye(size)
     if teams:
-        indices = np.arange(league + 1, size, 2)
+        indices = np.arange(league + 1, size, team_dimensions)
         transform[np.ix_(indices, indices)] = np.vstack(
             [helmert(teams), np.full((1, teams), 1 / teams)]
         )
@@ -36,7 +36,7 @@ def tilt_coordinates(teams, absorption=(2.0, 0.0)):
         for slot, coefficient in enumerate(absorption):
             if coefficient:
                 transform[slot, indices] = coefficient / teams
-                inverse[slot, -1] = -coefficient
+                inverse[slot, indices[-1]] = -coefficient
     transform.setflags(write=False)
     inverse.setflags(write=False)
     return transform, inverse
@@ -63,7 +63,17 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
         return (2.0,) + (0.0,) * (self.league_dimensions - 1)
 
     def _coordinates(self):
-        return tilt_coordinates(len(self.team_index), self._mean_tilt_absorption())
+        return tilt_coordinates(
+            len(self.team_index), self._mean_tilt_absorption(), self.team_dimensions
+        )
+
+    def _memory_index(self):
+        """The Tilt slot of the last club holds the population mean of Tilt."""
+        return (
+            self.league_dimensions
+            + self.team_dimensions * len(self.team_index)
+            - (self.team_dimensions - 1)
+        )
 
     def population_moments(self):
         _, inverse = self._coordinates()
@@ -128,28 +138,33 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
         )
         return self
 
+    def _club_quality(self):
+        blocks = self.mean[self.league_dimensions :].reshape(-1, self.team_dimensions)
+        return blocks @ self.team_loading[0]
+
     def _centered_tilt_map(self):
         n = len(self.team_index)
         design = np.zeros((n, len(self.mean)))
         if n > 1:
-            design[:, self.league_dimensions + 1 : -2 : 2] = helmert(n).T
+            first = self.league_dimensions + 1
+            design[:, first : self._memory_index() : self.team_dimensions] = helmert(n).T
         return design
 
     @property
     def attack(self):
-        return self.mean[self.league_dimensions :: 2] + self._centered_tilt_map() @ self.mean
+        return self._club_quality() + self._centered_tilt_map() @ self.mean
 
     @property
     def defense(self):
-        return self.mean[self.league_dimensions :: 2] - self._centered_tilt_map() @ self.mean
+        return self._club_quality() - self._centered_tilt_map() @ self.mean
 
     def team_state(self, team, season):
         if self.as_of is None:
             raise ValueError("Fit the model before prediction")
         if self._uses_fitted_state(team, season):
             index = self.team_index[team]
-            design = np.zeros((2, len(self.mean)))
-            design[0, self.league_dimensions + 2 * index] = 1
+            block = self._team_slice(team)
+            design = np.eye(len(self.mean))[block]
             design[1] = self._centered_tilt_map()[index]
             source = self.entry_priors.get((team, season))
             return TeamPrior(
@@ -160,8 +175,9 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
         prior = self._entry_prior(team, season, self.as_of)
         mean, covariance = prior.mean.copy(), prior.covariance.copy()
         if self.team_index:
-            mean[1] -= self.mean[-1]
-            covariance[1, 1] += self.covariance[-1, -1]
+            memory = self._memory_index()
+            mean[1] -= self.mean[memory]
+            covariance[1, 1] += self.covariance[memory, memory]
         return TeamPrior(mean, covariance, prior.source)
 
     def forecast_moments(self, fixture):
@@ -181,8 +197,7 @@ class CenteredQualityTiltFilter(QualityTiltFilter):
             self._team_transforms(fixture),
             strict=True,
         ):
-            index = self.league_dimensions + 2 * snapshot.team_index[team]
-            design[:, index : index + 2] = transform
+            design[:, snapshot._team_slice(team)] = transform
         design = snapshot.observation_design(design)
         return design @ snapshot.mean, design @ snapshot.covariance @ design.T
 
