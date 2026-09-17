@@ -57,7 +57,9 @@ def test_final_fixture_capture_has_bounded_correction_checkpoints():
     assert fixture_details_due(fixtures, records(3), kickoff + timedelta(hours=4)) == []
     assert fixture_details_due(fixtures, records(3), kickoff + timedelta(days=1)) == [10]
     assert fixture_details_due(fixtures, records(25), kickoff + timedelta(days=2)) == []
-    assert fixture_details_due(fixtures, records(25), kickoff + timedelta(days=7)) == [10]
+    assert fixture_details_due(fixtures, records(25), kickoff + timedelta(days=3)) == [10]
+    assert fixture_details_due(fixtures, records(73), kickoff + timedelta(days=4)) == []
+    assert fixture_details_due(fixtures, records(73), kickoff + timedelta(days=7)) == [10]
     assert fixture_details_due(fixtures, records(169), kickoff + timedelta(days=30)) == []
 
 

@@ -401,6 +401,7 @@ def fixture_details_due(fixtures, records, now):
             targets = [
                 kickoff + timedelta(hours=2),
                 kickoff + timedelta(days=1),
+                kickoff + timedelta(days=3),
                 kickoff + timedelta(days=7),
             ]
             due = any(
