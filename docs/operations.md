@@ -72,7 +72,7 @@ The public version is part of the production fingerprint. When you change it, ev
 | `v0.1` | 15 September 2026 | The National League became an entry source for clubs promoted to League Two, and M7 observed API-Football team xG in every division. |
 | `v0.2` | 15 September 2026 | Premier League and Championship fixtures in the next six days get a temporary matchday-squad continuity adjustment. The persistent M7 state does not change. See [methodology](methodology.md#matchday-squad-continuity) and [validation](validation.md#matchday-squad-continuity). |
 | `v0.2.1` | 16 September 2026 | A usable FPL availability status takes priority over API-Football for a Premier League player. Repeated captures of one transfer event count as one membership reason. |
-| `v0.3.0` | Not yet merged | M10 replaces M7. Club Quality is a persistent level, which does not return to the league mean, plus a form that returns to the level. See [methodology](methodology.md#dynamics) and [validation](validation.md#m10-quality-dynamics). |
+| `v0.3.0` | 17 September 2026 | M10 replaces M7. Club Quality is a persistent level, which does not return to the league mean, plus a form that returns to the level. See [methodology](methodology.md#dynamics) and [validation](validation.md#m10-quality-dynamics). |
 
 A new version needs new hindcasts. The hindcast edition of a version freezes its model code, so the `v0.1` hindcasts cannot describe `v0.2`.
 
