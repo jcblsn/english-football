@@ -8,8 +8,9 @@ Read the forecasts with these limits in mind.
 - Each season panel has only nine to eleven seasons. Its intervals are wide. See [validation](validation.md).
 - Hindcasts are retrospective. The model specification was developed with the same history, so hindcasts can look better than live forecasts. They use the fixture dates that each season finally used, and they assume that results and xG were available on the day after each match.
 - The prospective record starts fresh before launch. It will have few settled matches at first.
+- M10 was released in v0.3.0 on retrospective evidence. Its dynamics were selected and checked on seasons that were already played, and no M10 forecast was scored prospectively before the release. In the EFL divisions, its forecasts for the first five matches of a club were worse than those of M7. See [validation](validation.md#m10-quality-dynamics).
 - The matchday-squad continuity adjustment of v0.2 was released on retrospective evidence. Its representation and coefficient were chosen with the same seasons, and no prospective fixture was scored before the release. See [validation](validation.md#matchday-squad-continuity).
-- The only comparison is with M2 and with the betting market. There is no comparison with public forecast models yet.
+- The only comparisons are with M2, with the earlier model M7 and with the betting market. There is no comparison with public forecast models yet.
 
 ## Inputs
 
@@ -25,7 +26,8 @@ Read the forecasts with these limits in mind.
 ## Model
 
 - The filter is an approximation. It uses a Laplace step each day and a finite set of three noise values.
-- Dynamics parameters are fixed. They are not estimated from the data.
+- Dynamics parameters are fixed. They are not estimated from the data in each forecast. A chronological comparison of a small grid selected the Quality values of M10.
+- The match results do not show the common Quality of all clubs. The entry priors fix this reference, so a forecast for an entrant depends a little on it. See [methodology](methodology.md#dynamics).
 - Entry priors come from few clubs at some boundaries, for example clubs promoted from a curtailed season. Their intervals can be too wide or too narrow.
 - The continuity adjustment has one linear coefficient for both divisions, fixed availability values and one pooled table for q(m, n). It responds only to the difference between the two clubs, so two clubs with the same discontinuity get no shift.
 - The six-day horizon is a frozen deployment choice, not an optimized one. It is the longest checkpoint of the prospective evaluation, so the prospective record can measure it. No search chose it, and no evidence says that six days is better than five or seven. It stays fixed while the prospective evidence collects.

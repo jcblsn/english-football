@@ -56,6 +56,6 @@ M7 had the best retained match score and the best season distributions against M
 ## Out of scope
 
 - In-play forecasts. A match that is in play is simulated as a match that is not played. The product does not use the current score, and it says so in each forecast that contains such a match.
-- Lineup, injury and transfer effects.
+- Lineup, injury and transfer effects on the persistent team state. Only the temporary matchday-squad continuity adjustment uses this evidence, for Premier League and Championship fixtures in the next six days.
 - Betting advice or automation.
 - Forecasts for cups or European competitions.

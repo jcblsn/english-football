@@ -74,7 +74,7 @@ The public version is part of the production fingerprint. When you change it, ev
 | `v0.2.1` | 16 September 2026 | A usable FPL availability status takes priority over API-Football for a Premier League player. Repeated captures of one transfer event count as one membership reason. |
 | `v0.3.0` | 17 September 2026 | M10 replaces M7. Club Quality is a persistent level, which does not return to the league mean, plus a form that returns to the level. See [methodology](methodology.md#dynamics) and [validation](validation.md#m10-quality-dynamics). |
 
-A new version needs new hindcasts. The hindcast edition of a version freezes its model code, so the `v0.1` hindcasts cannot describe `v0.2`.
+A new version needs new hindcasts. The hindcast edition of a version freezes its model code, so the hindcasts of one version cannot describe another version.
 
 ## Single steps
 
@@ -135,9 +135,9 @@ The rules for each hindcast:
 
 The weekday and time of the origin are an observation protocol. They decide when a retrospective forecast is taken. They do not change how the model forecasts, so a change of weekday is not evidence that the model became better or worse. Do not compare a Wednesday edition with a Monday edition and read the difference as a model effect.
 
-`v0.2` and later editions use Wednesday. `v0.0` used Monday. That edition is immutable and keeps its Monday origins. An edition file from `v0.2` onward records `origin_weekday`, `origin_time` and `origin_time_zone`, so a reader does not have to read the code of the version that made it. The `v0.0` edition predates those fields: it states its protocol only in the free text of `origin_rule`. `claim_edition` compares the whole edition, so a rerun of an older version with the new weekday stops instead of extending that archive with origins it never had.
+The `v0.2` and later editions use Wednesday. `v0.0` used Monday. That edition is immutable and keeps its Monday origins. An edition file from `v0.2` onward records `origin_weekday`, `origin_time` and `origin_time_zone`, so a reader does not have to read the code of the version that made it. The `v0.0` edition predates those fields: it states its protocol only in the free text of `origin_rule`. `claim_edition` compares the whole edition, so a rerun of an older version with the new weekday stops instead of extending that archive with origins it never had.
 
-`v0.1` has no hindcast archive and no edition file. It was the published version for about one day before `v0.2` replaced it.
+`v0.1` and `v0.2.1` have no hindcast archive and no edition file. Each was the published version for about one day before the next version replaced it.
 
 If a same-origin comparison between two model versions is ever needed, generate the older version again under its own separately identified edition. Do not write Wednesday origins into the `v0.0` archive.
 

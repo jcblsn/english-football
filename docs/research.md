@@ -11,7 +11,7 @@ The `main` branch holds only the supported product. The complete research histor
 The tag marks the last commit before the product consolidation of 11 September 2026. At that commit you can find:
 
 - The chronological experiment reports under `docs/experiments/`: E001, E002, the M4 to M10 studies, the season panels, and the entry-prior, market-pool and playoff-conditioning studies.
-- The superseded models: M0, M1, the M3 Elo model, the M6 player model, the M8 process model, the M9 cross-division model and the M10 division map.
+- The superseded models: M0, M1, the M3 Elo model, the M6 player model, the M8 process model, the M9 cross-division model and the M10 division map. That older M10 is a different model. The product M10 of `v0.3.0` uses the same name again.
 - The player-layer research package `src/epl_forecast/research/`.
 - One-off scripts: audits, diagnostics, parameter searches, previews and scouts.
 - The pinned 2026/27 season projections of 10 September 2026, with their uncertainty sensitivity.

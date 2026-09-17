@@ -7,7 +7,7 @@ Four kinds of evidence support the structural model. This page gives the results
 3. A match scoreboard in the Premier League.
 4. The prospective forecast record.
 
-Each section names the code that produced its own evidence. Code commit `fc94353` made the season panels, the match scoreboard and the market pool fit that the first three sections report, with the product configuration. It did not make the evidence of the later sections: the National League entry source, API-Football xG and matchday-squad continuity each name the commits and runs behind them. The [evidence guide](../evidence/README.md) identifies the generated files in private R2 storage.
+Each section names the code that produced its own evidence. Code commit `fc94353` made the season panels, the match scoreboard and the market pool fit that the first three sections report, with the product configuration. It did not make the evidence of the later sections: the National League entry source, API-Football xG, matchday-squad continuity and M10 Quality dynamics each name the commits and runs behind them. The [evidence guide](../evidence/README.md) identifies the generated files in private R2 storage.
 
 ## Product checks
 
@@ -334,7 +334,7 @@ Before the merge, bounded checks tested the structure of M10 against the same ro
 
 ### Production equivalence and product checks
 
-The production M10 of the `m10-quality-dynamics` branch reproduces the selected research candidate in all four divisions:
+The production M10 of the `m10-quality-dynamics` release branch reproduces the selected research candidate in all four divisions:
 
 - Match forecasts: at the first match days of 2024/25, 2025/26 and 2026/27 and at one midseason day of 2025/26, the product path (`fitted_model` with `configs/product.toml`, fitted from the start) and the rolling research forecasts agree on 60 matches, 30 of them with an entrant. The largest differences are 4.4e-16 in an outcome probability, 4.4e-15 in a score log probability and 6.1e-16 in a club Quality.
 - Season simulation: production panels of 2024/25 give the same mean points, points SD, points CRPS, rank RPS and 90% width as the research candidate panels at every origin and for every club, with difference 0.0.
@@ -386,6 +386,6 @@ uv run epl-forecast evaluate --split holdout --output runs/match-holdout
 uv run python scripts/fit_market_pool.py --predictions <predictions> --markets <market predictions> --output runs/market-pool
 ```
 
-For `fit_market_pool.py`, join the `predictions.csv` and `market_predictions.csv` files of the two splits. With the predictions of commit `fc94353`, the refit gives a weight of 1.0 over 1,140 matches. It reproduces `configs/market_pool.json` exactly.
+For `fit_market_pool.py`, join the `predictions.csv` and `market_predictions.csv` files of the two splits. With the M10 predictions of the `v0.3.0` release, the refit gives a weight of 1.0 over 1,140 matches. It reproduces `configs/market_pool.json` exactly.
 
 The detailed studies behind the model choices are on the research branch. See [research history](research.md).

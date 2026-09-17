@@ -1,6 +1,6 @@
 # English league forecasts
 
-Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. A production job checks for new effective inputs every ten minutes and publishes only when they change.
+Probabilistic forecasts for the four divisions of English league football: the Premier League, the Championship, League One and League Two. The product forecasts every remaining match and the final table of each division. A production job checks for new effective inputs every three hours and publishes only when they change.
 
 ## What it forecasts
 
@@ -60,9 +60,9 @@ The [validation summary](docs/validation.md) gives the results and the commands 
 
 ## Limitations
 
-- xG comes from API-Football. It starts in 2023 in the Premier League and the Championship and in August 2026 in League One and League Two. A match without xG updates the model on goals only.
+- xG comes from API-Football. It starts in 2023 in the Premier League and the Championship and in August 2026 in League One and League Two. Before 2023, the Premier League uses Understat xG. A match without xG updates the model on goals only.
 - The persistent M10 state does not use lineups, injuries, suspensions or transfers. The temporary matchday-squad continuity adjustment uses personnel evidence for Premier League and Championship fixtures in the next six days. It does not forecast personnel changes beyond the available evidence.
-- The historical evaluation is retrospective, and it covers only nine to eleven seasons in each division.
+- The historical evaluation is retrospective, and it covers only nine to eleven seasons in each division. M10 was released without a prospective test, and in the EFL divisions its forecasts for the first matches of a season were worse than those of M7.
 - Some playoff and scheduling details are explicit approximations.
 
 See all [limitations](docs/limitations.md).
