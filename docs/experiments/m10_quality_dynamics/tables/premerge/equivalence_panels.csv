@@ -1,0 +1,5 @@
+competition_id,club_origins,mean_points_max_difference,points_sd_max_difference,points_crps_max_difference,rank_rps_max_difference,width_90_max_difference
+eng-premier-league,100,0.0,0.0,0.0,0.0,0.0
+eng-championship,120,0.0,0.0,0.0,0.0,0.0
+eng-league-one,120,0.0,0.0,0.0,0.0,0.0
+eng-league-two,120,0.0,0.0,0.0,0.0,0.0

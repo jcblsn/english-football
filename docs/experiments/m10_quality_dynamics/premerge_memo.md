@@ -11,7 +11,7 @@ Status: retrospective development evidence, 17 September 2026. Branch: `research
 | 3. Personnel adjustment on M10 | The frozen adjustment improves M10 by −0.00123 score NLL [−0.00202, −0.00048], 81% of its gain on M7. No slice reverses. | Keep the adjustment. The prospective control becomes M10. |
 | 4. Close-season level transition | S1 is worse in score NLL. S2 is neutral and removes 25% of the early-EFL weakness, less than the one third that the plan required. | Keep M10. The search stops. |
 | 5. Observability | Level–form covariance exposed, stale diagnostics corrected, fixed two-slot assumptions removed. | Production commit. |
-| 6. Equivalence | See Section 6. | |
+| 6. Equivalence and verification | Production reproduces the research candidate in all four divisions to within 5e-15, including entrants and the season simulation. Every product check passes. | Ready for the owner review. |
 
 All match comparisons use the rolling daily forecasts of `m10_premerge_rolling.py` on the test seasons 2015/16–2025/26 (22,132 matches) with 28-day block intervals. The rolling M10 of this check gives the same match probabilities and score log probabilities as the M10 memo run in all four divisions (largest difference 0.0). The M10 minus M7 results of the memo are reproduced: −0.00107 log loss and −0.00076 score NLL.
 
@@ -112,7 +112,15 @@ Production commits on `m10-quality-dynamics`:
 
 ## 6. Equivalence of production and research
 
-PENDING
+`m10_equivalence.py` compares the production path with the research candidate `level-s0.08-form-s0.07` (`tables/premerge/equivalence_matches.csv`, `equivalence_panels.csv`).
+
+- Match forecasts. At the first match days of 2024/25, 2025/26 and 2026/27 and at one midseason day of 2025/26, production `fitted_model` with `configs/product.toml`, fitted from the start of the history, is compared with the rolling research forecasts, which were fitted day by day. The 60 matches are in all four divisions, and 30 have an entrant. The largest differences are 4.4e-16 in an outcome probability, 4.4e-15 in a score log probability and 6.1e-16 in a club Quality.
+- Season simulation. Production `scripts/evaluate_seasons.py --models M10 --seasons 2024` at the branch head gives the same mean points, points SD, points CRPS, rank RPS and 90% width as the candidate panel of the M10 memo for all 460 club-origins of 2024/25 in the four divisions. Every difference is 0.0. These include promoted and relegated clubs at the preseason origin.
+- Rolling forecasts. The pre-merge rolling M10 gives the same probabilities as the memo run in all four divisions (difference 0.0).
+- Market pool. The 1,140 M10 predictions of the pool refit (commit `3a94d07`, clean) equal the rolling research forecasts to within 7e-15. `configs/market_pool.json` equals the refit output, with weight 1.0 and structural model `M10-xg-v1`.
+- Verification. `scripts/verify.sh` passes: 308 tests. At one cutoff on 17 September 2026, the forecasts of commit `f9332cd` pass every product check: 4,581 in the Premier League, 6,289 in the Championship, 6,413 in League One and 6,399 in League Two. The only uncommitted change was a documentation file. The archives give the M10 dynamics in the fit diagnostics, and the level–form covariance of every club is negative (−0.0018 to −0.0022 on average by division).
+
+No discrepancy was found between the research and production implementations.
 
 ## Reproduce
 
@@ -124,6 +132,8 @@ uv run --with pandas --with pyarrow python scripts/research/m10_premerge_analysi
 uv run python scripts/research/m10_premerge_panel.py --candidate E1 -- --models M10 --competition <division> --seasons <seasons> --output runs/m10-premerge-panels/E1-<division>
 uv run --with pandas python scripts/research/m10_premerge_panel_report.py --control runs/m10-panels --panels runs/m10-premerge-panels --candidate E1 --tables docs/experiments/m10_quality_dynamics/tables/premerge
 uv run --with pandas --with pyarrow python scripts/research/m10_personnel.py --evidence <chronological.csv> --rolling runs/m10-premerge --tables docs/experiments/m10_quality_dynamics/tables/premerge
+uv run python scripts/evaluate_seasons.py --models M10 --competition <division> --seasons 2024 --output runs/m10-equivalence/panel-<division>
+uv run --with pandas --with pyarrow python scripts/research/m10_equivalence.py --grid runs/m10-grid --panels runs/m10-panels --production-panels runs/m10-equivalence --tables docs/experiments/m10_quality_dynamics/tables/premerge
 ```
 
 Run the scripts from a checkout of `m10-quality-dynamics` so that `epl_forecast` is the production M10. The control panels `runs/m10-panels/c2-<division>` are those of the M10 memo.
