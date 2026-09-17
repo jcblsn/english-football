@@ -15,7 +15,7 @@ Status: retrospective development evidence, 17 September 2026. Branch: `research
 
 ## Recommendation
 
-M10 is Quality = L + F. L is a random walk with σ_L = 0.08. F is an AR(1) process with ρ_F = 0.3 and σ_F = 0.07. Everything else is M7. The forecasts are better than M7 in the pooled test, in the Premier League and in League One. They are neutral in the Championship and mixed in League Two. SEASON-PANEL-VERDICT
+M10 is Quality = L + F. L is a random walk with σ_L = 0.08. F is an AR(1) process with ρ_F = 0.3 and σ_F = 0.07. Everything else is M7. The forecasts are better than M7 in the pooled test, in the Premier League and in League One. They are neutral in the Championship and mixed in League Two. The season panels are better in the Premier League and League One, neutral in League Two and mixed in the Championship, and the early-season intervals are better calibrated in every division. The evidence is sufficient to merge M10, with the reservations of Sections 7 and 8.
 
 ## 1. The cause
 
@@ -130,7 +130,39 @@ The interpretation is that a close season changes EFL clubs more than a calendar
 
 ## 5. Season-level calibration and uncertainty
 
-SEASON-PANEL-SECTION
+The panels forecast complete seasons from five origins with `scripts/evaluate_seasons.py`: 10,000 paths, seed 20260908, the Premier League and the Championship in 2015/16–2025/26, and League One and League Two in the same seasons without 2019/20 and 2020/21. M7 ran at `c7d94c7` and M10 at `2a84dca`. The intervals resample whole seasons (`tables/panel_comparison.csv`, `tables/panel_seasons.csv`, `tables/panel_cohorts.csv`).
+
+| Division | Origin | Rank RPS M7 → M10 | Difference [95% interval] | Points CRPS M7 → M10 | Difference [95% interval] | 90% points coverage | 90% points width |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Premier League | preseason | 0.1068 → 0.1054 | -0.0014 [-0.0033, +0.0006] | 6.60 → 6.39 | -0.22 [-0.42, -0.02] | 81.8% → 85.0% | 31.8 → 33.5 |
+| Premier League | MW6 | 0.0919 → 0.0914 | -0.0005 [-0.0019, +0.0010] | 5.49 → 5.36 | -0.13 [-0.27, +0.02] | 83.2% → 88.2% | 27.5 → 28.5 |
+| Premier League | MW12 | 0.0771 → 0.0770 | -0.0002 [-0.0012, +0.0008] | 4.58 → 4.48 | -0.10 [-0.19, +0.00] | 86.8% → 88.2% | 23.7 → 24.2 |
+| Premier League | MW19 | 0.0587 → 0.0584 | -0.0003 [-0.0008, +0.0002] | 3.39 → 3.33 | -0.06 [-0.11, -0.01] | 90.0% → 90.5% | 19.2 → 19.5 |
+| Premier League | MW30 | 0.0415 → 0.0413 | -0.0002 [-0.0006, +0.0001] | 2.17 → 2.14 | -0.03 [-0.05, -0.01] | 90.9% → 92.7% | 11.8 → 11.8 |
+| Championship | preseason | 0.1444 → 0.1451 | +0.0007 [+0.0002, +0.0012] | 7.49 → 7.49 | -0.00 [-0.03, +0.03] | 86.4% → 87.5% | 39.2 → 42.3 |
+| Championship | MW6 | 0.1303 → 0.1302 | -0.0001 [-0.0009, +0.0006] | 6.85 → 6.80 | -0.05 [-0.10, +0.00] | 86.0% → 88.6% | 34.5 → 36.5 |
+| Championship | MW12 | 0.1141 → 0.1142 | +0.0001 [-0.0006, +0.0008] | 5.96 → 5.89 | -0.07 [-0.10, -0.03] | 87.9% → 89.0% | 30.1 → 31.6 |
+| Championship | MW19 | 0.0958 → 0.0961 | +0.0003 [-0.0004, +0.0009] | 4.88 → 4.84 | -0.04 [-0.09, +0.01] | 88.3% → 91.7% | 25.5 → 26.5 |
+| Championship | MW30 | 0.0617 → 0.0616 | -0.0001 [-0.0004, +0.0003] | 3.27 → 3.24 | -0.02 [-0.05, +0.00] | 89.0% → 89.8% | 18.0 → 18.3 |
+| League One | preseason | 0.1518 → 0.1514 | -0.0003 [-0.0014, +0.0008] | 8.49 → 8.41 | -0.08 [-0.17, +0.01] | 83.8% → 87.0% | 40.8 → 44.0 |
+| League One | MW6 | 0.1255 → 0.1248 | -0.0007 [-0.0015, +0.0001] | 7.13 → 7.00 | -0.13 [-0.22, -0.05] | 83.8% → 88.0% | 35.3 → 37.5 |
+| League One | MW12 | 0.1084 → 0.1082 | -0.0002 [-0.0008, +0.0003] | 6.25 → 6.14 | -0.11 [-0.18, -0.04] | 85.2% → 86.6% | 30.8 → 32.5 |
+| League One | MW19 | 0.0910 → 0.0908 | -0.0002 [-0.0008, +0.0005] | 5.13 → 5.04 | -0.09 [-0.16, -0.04] | 87.5% → 88.9% | 25.9 → 27.0 |
+| League One | MW30 | 0.0623 → 0.0624 | +0.0001 [-0.0003, +0.0005] | 3.44 → 3.39 | -0.05 [-0.09, -0.01] | 85.6% → 89.8% | 18.3 → 18.8 |
+| League Two | preseason | 0.1612 → 0.1617 | +0.0004 [-0.0006, +0.0015] | 7.58 → 7.56 | -0.02 [-0.10, +0.06] | 88.9% → 90.7% | 40.0 → 43.2 |
+| League Two | MW6 | 0.1353 → 0.1352 | -0.0001 [-0.0008, +0.0006] | 6.45 → 6.40 | -0.05 [-0.11, +0.01] | 90.3% → 90.7% | 34.9 → 37.2 |
+| League Two | MW12 | 0.1092 → 0.1091 | -0.0001 [-0.0007, +0.0005] | 5.24 → 5.20 | -0.04 [-0.11, +0.02] | 89.8% → 92.6% | 30.7 → 32.4 |
+| League Two | MW19 | 0.0943 → 0.0943 | +0.0000 [-0.0002, +0.0003] | 4.60 → 4.57 | -0.04 [-0.08, -0.00] | 88.9% → 90.7% | 26.0 → 27.2 |
+| League Two | MW30 | 0.0680 → 0.0680 | +0.0000 [-0.0004, +0.0004] | 3.38 → 3.38 | +0.01 [-0.03, +0.04] | 89.4% → 90.3% | 18.3 → 18.7 |
+
+- Premier League: points CRPS is lower at every origin, and the interval is below zero at preseason, MW19 and MW30. Rank RPS is lower at every origin, with intervals that include zero. Top-four Brier is lower at every origin. Relegation Brier is a little higher at every origin (+0.0002 to +0.0010), with intervals that include zero.
+- Championship: points CRPS is equal or lower at every origin, and the interval is below zero at MW12. Rank RPS is worse at preseason (+0.0007 [+0.0002, +0.0012]) and it is lower in only 3 of 11 preseason seasons. Title, playoff and promotion Brier are worse at preseason, and promotion Brier is worse at MW12 and MW30. This agrees with the early-season weakness of Section 4.
+- League One: points CRPS is lower at every origin, and the interval is below zero at MW6, MW12, MW19 and MW30. Promotion Brier is lower at every origin. Rank RPS changes by less than 0.001.
+- League Two: the changes are small in both directions. Points CRPS is lower at four origins, and rank RPS is worse at preseason (+0.0004, interval includes zero).
+
+Uncertainty: M7 points intervals were too narrow early in each season. The M10 90% points intervals are wider by 1.7–3.2 points at preseason and by at most 0.5 points at MW30. The 90% points coverage increases in all 20 division-origins. It moves toward 90% in 15 of them, and its largest value is 92.7%. The 80% points coverage increases in 16 of 20. The rank coverage changes by at most one point. Thus the wider level uncertainty of a random walk does not make the season distributions too wide over one season. The coverage above 90% at the late Premier League and League Two origins is the first sign of too much width.
+
+Entry cohorts: the points bias of promoted clubs decreases in the Premier League (+4.1 → +2.8 points at preseason) and the Championship (+3.3 → +2.9). The bias of clubs relegated into League Two increases (+3.5 → +4.3 at preseason). The entry priors did not change, so these changes come from the incumbents that the entrants play.
 
 ## 6. Market residuals
 
@@ -178,11 +210,28 @@ The market slope is still 1.12 and club effects still explain 43% of the squared
 - ρ_F = 0.3 was not tested.
 - The within-season level test in the Premier League shows that clubs with a high Quality fall a little more than M10 expects (slope −0.029 at ten matches). M7 does not have this problem there. Some return of the level may be real.
 - A random walk level has no stationary distribution. The uncertainty of a club that leaves the data increases without a limit. Such a club uses its entry prior when it comes back, so forecasts do not use that uncertainty. But the state summaries of a club with a long gap are wider than before.
-- The personnel coefficient κ and its prospective review were fitted against M7 structural forecasts. The market pool weight was fitted on M7 predictions. SEASON-PANEL-AGAINST
+- The personnel coefficient κ and its prospective review were fitted against M7 structural forecasts. The market pool weight was fitted on M7 predictions. Both must be measured again with M10. The pool refit on M10 predictions gives the same weight, 1.0.
+- In the Championship season panel, preseason rank RPS and the preseason title, promotion and playoff Brier scores are worse.
 
 ## 8. Merge decision
 
-MERGE-DECISION
+Yes, with the reservations below. The recommendation is to merge the branch `m10-quality-dynamics` as model version `v0.3.0`.
+
+The evidence for the merge:
+
+- The structure was fixed before its results, and chronological selection chose the same point in every test season.
+- The primary match scores improve in the pooled test with intervals below zero: log loss −0.0011 and score NLL −0.0008. The pooled log loss is lower in 10 of 11 seasons.
+- The gain is the largest in the Premier League (−0.0027 log loss and score NLL, 11 of 11 seasons on log loss), which is the division of the product scoreboard and the market diagnostic. In the scoreboard of 1,140 matches in 2023/24–2025/26, M10 has log loss 0.97595 and score NLL 2.96244, against 0.97830 and 2.96335 for M7.
+- The season panels do not show a loss of calibration. The 90% coverage increases in every division and moves toward 90% in most origins.
+- The change has a football rationale that does not depend on the market: strong and weak clubs keep their level for many seasons, and form is temporary. The market diagnostic agrees afterwards.
+- No stop rule of the plan applies. The EFL pooled log loss improves, and the season coverage does not become worse.
+
+The reservations:
+
+- The evidence is retrospective. The prospective record must confirm it. Compare the prospective M10 scores with the M7 archive of the same fixtures when the record has enough matches.
+- League Two does not improve, and the early EFL matches and the Championship preseason rank forecasts are worse. The next experiment should test a close-season innovation of the level: a larger change of the level between seasons, and a smaller change within a season. That experiment tests the interpretation of Section 4. It can also include ρ_F.
+- A merge changes the model version, so the hindcast archive must be generated again for `v0.3.0`. The prospective review of the matchday-squad adjustment must use M10 as its structural control after the merge.
+- The remaining market residuals of Section 6 are not for the dynamics. They are for the observation model (goals given xG) and for squad information.
 
 ## Reproduce
 

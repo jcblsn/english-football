@@ -49,6 +49,9 @@ def main():
     args = parser.parse_args()
     rows, seasons_rows, cohort_rows = [], [], []
     for division in DIVISIONS:
+        if not (args.panels / f"control-{division}" / "summary.csv").exists():
+            print(f"No finished control panel for {division}")
+            continue
         control = pd.read_csv(args.panels / f"control-{division}" / "club_seasons.csv")
         candidate = pd.read_csv(args.panels / f"c2-{division}" / "club_seasons.csv")
         joined = control.merge(candidate, on=KEYS, suffixes=("_m7", "_m10"))
