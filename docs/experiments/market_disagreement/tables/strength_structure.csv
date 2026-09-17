@@ -1,0 +1,4 @@
+sample,club_seasons,pooled_slope,between_club_slope,between_club_corr,within_club_slope,within_club_corr,compression_implied_slope_at_1_2
+all club-seasons,200,0.7673,0.85696,0.78746,0.0093113,0.0079043,0.67973
+continuing clubs,170,0.87973,1.109,0.81432,0.012689,0.010194,0.67973
+entrants,30,0.53782,0.48877,0.27021,0.098274,0.068323,0.67973

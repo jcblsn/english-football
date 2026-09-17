@@ -1,0 +1,6 @@
+slice,matches,slope,intercept,mean_residual,se,m7_home_advantage,observed_home_away_goal_log_ratio
+M7 home favourite,730,1.1795,-0.011154,,,,
+M7 away favourite,410,1.197,-0.05035,,,,
+2023-2024 near-even (|M7 log-odds| < 0.3),76,,,-0.12595,0.032527,0.21786,0.19646
+2024-2025 near-even (|M7 log-odds| < 0.3),84,,,-0.035577,0.033027,0.20183,0.062801
+2025-2026 near-even (|M7 log-odds| < 0.3),110,,,0.0012741,0.035503,0.17372,0.22099

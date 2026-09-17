@@ -1,0 +1,205 @@
+residual,test_season,training_seasons,terms,matches,explained_share,corr
+resid,2017-2018,1,venue + scale,380,0.3866,0.6325
+resid,2017-2018,1,venue + clubs,380,0.5286,0.74106
+resid,2017-2018,1,venue + scale + clubs,380,0.52699,0.73739
+resid,2018-2019,1,venue + scale,380,0.48684,0.70059
+resid,2018-2019,1,venue + clubs,380,0.49563,0.70687
+resid,2018-2019,1,venue + scale + clubs,380,0.51419,0.71891
+resid,2018-2019,2,venue + scale,380,0.48953,0.70059
+resid,2018-2019,2,venue + clubs,380,0.56651,0.75488
+resid,2018-2019,2,venue + scale + clubs,380,0.53399,0.73403
+resid,2019-2020,1,venue + scale,380,0.30171,0.55645
+resid,2019-2020,1,venue + clubs,380,0.37857,0.63293
+resid,2019-2020,1,venue + scale + clubs,380,0.32983,0.60693
+resid,2019-2020,2,venue + scale,380,0.30464,0.55645
+resid,2019-2020,2,venue + clubs,380,0.36617,0.61999
+resid,2019-2020,2,venue + scale + clubs,380,0.34793,0.60746
+resid,2019-2020,3,venue + scale,380,0.30001,0.55645
+resid,2019-2020,3,venue + clubs,380,0.29861,0.58291
+resid,2019-2020,3,venue + scale + clubs,380,0.30542,0.5878
+resid,2020-2021,1,venue + scale,380,0.21897,0.46709
+resid,2020-2021,1,venue + clubs,380,0.47653,0.68979
+resid,2020-2021,1,venue + scale + clubs,380,0.34173,0.60682
+resid,2020-2021,2,venue + scale,380,0.21455,0.46709
+resid,2020-2021,2,venue + clubs,380,0.45633,0.67621
+resid,2020-2021,2,venue + scale + clubs,380,0.46914,0.68613
+resid,2020-2021,3,venue + scale,380,0.21578,0.46709
+resid,2020-2021,3,venue + clubs,380,0.34905,0.6036
+resid,2020-2021,3,venue + scale + clubs,380,0.35878,0.61098
+resid,2020-2021,4,venue + scale,380,0.21255,0.46709
+resid,2020-2021,4,venue + clubs,380,0.31388,0.5858
+resid,2020-2021,4,venue + scale + clubs,380,0.35423,0.61641
+resid,2021-2022,1,venue + scale,380,0.30225,0.61187
+resid,2021-2022,1,venue + clubs,380,0.22705,0.58712
+resid,2021-2022,1,venue + scale + clubs,380,0.22639,0.59878
+resid,2021-2022,2,venue + scale,380,0.29144,0.61187
+resid,2021-2022,2,venue + clubs,380,0.29477,0.63238
+resid,2021-2022,2,venue + scale + clubs,380,0.29871,0.6327
+resid,2021-2022,3,venue + scale,380,0.29574,0.61187
+resid,2021-2022,3,venue + clubs,380,0.38725,0.67721
+resid,2021-2022,3,venue + scale + clubs,380,0.40843,0.68144
+resid,2021-2022,5,venue + scale,380,0.30652,0.61187
+resid,2021-2022,5,venue + clubs,380,0.49094,0.73003
+resid,2021-2022,5,venue + scale + clubs,380,0.52314,0.73989
+resid,2022-2023,1,venue + scale,380,0.16114,0.46045
+resid,2022-2023,1,venue + clubs,380,0.33734,0.62284
+resid,2022-2023,1,venue + scale + clubs,380,0.34123,0.62532
+resid,2022-2023,2,venue + scale,380,0.19791,0.46045
+resid,2022-2023,2,venue + clubs,380,0.20466,0.54055
+resid,2022-2023,2,venue + scale + clubs,380,0.13532,0.50449
+resid,2022-2023,3,venue + scale,380,0.18835,0.46045
+resid,2022-2023,3,venue + clubs,380,0.20301,0.56081
+resid,2022-2023,3,venue + scale + clubs,380,0.15689,0.53801
+resid,2022-2023,6,venue + scale,380,0.1564,0.46045
+resid,2022-2023,6,venue + clubs,380,0.33641,0.63166
+resid,2022-2023,6,venue + scale + clubs,380,0.21424,0.57683
+resid,2023-2024,1,venue + scale,380,0.24089,0.53497
+resid,2023-2024,1,venue + clubs,380,0.28265,0.54908
+resid,2023-2024,1,venue + scale + clubs,380,0.29715,0.56331
+resid,2023-2024,2,venue + scale,380,0.23715,0.53497
+resid,2023-2024,2,venue + clubs,380,0.43642,0.68146
+resid,2023-2024,2,venue + scale + clubs,380,0.43707,0.68408
+resid,2023-2024,3,venue + scale,380,0.26449,0.53497
+resid,2023-2024,3,venue + clubs,380,0.54969,0.74673
+resid,2023-2024,3,venue + scale + clubs,380,0.55087,0.74734
+resid,2023-2024,7,venue + scale,380,0.28304,0.53497
+resid,2023-2024,7,venue + clubs,380,0.59331,0.7731
+resid,2023-2024,7,venue + scale + clubs,380,0.5834,0.76537
+resid,2024-2025,1,venue + scale,380,0.21337,0.47554
+resid,2024-2025,1,venue + clubs,380,0.071467,0.47441
+resid,2024-2025,1,venue + scale + clubs,380,0.074602,0.48147
+resid,2024-2025,2,venue + scale,380,0.23057,0.47554
+resid,2024-2025,2,venue + clubs,380,0.29659,0.57197
+resid,2024-2025,2,venue + scale + clubs,380,0.27757,0.56313
+resid,2024-2025,3,venue + scale,380,0.22492,0.47554
+resid,2024-2025,3,venue + clubs,380,0.31638,0.58908
+resid,2024-2025,3,venue + scale + clubs,380,0.30011,0.58125
+resid,2024-2025,8,venue + scale,380,0.2202,0.47554
+resid,2024-2025,8,venue + clubs,380,0.29263,0.58163
+resid,2024-2025,8,venue + scale + clubs,380,0.23987,0.55667
+resid,2025-2026,1,venue + scale,380,0.15896,0.39054
+resid,2025-2026,1,venue + clubs,380,0.42456,0.64732
+resid,2025-2026,1,venue + scale + clubs,380,0.35801,0.59792
+resid,2025-2026,2,venue + scale,380,0.14328,0.39054
+resid,2025-2026,2,venue + clubs,380,0.50966,0.72016
+resid,2025-2026,2,venue + scale + clubs,380,0.51517,0.72334
+resid,2025-2026,3,venue + scale,380,0.15741,0.39054
+resid,2025-2026,3,venue + clubs,380,0.48799,0.69866
+resid,2025-2026,3,venue + scale + clubs,380,0.49782,0.70498
+resid,2025-2026,9,venue + scale,380,0.14499,0.39054
+resid,2025-2026,9,venue + clubs,380,0.28119,0.58898
+resid,2025-2026,9,venue + scale + clubs,380,0.28366,0.59265
+resid,2026-2027,1,venue + scale,40,0.18611,0.52788
+resid,2026-2027,1,venue + clubs,40,0.5147,0.75928
+resid,2026-2027,1,venue + scale + clubs,40,0.52089,0.76203
+resid,2026-2027,2,venue + scale,40,0.20916,0.52788
+resid,2026-2027,2,venue + clubs,40,0.47646,0.72562
+resid,2026-2027,2,venue + scale + clubs,40,0.47435,0.72403
+resid,2026-2027,3,venue + scale,40,0.2317,0.52788
+resid,2026-2027,3,venue + clubs,40,0.52833,0.74757
+resid,2026-2027,3,venue + scale + clubs,40,0.51693,0.73767
+resid,2026-2027,10,venue + scale,40,0.24817,0.52788
+resid,2026-2027,10,venue + clubs,40,0.53167,0.73951
+resid,2026-2027,10,venue + scale + clubs,40,0.5463,0.74929
+resid_m2,2017-2018,1,venue + scale,380,0.027873,0.3854
+resid_m2,2017-2018,1,venue + clubs,380,0.26853,0.57067
+resid_m2,2017-2018,1,venue + scale + clubs,380,0.2826,0.57526
+resid_m2,2018-2019,1,venue + scale,380,-0.18689,0.1009
+resid_m2,2018-2019,1,venue + clubs,380,-0.14182,0.36922
+resid_m2,2018-2019,1,venue + scale + clubs,380,0.048798,0.44266
+resid_m2,2018-2019,2,venue + scale,380,-0.40319,0.1009
+resid_m2,2018-2019,2,venue + clubs,380,-0.19603,0.34996
+resid_m2,2018-2019,2,venue + scale + clubs,380,0.11557,0.46534
+resid_m2,2019-2020,1,venue + scale,380,0.010063,0.10388
+resid_m2,2019-2020,1,venue + clubs,380,0.11117,0.38026
+resid_m2,2019-2020,1,venue + scale + clubs,380,0.15303,0.41813
+resid_m2,2019-2020,2,venue + scale,380,0.002352,0.10388
+resid_m2,2019-2020,2,venue + clubs,380,-0.0087179,0.27211
+resid_m2,2019-2020,2,venue + scale + clubs,380,0.094749,0.38479
+resid_m2,2019-2020,3,venue + scale,380,-0.032235,0.10388
+resid_m2,2019-2020,3,venue + clubs,380,-0.050775,0.25421
+resid_m2,2019-2020,3,venue + scale + clubs,380,0.091697,0.3885
+resid_m2,2020-2021,1,venue + scale,380,0.0027395,0.056845
+resid_m2,2020-2021,1,venue + clubs,380,0.31733,0.60986
+resid_m2,2020-2021,1,venue + scale + clubs,380,0.41659,0.66604
+resid_m2,2020-2021,2,venue + scale,380,0.0049095,0.056845
+resid_m2,2020-2021,2,venue + clubs,380,0.42334,0.65879
+resid_m2,2020-2021,2,venue + scale + clubs,380,0.42625,0.66682
+resid_m2,2020-2021,3,venue + scale,380,-0.011008,0.056845
+resid_m2,2020-2021,3,venue + clubs,380,0.28568,0.56005
+resid_m2,2020-2021,3,venue + scale + clubs,380,0.28377,0.57474
+resid_m2,2020-2021,4,venue + scale,380,-0.047184,0.056845
+resid_m2,2020-2021,4,venue + clubs,380,0.25024,0.54808
+resid_m2,2020-2021,4,venue + scale + clubs,380,0.27092,0.57527
+resid_m2,2021-2022,1,venue + scale,380,-0.027465,0.10126
+resid_m2,2021-2022,1,venue + clubs,380,0.11488,0.45057
+resid_m2,2021-2022,1,venue + scale + clubs,380,0.17444,0.49029
+resid_m2,2021-2022,2,venue + scale,380,-0.023049,0.10126
+resid_m2,2021-2022,2,venue + clubs,380,-0.041077,0.32862
+resid_m2,2021-2022,2,venue + scale + clubs,380,0.058655,0.372
+resid_m2,2021-2022,3,venue + scale,380,-0.025515,0.10126
+resid_m2,2021-2022,3,venue + clubs,380,0.016626,0.34372
+resid_m2,2021-2022,3,venue + scale + clubs,380,0.16147,0.42844
+resid_m2,2021-2022,5,venue + scale,380,-0.06049,0.10126
+resid_m2,2021-2022,5,venue + clubs,380,0.20584,0.50598
+resid_m2,2021-2022,5,venue + scale + clubs,380,0.37403,0.59506
+resid_m2,2022-2023,1,venue + scale,380,-0.013106,0.06869
+resid_m2,2022-2023,1,venue + clubs,380,-0.065024,0.30792
+resid_m2,2022-2023,1,venue + scale + clubs,380,-0.22827,0.20604
+resid_m2,2022-2023,2,venue + scale,380,0.02804,0.06869
+resid_m2,2022-2023,2,venue + clubs,380,-0.282,0.13647
+resid_m2,2022-2023,2,venue + scale + clubs,380,-0.35822,0.094773
+resid_m2,2022-2023,3,venue + scale,380,0.023572,0.06869
+resid_m2,2022-2023,3,venue + clubs,380,-0.37197,0.088299
+resid_m2,2022-2023,3,venue + scale + clubs,380,-0.50813,0.04378
+resid_m2,2022-2023,6,venue + scale,380,-0.0099632,0.06869
+resid_m2,2022-2023,6,venue + clubs,380,-0.31262,0.093652
+resid_m2,2022-2023,6,venue + scale + clubs,380,-0.46339,0.073875
+resid_m2,2023-2024,1,venue + scale,380,-0.0048373,0.11493
+resid_m2,2023-2024,1,venue + clubs,380,-0.15318,0.25217
+resid_m2,2023-2024,1,venue + scale + clubs,380,-0.13709,0.25394
+resid_m2,2023-2024,2,venue + scale,380,-0.04184,0.11493
+resid_m2,2023-2024,2,venue + clubs,380,0.064431,0.39128
+resid_m2,2023-2024,2,venue + scale + clubs,380,0.088329,0.40333
+resid_m2,2023-2024,3,venue + scale,380,-0.0039578,0.11493
+resid_m2,2023-2024,3,venue + clubs,380,-0.050626,0.28256
+resid_m2,2023-2024,3,venue + scale + clubs,380,0.027595,0.32698
+resid_m2,2023-2024,7,venue + scale,380,0.0055737,0.11493
+resid_m2,2023-2024,7,venue + clubs,380,-0.091899,0.26619
+resid_m2,2023-2024,7,venue + scale + clubs,380,0.030037,0.38651
+resid_m2,2024-2025,1,venue + scale,380,0.0060873,0.035255
+resid_m2,2024-2025,1,venue + clubs,380,-0.078143,0.27024
+resid_m2,2024-2025,1,venue + scale + clubs,380,-0.081654,0.25812
+resid_m2,2024-2025,2,venue + scale,380,0.030867,0.035255
+resid_m2,2024-2025,2,venue + clubs,380,0.058814,0.35494
+resid_m2,2024-2025,2,venue + scale + clubs,380,-0.014093,0.26822
+resid_m2,2024-2025,3,venue + scale,380,0.047575,0.035255
+resid_m2,2024-2025,3,venue + clubs,380,0.18659,0.43923
+resid_m2,2024-2025,3,venue + scale + clubs,380,0.14513,0.39454
+resid_m2,2024-2025,8,venue + scale,380,-0.0049734,0.035255
+resid_m2,2024-2025,8,venue + clubs,380,0.19533,0.44595
+resid_m2,2024-2025,8,venue + scale + clubs,380,-0.15056,0.24385
+resid_m2,2025-2026,1,venue + scale,380,0.06432,0.20236
+resid_m2,2025-2026,1,venue + clubs,380,-0.02169,0.21475
+resid_m2,2025-2026,1,venue + scale + clubs,380,-0.0080426,0.22149
+resid_m2,2025-2026,2,venue + scale,380,0.059697,0.20236
+resid_m2,2025-2026,2,venue + clubs,380,0.057367,0.28171
+resid_m2,2025-2026,2,venue + scale + clubs,380,0.13927,0.35047
+resid_m2,2025-2026,3,venue + scale,380,0.061618,0.20236
+resid_m2,2025-2026,3,venue + clubs,380,0.17023,0.37988
+resid_m2,2025-2026,3,venue + scale + clubs,380,0.25731,0.47056
+resid_m2,2025-2026,9,venue + scale,380,0.053415,0.20236
+resid_m2,2025-2026,9,venue + clubs,380,0.42091,0.64706
+resid_m2,2025-2026,9,venue + scale + clubs,380,0.46947,0.68153
+resid_m2,2026-2027,1,venue + scale,40,-0.029988,0.0062186
+resid_m2,2026-2027,1,venue + clubs,40,0.21249,0.48112
+resid_m2,2026-2027,1,venue + scale + clubs,40,0.28228,0.56652
+resid_m2,2026-2027,2,venue + scale,40,-0.017173,0.0062186
+resid_m2,2026-2027,2,venue + clubs,40,0.16166,0.42041
+resid_m2,2026-2027,2,venue + scale + clubs,40,0.25486,0.54192
+resid_m2,2026-2027,3,venue + scale,40,-0.007743,0.0062186
+resid_m2,2026-2027,3,venue + clubs,40,0.16709,0.41622
+resid_m2,2026-2027,3,venue + scale + clubs,40,0.29745,0.58348
+resid_m2,2026-2027,10,venue + scale,40,-0.0051554,0.0062186
+resid_m2,2026-2027,10,venue + clubs,40,0.19155,0.44312
+resid_m2,2026-2027,10,venue + scale + clubs,40,0.41692,0.68484

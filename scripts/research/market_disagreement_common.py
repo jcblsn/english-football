@@ -14,7 +14,10 @@ HISTORY = ("2023-2024", "2024-2025", "2025-2026")
 
 
 def load(path=ROLLING):
-    d = pd.read_csv(path, parse_dates=["match_date"])
+    return derive(pd.read_csv(path, parse_dates=["match_date"]))
+
+
+def derive(d):
     y = d.outcome.map(OUTCOME_INDEX).to_numpy()
     for s in SOURCES:
         p = d[[f"{s}_p_home", f"{s}_p_draw", f"{s}_p_away"]].to_numpy()

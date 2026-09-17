@@ -18,6 +18,7 @@ from epl_forecast.datasets import load_dataset
 from epl_forecast.market import devig_odds
 from epl_forecast.models import make_model
 from epl_forecast.models.poisson import IndependentPoisson
+from epl_forecast.models.xg_quality_tilt import XG_DYNAMICS
 from epl_forecast.storage import load_environment
 from epl_forecast.training import training_matches
 
@@ -92,6 +93,8 @@ def main():
     parser.add_argument("--start", default="2023-08-01")
     parser.add_argument("--end", default="2026-09-17")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--quality-retention", type=float)
+    parser.add_argument("--quality-sd", type=float)
     args = parser.parse_args()
     load_environment()
     config = load_config(args.config)
@@ -110,6 +113,13 @@ def main():
     specs = {spec["id"]: spec for spec in config["models"]}
     m2_spec = next(s for s in specs.values() if s["kind"] == "attack_defense_poisson")
     m7_spec = next(s for s in specs.values() if s["kind"] == "bayesian_xg_quality_tilt")
+    if args.quality_retention is not None or args.quality_sd is not None:
+        dynamics = dict(XG_DYNAMICS)
+        if args.quality_retention is not None:
+            dynamics["quality_retention"] = args.quality_retention
+        if args.quality_sd is not None:
+            dynamics["quality_sd"] = args.quality_sd
+        m7_spec["parameters"]["dynamics"] = dynamics
     models = {"m2": make_model(m2_spec), "m7": make_model(m7_spec)}
     args.output.mkdir(parents=True, exist_ok=True)
     rows = []

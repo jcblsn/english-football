@@ -1,0 +1,3 @@
+shift,matches,mean_abs_dir_shift,mean_abs_residual,corr_with_residual,toward_market_share,mean_square_residual_change
+hindcast_delta,1140,0.076418,0.30613,0.1745,0.56592,-0.021496
+oracle_delta,1140,0.13945,0.30613,0.1784,0.55416,0.045348

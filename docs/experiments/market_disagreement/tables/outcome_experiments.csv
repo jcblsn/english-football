@@ -1,0 +1,60 @@
+experiment,test_season,matches,parameters,candidate_minus_m7,market_minus_m7
+directional stretch (H1),2017-2018,380,[0.55],-0.0036212,-0.010333
+directional stretch (H1),2018-2019,380,[0.435],-0.0091543,-0.0036299
+directional stretch (H1),2019-2020,380,[0.432],0.0049503,-0.0033454
+directional stretch (H1),2020-2021,380,[0.341],0.0095234,-0.0049252
+directional stretch (H1),2021-2022,380,[0.247],-0.0053525,-0.016046
+directional stretch (H1),2022-2023,380,[0.264],-0.0016888,-0.0062006
+directional stretch (H1),2023-2024,380,[0.254],-0.0063858,-0.024904
+directional stretch (H1),2024-2025,380,[0.269],-0.0057007,-0.00023617
+directional stretch (H1),2025-2026,380,[0.28],-0.00072753,-0.014696
+directional stretch (H1),2026-2027,40,[0.271],-0.0025122,-0.022513
+trailing finishing gap (H4),2017-2018,380,[0.033],-0.00038087,-0.010333
+trailing finishing gap (H4),2018-2019,380,[0.341],-0.0013977,-0.0036299
+trailing finishing gap (H4),2019-2020,380,[0.344],-0.0014075,-0.0033454
+trailing finishing gap (H4),2020-2021,380,[0.337],-0.0011109,-0.0049252
+trailing finishing gap (H4),2021-2022,380,[0.335],-0.0012173,-0.016046
+trailing finishing gap (H4),2022-2023,380,[0.339],0.0038634,-0.0062006
+trailing finishing gap (H4),2023-2024,380,[0.238],-0.0019613,-0.024904
+trailing finishing gap (H4),2024-2025,380,[0.275],0.0024912,-0.00023617
+trailing finishing gap (H4),2025-2026,380,[0.212],-0.00065068,-0.014696
+trailing finishing gap (H4),2026-2027,40,[0.218],0.0023494,-0.022513
+fixed entrant offset (H5 entry),2017-2018,380,[-0.169],0.0014389,-0.010333
+fixed entrant offset (H5 entry),2018-2019,380,[-0.017],-8.97e-05,-0.0036299
+fixed entrant offset (H5 entry),2019-2020,380,[-0.058],-0.00047294,-0.0033454
+fixed entrant offset (H5 entry),2020-2021,380,[-0.101],-0.00020085,-0.0049252
+fixed entrant offset (H5 entry),2021-2022,380,[-0.101],-0.0020821,-0.016046
+fixed entrant offset (H5 entry),2022-2023,380,[-0.179],0.0031912,-0.0062006
+fixed entrant offset (H5 entry),2023-2024,380,[-0.102],-0.0028603,-0.024904
+fixed entrant offset (H5 entry),2024-2025,380,[-0.186],-0.005698,-0.00023617
+fixed entrant offset (H5 entry),2025-2026,380,[-0.267],0.0030686,-0.014696
+fixed entrant offset (H5 entry),2026-2027,40,[-0.223],0.0064509,-0.022513
+M2 direction blend (H4 control),2017-2018,380,[0.016],-4.5257e-05,-0.010333
+M2 direction blend (H4 control),2018-2019,380,[0.141],-0.0010362,-0.0036299
+M2 direction blend (H4 control),2019-2020,380,[0.274],-0.0016508,-0.0033454
+M2 direction blend (H4 control),2020-2021,380,[0.314],-0.0021339,-0.0049252
+M2 direction blend (H4 control),2021-2022,380,[0.348],-0.0010217,-0.016046
+M2 direction blend (H4 control),2022-2023,380,[0.339],0.0057024,-0.0062006
+M2 direction blend (H4 control),2023-2024,380,[0.188],-0.0023734,-0.024904
+M2 direction blend (H4 control),2024-2025,380,[0.263],0.0025406,-0.00023617
+M2 direction blend (H4 control),2025-2026,380,[0.19],-0.0016006,-0.014696
+M2 direction blend (H4 control),2026-2027,40,[0.226],-0.0088626,-0.022513
+persistent club level and deviation (H1 against H2),2017-2018,380,"[1.325, -0.662]",0.0014618,-0.010333
+persistent club level and deviation (H1 against H2),2018-2019,380,"[0.936, 3.175]",-0.0058101,-0.0036299
+persistent club level and deviation (H1 against H2),2019-2020,380,"[1.173, 1.838]",0.0051819,-0.0033454
+persistent club level and deviation (H1 against H2),2020-2021,380,"[0.963, 0.816]",0.00112,-0.0049252
+persistent club level and deviation (H1 against H2),2021-2022,380,"[0.852, 0.513]",-0.0054357,-0.016046
+persistent club level and deviation (H1 against H2),2022-2023,380,"[0.923, 0.507]",0.0037544,-0.0062006
+persistent club level and deviation (H1 against H2),2023-2024,380,"[0.77, 1.041]",-0.004685,-0.024904
+persistent club level and deviation (H1 against H2),2024-2025,380,"[0.867, 0.802]",-0.0077271,-0.00023617
+persistent club level and deviation (H1 against H2),2025-2026,380,"[0.914, 1.18]",-9.9103e-05,-0.014696
+persistent club level and deviation (H1 against H2),2026-2027,40,"[0.888, 1.1]",-0.0048271,-0.022513
+"prior-season market club effects (diagnostic, H2)",2018-2019,380,[1.02],-0.0068728,-0.0036299
+"prior-season market club effects (diagnostic, H2)",2019-2020,380,[1.045],0.00096797,-0.0033454
+"prior-season market club effects (diagnostic, H2)",2020-2021,380,[0.857],-0.00075281,-0.0049252
+"prior-season market club effects (diagnostic, H2)",2021-2022,380,[0.773],-0.0049137,-0.016046
+"prior-season market club effects (diagnostic, H2)",2022-2023,380,[0.804],0.0047268,-0.0062006
+"prior-season market club effects (diagnostic, H2)",2023-2024,380,[0.652],-0.010315,-0.024904
+"prior-season market club effects (diagnostic, H2)",2024-2025,380,[0.797],0.0050271,-0.00023617
+"prior-season market club effects (diagnostic, H2)",2025-2026,380,[0.679],0.0016405,-0.014696
+"prior-season market club effects (diagnostic, H2)",2026-2027,40,[0.61],-0.010075,-0.022513

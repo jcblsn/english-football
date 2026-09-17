@@ -1,0 +1,7 @@
+effect,season_lag,pairs,corr,sign_agreement,carry_slope
+effect,1,153,0.55529,0.6732,0.5201
+effect,2,133,0.32682,0.61654,0.30156
+effect,3,111,0.3005,0.59459,0.25318
+quality_adjusted,1,153,0.44201,0.66667,0.42651
+quality_adjusted,2,133,0.20994,0.58647,0.20682
+quality_adjusted,3,111,0.08787,0.52252,0.080935
