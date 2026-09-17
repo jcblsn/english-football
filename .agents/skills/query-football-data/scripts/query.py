@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from epl_forecast.analysis import open_analysis_session
+from epl_forecast.analysis import SESSION_DIRECTORY, open_analysis_session
 from epl_forecast.storage import load_environment
 
 DEFAULT_MAX_ROWS = 40
@@ -181,7 +181,7 @@ def main() -> None:
     except ValueError as error:
         parser().error(str(error))
     load_environment()
-    session = open_analysis_session(args.cutoff)
+    session = open_analysis_session(args.cutoff, session_directory=SESSION_DIRECTORY)
     try:
         results = []
         for name, sql, parameters in queries:

@@ -1,16 +1,11 @@
 """Normalize indexed publication artifacts into the DuckDB analysis schema."""
 
-import hashlib
 import json
 import math
-import shutil
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
-from epl_forecast import analysis_contract
 from epl_forecast.competitions import COMPETITION_IDS
-from epl_forecast.storage import json_bytes
 
 ARTIFACT_TABLES = (
     "forecasts",
@@ -60,30 +55,6 @@ ARTIFACT_TABLES = (
     "record_matches",
     "record_summary",
 )
-
-
-def _cached(path: Path | None, identity: str) -> dict | None:
-    if path is None:
-        return None
-    try:
-        value = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-    if (
-        value.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION
-        or value.get("identity") != identity
-    ):
-        return None
-    return value
-
-
-def _cache(path: Path | None, value: dict) -> None:
-    if path is None:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_bytes(json_bytes(value))
-    temporary.replace(path)
 
 
 def _json(value) -> str | None:
@@ -523,8 +494,6 @@ def _simulation_rows(
 def _live_rows(
     data_store,
     publish_store,
-    cache: Path | None = None,
-    wanted: set[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, list], dict, set[str]]:
     rows = {
         name: []
@@ -578,20 +547,6 @@ def _live_rows(
         for pointer in archive["forecasts"]:
             _required(pointer, ("forecast_id", "href"), "forecast pointer")
             forecast_id = pointer["forecast_id"]
-            if wanted is not None and (competition_id, forecast_id) not in wanted:
-                continue
-            cache_path = (
-                None
-                if cache is None
-                else cache / "forecasts" / competition_id / f"{forecast_id}.json"
-            )
-            cached = _cached(cache_path, pointer["href"])
-            if cached is not None:
-                for table, values in cached["rows"].items():
-                    rows[table].extend(values)
-                model_versions.add(cached["model_version"])
-                continue
-            starts = {table: len(values) for table, values in rows.items()}
             public = _document(publish_store, pointer["href"], 3, "forecast")
             _required(
                 public,
@@ -833,23 +788,12 @@ def _live_rows(
                                     "carried_from_generated_at": carried.get("generated_at"),
                                 }
                             )
-            _cache(
-                cache_path,
-                {
-                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-                    "identity": pointer["href"],
-                    "model_version": model_version,
-                    "rows": {table: values[starts[table] :] for table, values in rows.items()},
-                },
-            )
     return rows, updated, model_versions
 
 
 def _hindcast_rows(
     data_store,
     publish_store,
-    cache: Path | None = None,
-    wanted: set[str] | None = None,
 ) -> tuple[dict[str, list], dict, set[str]]:
     names = (
         "hindcast_origins",
@@ -881,15 +825,9 @@ def _hindcast_rows(
         series = _document(publish_store, pointer["href"], 1, "hindcast series")
         if series.get("retrospective") is not True:
             raise ValueError(f"Hindcast series is not retrospective: {pointer['href']}")
-        origins.extend(
-            origin for origin in series["origins"] if wanted is None or origin["href"] in wanted
-        )
+        origins.extend(series["origins"])
 
     def load(origin):
-        cache_path = None if cache is None else cache / "hindcasts" / origin["href"]
-        cached = _cached(cache_path, origin["href"])
-        if cached is not None:
-            return origin, cached, cache_path
         public = _document(publish_store, origin["href"], 1, "hindcast")
         if public.get("retrospective") is not True:
             raise ValueError(f"Hindcast origin is not retrospective: {origin['href']}")
@@ -934,20 +872,13 @@ def _hindcast_rows(
             "hindcast",
             {team["team_id"]: team.get("name") for team in public["teams"]},
         )
-        value = {
-            "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-            "identity": origin["href"],
-            "model_version": public["model"]["version"],
-            "rows": artifact_rows,
-        }
-        _cache(cache_path, value)
-        return origin, value, cache_path
+        return public["model"]["version"], artifact_rows
 
     with ThreadPoolExecutor(max_workers=16) as pool:
         documents = list(pool.map(load, origins))
-    for _origin, value, _cache_path in documents:
-        versions.add(value["model_version"])
-        for table, values in value["rows"].items():
+    for model_version, artifact_rows in documents:
+        versions.add(model_version)
+        for table, values in artifact_rows.items():
             rows[table].extend(values)
     return rows, {"hindcasts/index.json": index["updated_at"]}, versions
 
@@ -1751,105 +1682,22 @@ def _validate_analysis(connection) -> None:
             raise ValueError(f"Unknown team identity in analysis.{prefix}_team_events")
 
 
-def _index_state(publish_store) -> dict:
+def publication_indexes(publish_store) -> dict:
+    """Read the mutable publication indexes that select every derived artifact."""
     archive_keys = [
         f"forecasts/{competition_id}/archive.json" for competition_id in COMPETITION_IDS
     ]
     base_keys = [*archive_keys, "hindcasts/index.json", "record.json"]
     with ThreadPoolExecutor(max_workers=len(base_keys)) as pool:
         documents = dict(zip(base_keys, pool.map(publish_store.get_json, base_keys), strict=True))
-    live_ids = []
-    for competition_id, key in zip(COMPETITION_IDS, archive_keys, strict=True):
-        archive = documents[key]
-        if archive is not None:
-            live_ids.extend(
-                (competition_id, pointer["forecast_id"]) for pointer in archive["forecasts"]
-            )
     index = documents["hindcasts/index.json"]
-    hindcast_ids = []
     if index is not None:
         series_keys = [pointer["href"] for pointer in index["seasons"]]
         with ThreadPoolExecutor(max_workers=16) as pool:
-            series_documents = dict(
+            documents.update(
                 zip(series_keys, pool.map(publish_store.get_json, series_keys), strict=True)
             )
-        documents.update(series_documents)
-        for key in series_keys:
-            series = series_documents[key]
-            if series is not None:
-                hindcast_ids.extend(origin["href"] for origin in series["origins"])
-    return {
-        "fingerprint": hashlib.sha256(
-            json_bytes(
-                {
-                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-                    "documents": documents,
-                }
-            )
-        ).hexdigest(),
-        "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-        "live_ids": sorted(live_ids),
-        "hindcast_ids": sorted(hindcast_ids),
-    }
-
-
-def _load_session_cache(connection, cache: Path | None) -> dict | None:
-    if cache is None:
-        return None
-    try:
-        pointer = json.loads((cache / "current.json").read_text())
-        if pointer.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION:
-            return None
-        directory = cache / "sessions" / pointer["fingerprint"]
-        metadata = json.loads((directory / "metadata.json").read_text())
-        if metadata.get("analysis_schema_version") != analysis_contract.ANALYSIS_SCHEMA_VERSION:
-            return None
-        for table in ARTIFACT_TABLES:
-            path = directory / f"{table}.parquet"
-            connection.execute(
-                f"CREATE TABLE analysis.{table} AS SELECT * FROM read_parquet(?)", [str(path)]
-            )
-        return metadata
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        for table in ARTIFACT_TABLES:
-            connection.execute(f"DROP TABLE IF EXISTS analysis.{table}")
-        return None
-
-
-def _write_session_cache(connection, cache: Path | None, metadata: dict) -> None:
-    if cache is None:
-        return
-    sessions = cache / "sessions"
-    target = sessions / metadata["fingerprint"]
-    temporary = sessions / f".{metadata['fingerprint']}.tmp"
-    if not target.exists():
-        shutil.rmtree(temporary, ignore_errors=True)
-        temporary.mkdir(parents=True)
-        for table in ARTIFACT_TABLES:
-            connection.execute(
-                f"COPY analysis.{table} TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-                [str(temporary / f"{table}.parquet")],
-            )
-        (temporary / "metadata.json").write_bytes(json_bytes(metadata))
-        temporary.replace(target)
-    old = None
-    try:
-        old = json.loads((cache / "current.json").read_text()).get("fingerprint")
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    cache.mkdir(parents=True, exist_ok=True)
-    pointer = cache / "current.tmp"
-    pointer.write_bytes(
-        json_bytes(
-            {
-                "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-                "fingerprint": metadata["fingerprint"],
-            }
-        )
-    )
-    pointer.replace(cache / "current.json")
-    if old and old != metadata["fingerprint"]:
-        shutil.rmtree(sessions / old, ignore_errors=True)
+    return documents
 
 
 def _install_projection_view(connection) -> None:
@@ -1932,49 +1780,14 @@ def _install_artifact_views(connection) -> None:
     _install_match_stage_comparison(connection)
 
 
-def install_artifact_analysis(
-    connection, data_store, publish_store, cache: Path | None = None
-) -> tuple[dict, set[str]]:
-    state = _index_state(publish_store)
-    cached = _load_session_cache(connection, cache)
-    if cached and cached["fingerprint"] == state["fingerprint"]:
-        _install_artifact_views(connection)
-        return cached["publication_updates"], set(cached["model_versions"])
-    old_live = set(map(tuple, cached.get("live_ids", ()))) if cached else set()
-    old_hindcasts = set(cached.get("hindcast_ids", ())) if cached else set()
-    current_live = set(map(tuple, state["live_ids"]))
-    current_hindcasts = set(state["hindcast_ids"])
-    incremental = bool(cached) and old_live <= current_live and old_hindcasts <= current_hindcasts
-    if not incremental:
-        for table in ARTIFACT_TABLES:
-            connection.execute(f"DROP TABLE IF EXISTS analysis.{table}")
-        old_live = set()
-        old_hindcasts = set()
-    live, live_updates, live_versions = _live_rows(
-        data_store, publish_store, wanted=current_live - old_live
-    )
-    hindcasts, hindcast_updates, hindcast_versions = _hindcast_rows(
-        data_store, publish_store, wanted=current_hindcasts - old_hindcasts
-    )
+def install_artifact_analysis(connection, data_store, publish_store) -> tuple[dict, set[str]]:
+    live, live_updates, live_versions = _live_rows(data_store, publish_store)
+    hindcasts, hindcast_updates, hindcast_versions = _hindcast_rows(data_store, publish_store)
     record_matches, record_summary, record_updates = _record_rows(publish_store)
     _install_live(connection, live)
     _install_hindcasts(connection, hindcasts)
-    if incremental:
-        connection.execute("DROP TABLE analysis.record_matches")
-        connection.execute("DROP TABLE analysis.record_summary")
     _install_record(connection, record_matches, record_summary)
     _validate_analysis(connection)
     _install_artifact_views(connection)
     publication_updates = {**live_updates, **hindcast_updates, **record_updates}
-    model_versions = (
-        (set(cached.get("model_versions", ())) if incremental else set())
-        | live_versions
-        | hindcast_versions
-    )
-    metadata = {
-        **state,
-        "publication_updates": publication_updates,
-        "model_versions": sorted(model_versions),
-    }
-    _write_session_cache(connection, cache, metadata)
-    return publication_updates, model_versions
+    return publication_updates, live_versions | hindcast_versions

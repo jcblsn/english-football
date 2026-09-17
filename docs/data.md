@@ -112,11 +112,11 @@ A backfill of history is retrospective evidence. It does not show what was known
 
 ## Interactive analysis
 
-Run `uv run epl-forecast data ui`. The command opens one in-memory DuckDB connection, loads the `analysis` schema, and starts the DuckDB UI on that same connection. The process must stay open while you use the UI. Press Control-C in the terminal to stop the UI and close the connection.
+Run `uv run epl-forecast data ui`. The command prepares the `analysis` schema, opens one read-only connection to the session file, and starts the DuckDB UI on that same connection. The process must stay open while you use the UI. Press Control-C in the terminal to stop the UI and close the connection.
 
 Use `uv run epl-forecast data ui --no-browser` to start the local server without opening a browser. The default address is `http://localhost:4213`.
 
-The UI runs queries on the local DuckDB process. It does not use MotherDuck unless you explicitly enable MotherDuck. The command creates temporary R2 secrets with separate scopes for `page324-data` and `page324-publish`. It does not store credentials in a DuckDB database.
+The UI runs queries on the local DuckDB process. It does not use MotherDuck unless you explicitly enable MotherDuck. The command uses temporary R2 secrets with separate scopes for `page324-data` and `page324-publish` only while it prepares the session file. It does not store credentials in the session file.
 
 `data query` uses the same analysis-session bootstrap. Use `--cutoff` to set the canonical evidence cutoff:
 
@@ -126,7 +126,11 @@ uv run epl-forecast data query --cutoff 2026-08-15T12:00:00+00:00 --sql 'SELECT 
 
 The session reads the canonical manifest catalog from R2 and does not read local manifests or local canonical files. The `--root` option remains for command compatibility, but it cannot add local evidence to an analysis session. Raw canonical and provider views remain available for expert use.
 
-The first session can take longer because it validates and normalizes the indexed history. The ignored `runs/analysis-cache/` directory holds rebuildable copies of immutable JSON artifacts and normalized Parquet tables. Every canonical, artifact, and session cache identity includes `ANALYSIS_SCHEMA_VERSION`. A new analysis contract therefore rebuilds incompatible Parquet files. The other identity inputs include the canonical manifest set, the evidence cutoff, forecast archive entries, hindcast series entries, and the prospective record. R2 indexes remain authoritative. A new indexed artifact is normalized and added to the prior cache; it does not make the session discover bucket objects by prefix.
+R2 is the only source of truth for an analysis session. `data query`, `data ui`, and the query skill helper keep the prepared `analysis` schema in one read-only DuckDB session file in the `page324-analysis` directory of the system temporary directory. The session file is a disposable copy. Nothing in the repository or in `runs/` holds analysis data.
+
+Before each command opens a session file, it reads the canonical manifest catalog and the publication indexes from R2 again. The session file name is a hash of these documents, the evidence cutoff, `ANALYSIS_SCHEMA_VERSION`, the DuckDB version, and the `epl_forecast` package source. A change to one of these inputs selects a new file, and the command then prepares it from R2. Preparation reads all of the indexed history, so it takes much longer than a query on an existing file. The command deletes the earlier file for the same cutoff. The session file keeps canonical and derived tables and the views that use them. Before the command uses a new file, it opens the file with external access disabled and binds each object, so a view that reads R2 or a local file stops the preparation. You can delete the directory at any time.
+
+The identity uses the mutable indexes only. Forecast, run, and hindcast artifacts are immutable at their keys. Do not replace an artifact in place: publish a new key and update its index.
 
 ### Analysis catalog
 

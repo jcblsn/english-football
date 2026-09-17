@@ -904,9 +904,11 @@ def main():
     )
     args = parser.parse_args()
     if args.action in {"query", "ui"}:
-        from epl_forecast.analysis import open_analysis_session, start_ui
+        from epl_forecast.analysis import SESSION_DIRECTORY, open_analysis_session, start_ui
 
-        session = open_analysis_session(args.cutoff, root=args.root)
+        session = open_analysis_session(
+            args.cutoff, root=args.root, session_directory=SESSION_DIRECTORY
+        )
         try:
             if args.action == "query":
                 print(json.dumps(session.rows(args.sql), default=str, indent=2))

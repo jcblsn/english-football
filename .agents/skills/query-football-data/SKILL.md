@@ -28,6 +28,8 @@ Run SQL through the bounded query helper:
 .agents/skills/query-football-data/scripts/query --sql 'SELECT competition_id, count(*) AS matches FROM analysis.matches GROUP BY 1 ORDER BY 1'
 ```
 
+The helper keeps a disposable session file outside the repository and checks it against R2 on each call. The first call after R2 or the code changes prepares a new file from R2 and can take several minutes, so give that call a long command timeout. Later calls start in seconds. Do not read, change, or delete the session file directly.
+
 Use `--sql-file <file>` for long SQL, or use `--sql-file -` to read SQL from stdin. Repeat `--query <name> <sql>` to run several named statements in one analysis session:
 
 ```sh

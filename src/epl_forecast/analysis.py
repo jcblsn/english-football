@@ -2,55 +2,20 @@
 
 import hashlib
 import json
-import shutil
+import os
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
+
+import epl_forecast
 from epl_forecast import analysis_contract
-from epl_forecast.datasets import Dataset
+from epl_forecast.datasets import SESSION_TIME_ZONE, Dataset, timestamp
 from epl_forecast.storage import R2Store, json_bytes
 
-
-class CachedArtifactStore:
-    """Cache immutable JSON artifacts while leaving mutable indexes authoritative."""
-
-    def __init__(self, store, root: Path, namespace: str):
-        self.store = store
-        self.root = root / namespace
-
-    def configure_duckdb(self, connection, name="page324_r2") -> None:
-        self.store.configure_duckdb(connection, name=name)
-
-    def uri(self, key: str) -> str:
-        return self.store.uri(key)
-
-    def get_json(self, key: str, default=None):
-        if not self._immutable(key):
-            return self.store.get_json(key, default)
-        path = self.root / key
-        try:
-            return json.loads(path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
-            value = self.store.get_json(key, default)
-            if value is default:
-                return default
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(path.suffix + ".tmp")
-            temporary.write_bytes(json_bytes(value))
-            temporary.replace(path)
-            return value
-
-    def _immutable(self, key: str) -> bool:
-        if key.startswith("runs/forecasts/"):
-            return key.endswith(("/forecast.json", "/run.json"))
-        if key.startswith("runs/hindcasts/"):
-            return key.endswith(".json") and not key.endswith(("/series.json", "/edition.json"))
-        if key.startswith("forecasts/"):
-            return key.endswith(".json") and not key.endswith(("/archive.json", "/current.json"))
-        if key.startswith("hindcasts/"):
-            return key.endswith(".json") and not key.endswith(("/index.json", "/series.json"))
-        return False
+SESSION_DIRECTORY = Path(tempfile.gettempdir()) / "page324-analysis"
 
 
 def _ident(value: str) -> str:
@@ -535,51 +500,23 @@ for _product, _id in (("forecast", "forecast"), ("hindcast", "hindcast origin"))
 class AnalysisSession:
     """A prepared analytical connection and the resources that own it."""
 
-    def __init__(self, dataset: Dataset, publish_store=None):
+    def __init__(self, connection, dataset: Dataset | None = None, path: Path | None = None):
+        self.connection = connection
         self.dataset = dataset
-        self.publish_store = publish_store
-        self.connection = dataset.con
+        self.path = path
 
     def close(self) -> None:
-        self.dataset.close()
+        self.connection.close()
 
     def rows(self, sql: str, parameters=None) -> list[dict]:
-        return self.dataset.rows(sql, parameters)
+        result = self.connection.execute(sql, parameters or [])
+        columns = [column[0] for column in result.description]
+        return [dict(zip(columns, row, strict=True)) for row in result.fetchall()]
 
 
-def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> None:
+def _install_canonical_analysis(data: Dataset) -> None:
     connection = data.con
     connection.execute("CREATE SCHEMA analysis")
-    fingerprint = hashlib.sha256(
-        json_bytes(
-            {
-                "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-                "manifests": data.manifests,
-                "cutoff": data.cutoff.isoformat() if data.cutoff else None,
-            }
-        )
-    ).hexdigest()
-    if cache is not None:
-        try:
-            pointer = json.loads((cache / "current.json").read_text())
-            directory = cache / "sessions" / pointer["fingerprint"]
-            if (
-                pointer.get("analysis_schema_version") == analysis_contract.ANALYSIS_SCHEMA_VERSION
-                and pointer["fingerprint"] == fingerprint
-            ):
-                connection.execute(
-                    "CREATE TABLE analysis.matches AS SELECT * FROM read_parquet(?)",
-                    [str(directory / "matches.parquet")],
-                )
-                connection.execute(
-                    "CREATE TABLE analysis.team_match_xg AS SELECT * FROM read_parquet(?)",
-                    [str(directory / "team_match_xg.parquet")],
-                )
-                _install_canonical_views(connection)
-                return
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
-            connection.execute("DROP TABLE IF EXISTS analysis.matches")
-            connection.execute("DROP TABLE IF EXISTS analysis.team_match_xg")
     connection.execute("CREATE TABLE analysis.matches AS SELECT * FROM fixtures LIMIT 0")
     matches = data.fixtures()
     if matches:
@@ -625,37 +562,6 @@ def _install_canonical_analysis(data: Dataset, cache: Path | None = None) -> Non
         xg,
     )
     _install_canonical_views(connection)
-    if cache is not None:
-        sessions = cache / "sessions"
-        target = sessions / fingerprint
-        temporary = sessions / f".{fingerprint}.tmp"
-        if not target.exists():
-            shutil.rmtree(temporary, ignore_errors=True)
-            temporary.mkdir(parents=True)
-            for table in ("matches", "team_match_xg"):
-                connection.execute(
-                    f"COPY analysis.{table} TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-                    [str(temporary / f"{table}.parquet")],
-                )
-            temporary.replace(target)
-        old = None
-        try:
-            old = json.loads((cache / "current.json").read_text()).get("fingerprint")
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-        cache.mkdir(parents=True, exist_ok=True)
-        pointer = cache / "current.tmp"
-        pointer.write_bytes(
-            json_bytes(
-                {
-                    "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
-                    "fingerprint": fingerprint,
-                }
-            )
-        )
-        pointer.replace(cache / "current.json")
-        if old and old != fingerprint:
-            shutil.rmtree(sessions / old, ignore_errors=True)
 
 
 def _install_canonical_views(connection) -> None:
@@ -986,43 +892,135 @@ def open_analysis_session(
     publish_store=None,
     root: Path = Path("data"),
     include_derived: bool = True,
-    cache: Path | None = Path("runs/analysis-cache"),
+    session_directory: Path | None = None,
 ) -> AnalysisSession:
-    """Open the authoritative remote corpus and install its analytical namespace."""
+    """Open the authoritative remote corpus and install its analytical namespace.
+
+    With a session directory, the prepared namespace is kept as a read-only DuckDB file. The file
+    name is the identity of the R2 state and the analysis code, so a changed input opens a new file.
+    """
     data_store = data_store or R2Store.from_environment("R2_DATA_BUCKET")
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
-    normalized_cache = (
-        cache / "normalized"
-        if cache is not None
-        and isinstance(data_store, R2Store)
-        and isinstance(publish_store, R2Store)
-        else None
-    )
-    canonical_cache = cache / "canonical" if normalized_cache is not None else None
-    if cache is not None and isinstance(data_store, R2Store):
-        data_store = CachedArtifactStore(data_store, cache, "data")
-    if cache is not None and isinstance(publish_store, R2Store):
-        publish_store = CachedArtifactStore(publish_store, cache, "publication")
+    if session_directory is None:
+        return _build_analysis_session(cutoff, data_store, publish_store, root, include_derived)
+    slot, identity = _session_identity(cutoff, data_store, publish_store, include_derived)
+    path = session_directory / f"{slot}-{identity}.duckdb"
+    if not path.exists():
+        session_directory.mkdir(parents=True, exist_ok=True)
+        temporary = session_directory / f".{path.stem}.{os.getpid()}.tmp"
+        session = _build_analysis_session(cutoff, data_store, publish_store, root, include_derived)
+        try:
+            _write_session_file(session.connection, temporary)
+        finally:
+            session.close()
+        temporary.replace(path)
+        for stale in session_directory.glob(f"{slot}-*.duckdb"):
+            if stale != path:
+                stale.unlink(missing_ok=True)
+    connection = duckdb.connect(str(path), read_only=True)
+    connection.execute(SESSION_TIME_ZONE)
+    return AnalysisSession(connection, path=path)
+
+
+def _build_analysis_session(
+    cutoff, data_store, publish_store, root: Path, include_derived: bool
+) -> AnalysisSession:
     dataset = Dataset(root, cutoff, store=data_store, include_local=False)
     try:
         if include_derived:
             publish_store.configure_duckdb(dataset.con, name="page324_publish")
-        _install_canonical_analysis(dataset, canonical_cache)
+        _install_canonical_analysis(dataset)
         publication_index_timestamps = {}
         model_versions = set()
         if include_derived:
             from epl_forecast.analysis_artifacts import install_artifact_analysis
 
             publication_index_timestamps, model_versions = install_artifact_analysis(
-                dataset.con, data_store, publish_store, normalized_cache
+                dataset.con, data_store, publish_store
             )
         _install_metadata(dataset, datetime.now(UTC), publication_index_timestamps, model_versions)
         _install_column_catalog(dataset.con)
-        return AnalysisSession(dataset, publish_store)
+        return AnalysisSession(dataset.con, dataset)
     except Exception:
         dataset.close()
         raise
+
+
+def _session_identity(cutoff, data_store, publish_store, include_derived: bool) -> tuple[str, str]:
+    from epl_forecast.analysis_artifacts import publication_indexes
+
+    scope = {
+        "cutoff": None if cutoff is None else timestamp(cutoff).isoformat(),
+        "include_derived": include_derived,
+    }
+    package = Path(epl_forecast.__file__).parent
+    source = hashlib.sha256()
+    for file in sorted(package.rglob("*")):
+        if file.is_file() and "__pycache__" not in file.parts:
+            source.update(str(file.relative_to(package)).encode())
+            source.update(file.read_bytes())
+    state = {
+        **scope,
+        "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
+        "duckdb_version": duckdb.__version__,
+        "source": source.hexdigest(),
+        "manifests": data_store.get_json("state/manifests.json", {}),
+        "publication": publication_indexes(publish_store) if include_derived else None,
+    }
+    return (
+        hashlib.sha256(json_bytes(scope)).hexdigest()[:12],
+        hashlib.sha256(json_bytes(state)).hexdigest()[:32],
+    )
+
+
+def _write_session_file(connection, path: Path) -> None:
+    path.unlink(missing_ok=True)
+    tables = connection.execute(
+        "SELECT schema_name, table_name FROM duckdb_tables() "
+        "WHERE database_name = current_database() AND NOT temporary ORDER BY table_oid"
+    ).fetchall()
+    views = connection.execute(
+        "SELECT schema_name, view_name, sql FROM duckdb_views() "
+        "WHERE database_name = current_database() AND NOT internal ORDER BY view_oid"
+    ).fetchall()
+    external = ("read_", "s3://", "http://", "https://")
+    copied = tables + [
+        (schema, name)
+        for schema, name, sql in views
+        if not sql or any(word in sql for word in external)
+    ]
+    kept = [sql for _, _, sql in views if sql and not any(word in sql for word in external)]
+    source = connection.execute("SELECT current_database()").fetchone()[0]
+    connection.execute(f"ATTACH {_literal(str(path))} AS session_file")
+    try:
+        for schema in sorted({schema for schema, _ in copied} | {schema for schema, _, _ in views}):
+            connection.execute(f"CREATE SCHEMA IF NOT EXISTS session_file.{_ident(schema)}")
+        for schema, name in copied:
+            connection.execute(
+                f"CREATE TABLE session_file.{_ident(schema)}.{_ident(name)} AS "
+                f"SELECT * FROM {_ident(source)}.{_ident(schema)}.{_ident(name)}"
+            )
+        connection.execute("USE session_file")
+        try:
+            for sql in kept:
+                connection.execute(sql)
+        finally:
+            connection.execute(f"USE {_ident(source)}")
+    finally:
+        connection.execute("DETACH session_file")
+    with duckdb.connect(
+        str(path), read_only=True, config={"enable_external_access": False}
+    ) as check:
+        for schema, name in check.execute(
+            "SELECT schema_name, table_name FROM duckdb_tables() UNION ALL "
+            "SELECT schema_name, view_name FROM duckdb_views() WHERE NOT internal"
+        ).fetchall():
+            check.execute(f"SELECT * FROM {_ident(schema)}.{_ident(name)} LIMIT 0")
+
+
+def _literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def start_ui(session: AnalysisSession, *, open_browser: bool = True) -> str:

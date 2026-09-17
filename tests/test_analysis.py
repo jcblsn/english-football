@@ -6,9 +6,8 @@ import pytest
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast import analysis_contract
-from epl_forecast.analysis import _install_canonical_analysis, open_analysis_session, start_ui
-from epl_forecast.analysis_artifacts import install_artifact_analysis
-from epl_forecast.datasets import Dataset, publish
+from epl_forecast.analysis import open_analysis_session, start_ui
+from epl_forecast.datasets import publish
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast, forecast_pointer
 
@@ -777,24 +776,28 @@ def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
     assert statements == ["CALL start_ui_server()", "CALL stop_ui_server()"]
 
 
-def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_path, monkeypatch):
+def test_session_file_is_reused_only_while_r2_state_is_unchanged(tmp_path, monkeypatch):
     data, publish_store = forecast_stores()
-    cache = tmp_path / "cache"
-    first = duckdb.connect()
-    first.execute("CREATE SCHEMA analysis")
-    install_artifact_analysis(first, data, publish_store, cache)
-    assert first.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (1,)
-    first.close()
+    directory = tmp_path / "sessions"
+    first = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    try:
+        assert first.rows("SELECT count(*) AS n FROM analysis.forecasts") == [{"n": 1}]
+        with pytest.raises(duckdb.Error):
+            first.connection.execute("CREATE TABLE analysis.local_note (value INTEGER)")
+    finally:
+        first.close()
 
     data.reads.clear()
     publish_store.reads.clear()
-    second = duckdb.connect()
-    second.execute("CREATE SCHEMA analysis")
-    install_artifact_analysis(second, data, publish_store, cache)
-    assert second.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (1,)
+    second = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    second.close()
+    assert second.path == first.path
     assert not any(key.endswith("/forecast.json") for key in data.reads)
     assert not any(key.endswith("T120000Z.json") for key in publish_store.reads)
-    second.close()
 
     forecast_id = "2026-09-11T120000Z"
     private = {
@@ -809,58 +812,53 @@ def test_artifact_cache_reuses_history_and_appends_a_new_indexed_forecast(tmp_pa
     data.objects[f"{prefix}/forecast.json"] = private
     data.objects[f"{prefix}/run.json"] = sample_run()
 
-    third = duckdb.connect()
-    third.execute("CREATE SCHEMA analysis")
-    install_artifact_analysis(third, data, publish_store, cache)
-    assert third.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (2,)
-    assert third.execute(
-        "SELECT count(DISTINCT forecast_id) FROM analysis.forecast_matches"
-    ).fetchone() == (2,)
-    third.close()
+    third = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    try:
+        assert third.path != first.path
+        assert third.rows("SELECT count(*) AS n FROM analysis.forecasts") == [{"n": 2}]
+    finally:
+        third.close()
+    assert sorted(directory.iterdir()) == [third.path]
 
-    data.reads.clear()
     monkeypatch.setattr(
         analysis_contract,
         "ANALYSIS_SCHEMA_VERSION",
         analysis_contract.ANALYSIS_SCHEMA_VERSION + 1,
     )
-    rebuilt = duckdb.connect()
-    rebuilt.execute("CREATE SCHEMA analysis")
-    install_artifact_analysis(rebuilt, data, publish_store, cache)
-    assert rebuilt.execute("SELECT count(*) FROM analysis.forecasts").fetchone() == (2,)
-    assert any(key.endswith("/forecast.json") for key in data.reads)
+    rebuilt = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
     rebuilt.close()
+    assert rebuilt.path != third.path
+    assert sorted(directory.iterdir()) == [rebuilt.path]
 
 
-def test_canonical_cache_rebuilds_for_a_new_analysis_schema_version(tmp_path, monkeypatch):
+def test_session_files_are_separate_for_each_cutoff(tmp_path):
     remote = tmp_path / "remote"
-    manifest = publish(
+    old = publish(remote, request("2026-01-02T12:00:00+00:00", "a"), {"fixtures": [fixture()]})
+    late = publish(
         remote,
-        request("2026-01-02T12:00:00+00:00", "a"),
-        {"fixtures": [fixture()]},
+        request("2026-01-04T12:00:00+00:00", "b"),
+        {"fixtures": [fixture(home_goals=4)]},
     )
-    store = Store(remote, [manifest])
-    cache = tmp_path / "cache"
-    first = Dataset(tmp_path / "empty", store=store, include_local=False)
-    _install_canonical_analysis(first, cache)
-    first.close()
-
-    monkeypatch.setattr(
-        analysis_contract,
-        "ANALYSIS_SCHEMA_VERSION",
-        analysis_contract.ANALYSIS_SCHEMA_VERSION + 1,
+    store = Store(remote, [old, late])
+    directory = tmp_path / "sessions"
+    goals = "SELECT home_goals FROM analysis.matches"
+    current = open_analysis_session(
+        data_store=store, include_derived=False, session_directory=directory
     )
-    second = Dataset(tmp_path / "empty", store=store, include_local=False)
-    calls = 0
-    fixtures = second.fixtures
-
-    def counted_fixtures():
-        nonlocal calls
-        calls += 1
-        return fixtures()
-
-    monkeypatch.setattr(second, "fixtures", counted_fixtures)
-    _install_canonical_analysis(second, cache)
-    assert calls > 0
-    assert second.rows("SELECT count(*) AS n FROM analysis.matches") == [{"n": 1}]
-    second.close()
+    historical = open_analysis_session(
+        "2026-01-03T00:00:00+00:00",
+        data_store=store,
+        include_derived=False,
+        session_directory=directory,
+    )
+    try:
+        assert current.rows(goals) == [{"home_goals": 4}]
+        assert historical.rows(goals) == [{"home_goals": 2}]
+        assert sorted(directory.iterdir()) == sorted([current.path, historical.path])
+    finally:
+        current.close()
+        historical.close()
