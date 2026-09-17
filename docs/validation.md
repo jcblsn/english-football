@@ -321,7 +321,30 @@ M10 and M7 used the same seasons, origins, seed 20260908 and 10,000 paths as the
 
 M7 season intervals were too narrow early in the season. M10 intervals are 1.7–3.2 points wider at preseason and closer to the nominal coverage. In the Championship, the preseason title, promotion and playoff Brier scores are worse.
 
-The evidence against M10 is the flat League Two result and the weaker early-season EFL forecasts. The prospective record must confirm the change.
+The evidence against M10 is the flat League Two result and the weaker early-season EFL forecasts.
+
+### Pre-merge checks
+
+Before the merge, bounded checks tested the structure of M10 against the same rolling match forecasts and season panels. The plan was recorded before the candidate results. The memo is `docs/experiments/m10_quality_dynamics/premerge_memo.md` on the `research-m10-quality-dynamics` branch. Each result is retrospective.
+
+- Reference frame. The likelihood does not observe the common Quality of all clubs. With the random-walk level, the posterior SD of the mean Quality of continuing clubs stays near 0.04 in every division, because each season of entry priors fixes the reference again. The common direction gives 4–7% of the Quality variance of an entrant against a continuing club (3–6% in M7). Entrant forecasts that were referenced to the season mean were better only in League Two, so the reference did not change. Tests check that the common Quality does not change a forecast between filtered clubs and that entrants keep its uncertainty bounded.
+- Entrant initialization. An alternative gave the entry-prior uncertainty to the sum of level and form, not to the level only. It was worse on entrant matches (+0.00036 log loss), on club matches after the 20th and in the season panels (points CRPS worse at 17 of 20 division-origins), and it made the too-narrow Premier League intervals of promoted clubs narrower. The current treatment stays. See [methodology](methodology.md#clubs-that-enter-a-division).
+- Close-season level transition. Two candidates added level uncertainty at the start of a season for a continuing club. Neither improved the pooled log loss and score NLL of M10. The better candidate removed 25% of the early EFL weakness, less than the one third that the plan required. M10 stays, and this search stopped.
+- Matchday-squad adjustment. The frozen adjustment keeps 81% of its score NLL gain on M10. See [retrospective match scores on M10](#retrospective-match-scores-on-m10).
+
+### Production equivalence and product checks
+
+The production M10 of the `m10-quality-dynamics` branch reproduces the selected research candidate in all four divisions:
+
+- Match forecasts: at the first match days of 2024/25, 2025/26 and 2026/27 and at one midseason day of 2025/26, the product path (`fitted_model` with `configs/product.toml`, fitted from the start) and the rolling research forecasts agree on 60 matches, 30 of them with an entrant. The largest differences are 4.4e-16 in an outcome probability, 4.4e-15 in a score log probability and 6.1e-16 in a club Quality.
+- Season simulation: production panels of 2024/25 give the same mean points, points SD, points CRPS, rank RPS and 90% width as the research candidate panels at every origin and for every club, with difference 0.0.
+- Market pool: the 1,140 M10 match predictions of the pool refit equal the rolling research forecasts to within 7e-15, and `configs/market_pool.json` equals the refit output.
+
+At one cutoff on 17 September 2026, from R2, the forecasts of commit `f9332cd` pass every product check: 4,581 in the Premier League, 6,289 in the Championship, 6,413 in League One and 6,399 in League Two. The only uncommitted change in that run was this page. The Premier League has 10 personnel records and 10 adjusted fixtures, and the Championship has 12 records and 9 adjusted fixtures. The archives give the M10 dynamics in the fit diagnostics and the level–form covariance of each club.
+
+### Retrospective and prospective evidence
+
+All M10 evidence on this page is retrospective: the dynamics were selected and checked on seasons that were already played, and several of these seasons also gave the hypotheses. At the merge, no M10 forecast has been scored prospectively. The [prospective record](#prospective-record) of `v0.3.0` is the confirmation. Its first test is the early-season EFL forecasts, where the retrospective evidence is against M10: in the partial 2026/27 season before the merge, M10 was worse than M7 in League One and League Two.
 
 ## Prospective record
 
