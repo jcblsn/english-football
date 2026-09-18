@@ -322,8 +322,17 @@ def materialize_command(args) -> None:
     from epl_forecast.publication import materialize_publication
     from epl_forecast.storage import R2Store
 
+    store = R2Store.from_environment("R2_PUBLISH_BUCKET")
+    if args.hindcast_cache_key:
+        identity = store.identities(["hindcasts/index.json"])["hindcasts/index.json"] or "none"
+        if output := os.environ.get("GITHUB_OUTPUT"):
+            with open(output, "a") as stream:
+                stream.write(f"cache_key={identity}\n")
+        else:
+            print(identity)
+        return
     result = materialize_publication(
-        R2Store.from_environment("R2_PUBLISH_BUCKET"),
+        store,
         args.site,
         tuple(args.archive),
         args.hindcasts,
@@ -418,6 +427,11 @@ def parser() -> argparse.ArgumentParser:
         "materialize", help="Build the static publication data from R2"
     )
     materialize.add_argument("--site", type=Path, default=Path("site"))
+    materialize.add_argument(
+        "--hindcast-cache-key",
+        action="store_true",
+        help="Print the current hindcast index identity and do not materialize the site",
+    )
     materialize.add_argument(
         "--archive",
         action="append",

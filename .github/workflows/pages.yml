@@ -33,6 +33,14 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      - id: hindcast
+        run: uv run epl-forecast materialize --hindcast-cache-key
+      - uses: actions/cache@v4
+        with:
+          path: |
+            site/data/hindcasts
+            site/.page324-hindcast-cache
+          key: page324-hindcasts-${{ steps.hindcast.outputs.cache_key }}
       - run: uv run epl-forecast materialize --site site --hindcasts
       - run: uv run python scripts/check_publishable.py --site site
       - uses: actions/configure-pages@v5

@@ -12,7 +12,7 @@ import duckdb
 
 import epl_forecast
 from epl_forecast import analysis_contract
-from epl_forecast.analysis_keys import CANONICAL_ROOTS, publication_identities
+from epl_forecast.analysis_keys import CANONICAL_ROOTS, RESULT_ROOTS, publication_identities
 from epl_forecast.datasets import SESSION_TIME_ZONE, Dataset, timestamp
 from epl_forecast.storage import R2Store, json_bytes
 
@@ -158,16 +158,16 @@ CATALOG_ROWS = (
         "forecasts",
         "one row per successful forecast and competition",
         "Successful live forecast identity, timing, model, simulation, and storage provenance.",
-        "competition forecast archive pointers, public document, and private run",
+        "competition forecast archive pointers and cumulative typed results",
         "generated_at, state_observed_at, and model_results_cutoff have distinct meanings.",
         False,
-        "A row exists only when both the successful public document and expected private run exist.",
+        "A row exists only when a release pointer resolves to its typed result.",
     ),
     (
         "forecast_matches",
         "one row per successful forecast and modeled match",
         "Complete private match predictions with explicit public horizon membership.",
-        "private forecast.json enriched by its public forecast",
+        "cumulative typed match and probability results",
         "The forecast timing fields are in analysis.forecasts.",
         True,
         "Structural and market-assisted probabilities are separate. Season simulations use structural probabilities.",
@@ -176,7 +176,7 @@ CATALOG_ROWS = (
         "forecast_teams",
         "one row per successful forecast and team",
         "Scalar live season estimates.",
-        "successful public forecast teams",
+        "cumulative typed team-season results",
         "The forecast timing fields are in analysis.forecasts.",
         False,
         None,
@@ -185,7 +185,7 @@ CATALOG_ROWS = (
         "forecast_team_events",
         "one row per forecast, team, and event",
         "Division-specific live event probabilities.",
-        "successful public forecast teams.events",
+        "cumulative typed team event results",
         "The forecast timing fields are in analysis.forecasts.",
         False,
         None,
@@ -194,7 +194,7 @@ CATALOG_ROWS = (
         "forecast_points_distribution",
         "one row per forecast, team, and points total",
         "Live points distributions.",
-        "successful public forecast teams.points_distribution",
+        "cumulative typed team points results",
         "The forecast timing fields are in analysis.forecasts.",
         False,
         None,
@@ -203,7 +203,7 @@ CATALOG_ROWS = (
         "forecast_position_distribution",
         "one row per forecast, team, and final position",
         "Live position distributions.",
-        "successful public forecast teams.position_probabilities",
+        "cumulative typed team position results",
         "The forecast timing fields are in analysis.forecasts.",
         False,
         None,
@@ -212,7 +212,7 @@ CATALOG_ROWS = (
         "forecast_intervals",
         "one row per forecast, team, estimate, and interval level",
         "Live points and position intervals.",
-        "successful public forecast team interval maps",
+        "cumulative typed team-season interval maps",
         "The forecast timing fields are in analysis.forecasts.",
         False,
         None,
@@ -221,7 +221,7 @@ CATALOG_ROWS = (
         "model_team_states",
         "one row per forecast and team",
         "Private model team state with stable common fields and the complete state as JSON.",
-        "private forecast.json team_strengths",
+        "cumulative typed model team states",
         "State used by this forecast run.",
         True,
         None,
@@ -230,7 +230,7 @@ CATALOG_ROWS = (
         "forecast_runs",
         "one row per successful forecast and competition",
         "Private run provenance and fit diagnostics.",
-        "private run.json and forecast.json",
+        "cumulative typed run metadata and provenance",
         "Run creation time is analysis.forecasts.generated_at.",
         True,
         "Complex diagnostics and provenance remain JSON.",
@@ -377,7 +377,7 @@ CATALOG_ROWS += (
         "forecast_match_stages",
         "one row per forecast, competition, season, match, and probability stage",
         "The unadjusted, personnel-adjusted, and market-assisted match probabilities with explicit lineage.",
-        "private forecast match stages, with conservative mappings for schema-version 1",
+        "cumulative typed match probability stages",
         "Values existed in the forecast run. Historical availability is explicit.",
         True,
         "Market-assisted rows have no goal rates because the pool does not define a score distribution.",
@@ -395,7 +395,7 @@ CATALOG_ROWS += (
         "forecast_score_distributions",
         "one row per forecast, competition, season, match, and score-generating stage",
         "Goal rates, omitted tail probability, uncertainty components, and score-grid dimensions.",
-        "private forecast score distributions",
+        "cumulative typed score distributions",
         "Values existed in the forecast run.",
         True,
         "The market-assisted stage is absent because it is not score-generating.",
@@ -404,7 +404,7 @@ CATALOG_ROWS += (
         "forecast_score_grid",
         "one row per forecast, match, stage, home-goal value, and away-goal value",
         "Finite score-grid probabilities for each score-generating match stage.",
-        "private forecast score distributions",
+        "cumulative typed score cells",
         "Values existed in the forecast run.",
         True,
         "Join forecast_score_distributions for omitted tail probability.",
@@ -413,7 +413,7 @@ CATALOG_ROWS += (
         "forecast_personnel_teams",
         "one row per forecast, match, and team",
         "Team discontinuity and its match log-rate shift.",
-        "private forecast match personnel records",
+        "cumulative typed personnel detail",
         "Personnel evidence selected at the forecast state observation time.",
         True,
         "usable_for_shift uses only the evidence of that team. status is applied or neutral when "
@@ -425,7 +425,7 @@ CATALOG_ROWS += (
         "forecast_personnel_players",
         "one row per forecast, match, team, and player",
         "Player weights, membership, availability, selection probability, and discontinuity contribution.",
-        "private forecast match personnel records",
+        "cumulative typed personnel detail",
         "Personnel evidence selected at the forecast state observation time.",
         True,
         "Unknown players have no invented discontinuity contribution.",
@@ -434,7 +434,7 @@ CATALOG_ROWS += (
         "forecast_personnel_evidence",
         "one row per forecast, match, team, player, evidence kind, and ordinal",
         "Membership, conflict, and availability evidence used for a player.",
-        "private forecast match personnel evidence arrays",
+        "cumulative typed personnel evidence detail",
         "Personnel evidence selected at the forecast state observation time.",
         True,
         None,
@@ -443,7 +443,7 @@ CATALOG_ROWS += (
         "forecast_personnel_reference_matches",
         "one row per forecast, match, team, and reference match",
         "Recent squad reference matches used for team personnel weights.",
-        "private forecast match personnel reference_matches",
+        "cumulative typed personnel reference detail",
         "Reference matches were available at the forecast state observation time.",
         True,
         None,
@@ -452,7 +452,7 @@ CATALOG_ROWS += (
         "forecast_market_inputs",
         "one row per forecast and match with a usable market quote",
         "Odds, de-vigged probabilities, overround, and market-pool weight.",
-        "private forecast market-assisted stage",
+        "cumulative typed market-assisted stage detail",
         "market_observed_at is the quote capture time.",
         True,
         None,
@@ -461,7 +461,7 @@ CATALOG_ROWS += (
         "model_specifications",
         "one row per forecast and mixture specification",
         "Mixture parameters, prior and posterior weights, and log evidence.",
-        "private forecast fit_diagnostics.specifications",
+        "cumulative typed fit diagnostics",
         "The specification mixture fitted for this forecast run.",
         True,
         None,
@@ -755,6 +755,7 @@ def _install_metadata(
     model_versions: set[str] | None = None,
     hindcast_version_request=None,
     hindcast_model_versions: set[str] | None = None,
+    forecast_ids: tuple[str, ...] | None = None,
 ) -> None:
     connection = data.con
     catalog = [
@@ -801,6 +802,7 @@ def _install_metadata(
             ("loaded_model_versions", "JSON"),
             ("hindcast_version_request", "VARCHAR"),
             ("hindcast_model_versions", "JSON"),
+            ("forecast_ids", "JSON"),
         ),
         (
             {
@@ -819,6 +821,7 @@ def _install_metadata(
                     else ",".join(hindcast_version_request or ())
                 ),
                 "hindcast_model_versions": _json(sorted(hindcast_model_versions or set())),
+                "forecast_ids": _json(forecast_ids),
             },
         ),
     )
@@ -1209,6 +1212,16 @@ def _selected_versions(publish_store, requested) -> frozenset | None:
     return frozenset(requested)
 
 
+def normalize_forecast_ids(forecast_ids) -> tuple[str, ...] | None:
+    if forecast_ids is None:
+        return None
+    names = list(forecast_ids)
+    selected = {name.strip() for name in names if isinstance(name, str) and name.strip()}
+    if len(selected) != len(names):
+        raise ValueError("Forecast IDs must be distinct, nonempty strings")
+    return tuple(sorted(selected))
+
+
 def open_analysis_session(
     cutoff=None,
     *,
@@ -1217,6 +1230,7 @@ def open_analysis_session(
     include_derived: bool = True,
     session_directory: Path | None = None,
     hindcast_versions=CURRENT_MODEL_VERSION,
+    forecast_ids=None,
 ) -> AnalysisSession:
     """Open the authoritative remote corpus and install its analytical namespace.
 
@@ -1232,19 +1246,35 @@ def open_analysis_session(
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
     requested = normalize_hindcast_versions(hindcast_versions)
+    selected_forecasts = normalize_forecast_ids(forecast_ids)
     if session_directory is None:
         return _build_analysis_session(
-            cutoff, data_store, publish_store, include_derived, requested
+            cutoff,
+            data_store,
+            publish_store,
+            include_derived,
+            requested,
+            selected_forecasts,
         )
     slot, identity = _session_identity(
-        cutoff, data_store, publish_store, include_derived, requested
+        cutoff,
+        data_store,
+        publish_store,
+        include_derived,
+        requested,
+        selected_forecasts,
     )
     path = session_directory / f"{slot}-{identity}.duckdb"
     if not path.exists():
         session_directory.mkdir(parents=True, exist_ok=True)
         temporary = session_directory / f".{path.stem}.{os.getpid()}.tmp"
         session = _build_analysis_session(
-            cutoff, data_store, publish_store, include_derived, requested
+            cutoff,
+            data_store,
+            publish_store,
+            include_derived,
+            requested,
+            selected_forecasts,
         )
         try:
             _write_session_file(session.connection, temporary)
@@ -1260,7 +1290,12 @@ def open_analysis_session(
 
 
 def _build_analysis_session(
-    cutoff, data_store, publish_store, include_derived: bool, requested
+    cutoff,
+    data_store,
+    publish_store,
+    include_derived: bool,
+    requested,
+    selected_forecasts,
 ) -> AnalysisSession:
     dataset = Dataset(cutoff, store=data_store)
     try:
@@ -1282,6 +1317,7 @@ def _build_analysis_session(
                 data_store,
                 publish_store,
                 _selected_versions(publish_store, requested),
+                selected_forecasts,
             )
         _install_metadata(
             dataset,
@@ -1290,6 +1326,7 @@ def _build_analysis_session(
             model_versions,
             requested,
             hindcast_versions,
+            selected_forecasts,
         )
         _install_column_catalog(dataset.con)
         return AnalysisSession(dataset.con, dataset)
@@ -1299,7 +1336,12 @@ def _build_analysis_session(
 
 
 def _session_identity(
-    cutoff, data_store, publish_store, include_derived: bool, requested
+    cutoff,
+    data_store,
+    publish_store,
+    include_derived: bool,
+    requested,
+    selected_forecasts,
 ) -> tuple[str, str]:
     """The slot and the content identity of a prepared session file.
 
@@ -1311,6 +1353,7 @@ def _session_identity(
         "cutoff": None if cutoff is None else timestamp(cutoff).isoformat(),
         "include_derived": include_derived,
         "hindcast_versions": requested,
+        "forecast_ids": selected_forecasts,
     }
     package = Path(epl_forecast.__file__).parent
     source = hashlib.sha256()
@@ -1324,6 +1367,7 @@ def _session_identity(
         "duckdb_version": duckdb.__version__,
         "source": source.hexdigest(),
         "canonical": data_store.identities(CANONICAL_ROOTS),
+        "results": data_store.identities(RESULT_ROOTS) if include_derived else None,
         "publication": publication_identities(publish_store) if include_derived else None,
     }
     return (

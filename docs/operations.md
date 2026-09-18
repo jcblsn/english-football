@@ -234,7 +234,7 @@ The viewer shows each division's table, position matrix, club distributions, upc
 
 The default materialization gets `forecasts/current.json`, its four forecast documents and `record.json`. It does not get historical forecasts or hindcasts. Add `--archive eng-league-one` to get one competition archive and its forecast documents for an explicit historical build. Add `--hindcasts` to get the hindcast index, each season series and each weekly hindcast document.
 
-Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, with `--hindcasts`, checks the boundary and deploys the site. The hindcast documents add approximately one minute to the materialization. Both R2 buckets stay private.
+Generated files under `site/data` are not canonical and are not committed. The Pages workflow materializes the private publication bucket into its build artifact, with `--hindcasts`, checks the boundary and deploys the site. It keys an Actions cache by the hindcast index identity. When that identity is unchanged, materialization copies the verified local hindcast tree and reads no season series or weekly hindcast document from R2. A changed index rebuilds and replaces that cache. Both R2 buckets stay private.
 
 The production workflow calls the Pages workflow after a run that publishes at least one forecast. A run that publishes nothing does not deploy, so most of the three-hour wakes deploy nothing. You can also start the Pages workflow manually.
 

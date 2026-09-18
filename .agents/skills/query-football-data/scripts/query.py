@@ -58,6 +58,11 @@ def parser() -> argparse.ArgumentParser:
         metavar="SELECTION",
         help="Hindcast model versions to load: current (default), all, or a comma-separated list.",
     )
+    result.add_argument(
+        "--forecast-id",
+        action="append",
+        help="Load one released live forecast ID. Repeat to load a selected historical scope.",
+    )
     result.add_argument("--max-rows", type=positive_int, default=DEFAULT_MAX_ROWS)
     result.add_argument("--max-cell-chars", type=positive_int, default=DEFAULT_MAX_CELL_CHARS)
     result.add_argument("--max-output-chars", type=positive_int, default=DEFAULT_MAX_OUTPUT_CHARS)
@@ -207,6 +212,7 @@ def main() -> None:
         args.cutoff,
         session_directory=SESSION_DIRECTORY,
         hindcast_versions=hindcast_versions(args.hindcast_versions),
+        forecast_ids=args.forecast_id,
     )
     try:
         results = []

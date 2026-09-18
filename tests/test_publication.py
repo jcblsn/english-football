@@ -242,8 +242,10 @@ class Store:
     def __init__(self):
         self.objects = {}
         self.writes = []
+        self.reads = []
 
     def get_json(self, key, default=None):
+        self.reads.append(key)
         return self.objects.get(key, default)
 
     def put_json(self, key, value, immutable=False):

@@ -660,6 +660,11 @@ def main():
     parser.add_argument("action", choices=["audit", "query", "ui"])
     parser.add_argument("--cutoff", type=datetime.fromisoformat)
     parser.add_argument(
+        "--forecast-id",
+        action="append",
+        help="Load one released live forecast ID. Repeat to select more than one.",
+    )
+    parser.add_argument(
         "--no-browser", action="store_true", help="Start the UI server without opening a browser"
     )
     parser.add_argument(
@@ -675,7 +680,11 @@ def main():
         return
     from epl_forecast.analysis import SESSION_DIRECTORY, open_analysis_session, start_ui
 
-    session = open_analysis_session(args.cutoff, session_directory=SESSION_DIRECTORY)
+    session = open_analysis_session(
+        args.cutoff,
+        session_directory=SESSION_DIRECTORY,
+        forecast_ids=args.forecast_id,
+    )
     try:
         if args.action == "query":
             print(json.dumps(session.rows(args.sql), default=str, indent=2))

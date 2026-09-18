@@ -161,6 +161,10 @@ def test_the_series_keeps_every_weekly_origin_and_materializes_only_on_request(t
     assert materialize_publication(publish_store, tmp_path, hindcasts=True)["hindcasts"] == 3
     assert (tmp_path / "data" / INDEX_KEY).exists()
     assert json.loads((tmp_path / "data" / entry["href"]).read_text()) == series
+    publish_store.reads.clear()
+    assert materialize_publication(publish_store, tmp_path, hindcasts=True)["hindcasts"] == 3
+    assert entry["href"] not in publish_store.reads
+    assert all(origin["href"] not in publish_store.reads for origin in series["origins"])
     current = json.loads((tmp_path / "data/current.json").read_text())
     assert all(row["href"].startswith("forecasts/") for row in current["forecasts"])
 

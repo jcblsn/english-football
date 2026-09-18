@@ -793,6 +793,7 @@ def materialize_publication(
     site = Path(site)
     site.mkdir(parents=True, exist_ok=True)
     target = site / "data"
+    hindcast_marker = site / ".page324-hindcast-cache"
     policy = load_policy()
     with tempfile.TemporaryDirectory(prefix=".publication-", dir=site) as temporary:
         data = Path(temporary)
@@ -823,16 +824,31 @@ def materialize_publication(
             index = store.get_json("hindcasts/index.json")
             if index is not None:
                 check_publishable(index, policy, "hindcast_index")
+                index_identity = sha256_bytes(json_bytes(index))
+                cached = (
+                    target / "hindcasts"
+                    if hindcast_marker.exists()
+                    and hindcast_marker.read_text() == index_identity
+                    and (target / "hindcasts").is_dir()
+                    else None
+                )
+                if cached is not None:
+                    shutil.copytree(cached, data / "hindcasts")
                 write_json(data / "hindcasts/index.json", index)
-                for season in index["seasons"]:
-                    series = store.get_json(season["href"])
-                    check_publishable(series, policy, "hindcast_series")
-                    write_json(data / season["href"], series)
-                    for origin in series["origins"]:
-                        document = store.get_json(origin["href"])
-                        check_publishable(document, policy, "hindcast")
-                        write_json(data / origin["href"], document)
-                        hindcast_documents += 1
+                if cached is None:
+                    for season in index["seasons"]:
+                        series = store.get_json(season["href"])
+                        check_publishable(series, policy, "hindcast_series")
+                        write_json(data / season["href"], series)
+                        for origin in series["origins"]:
+                            document = store.get_json(origin["href"])
+                            check_publishable(document, policy, "hindcast")
+                            write_json(data / origin["href"], document)
+                            hindcast_documents += 1
+                else:
+                    hindcast_documents = sum(
+                        season.get("origin_count", 0) for season in index["seasons"]
+                    )
         record = store.get_json("record.json")
         if record is not None:
             check_publishable(record, policy, "record")
@@ -840,6 +856,8 @@ def materialize_publication(
         if target.exists():
             shutil.rmtree(target)
         data.replace(target)
+        if hindcasts and index is not None:
+            hindcast_marker.write_text(index_identity)
     return {
         "documents": len(written),
         "archives": len(archive_competitions),

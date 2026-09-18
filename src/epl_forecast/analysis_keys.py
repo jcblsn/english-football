@@ -17,6 +17,7 @@ PUBLICATION_ROOTS = (
     "record.json",
 )
 CANONICAL_ROOTS = ("state/manifests.json",)
+RESULT_ROOTS = tuple(f"state/results/{competition_id}.json" for competition_id in COMPETITION_IDS)
 
 
 def publication_identities(publish_store) -> dict:

@@ -16,7 +16,8 @@ from epl_forecast.analysis import (
 from epl_forecast.datasets import publish
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast, forecast_pointer
-from epl_forecast.storage import json_bytes, sha256_bytes
+from epl_forecast.results import write_forecast_result
+from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
 
 def identity(value):
@@ -55,6 +56,10 @@ class ObjectStore:
 
     def identities(self, keys):
         return {key: identity(self.objects.get(key)) for key in keys}
+
+    def download(self, key, destination):
+        self.reads.append(key)
+        destination.write_bytes(self.objects[key])
 
     def uri(self, key):
         raise AssertionError(f"Unexpected Parquet read: {key}")
@@ -681,6 +686,81 @@ def test_new_forecast_stage_and_personnel_lineage_is_fully_queryable(tmp_path):
         ) == [{"baseline": 0.5}]
     finally:
         session.close()
+
+
+def test_typed_result_analysis_avoids_per_forecast_remote_reads(tmp_path):
+    data, publish_store = version_two_forecast_stores()
+    forecast_id = "2026-09-10T120000Z"
+    private_key = f"runs/forecasts/{forecast_id}/eng-premier-league/forecast.json"
+    database = tmp_path / "results.duckdb"
+    write_forecast_result(
+        database,
+        data.objects[private_key],
+        data.objects[f"runs/forecasts/{forecast_id}/eng-premier-league/run.json"],
+        input_revision="input-1",
+        result_id=forecast_id,
+    )
+    unrelated_id = "2026-09-10T130000Z"
+    write_forecast_result(
+        database,
+        data.objects[private_key],
+        data.objects[f"runs/forecasts/{forecast_id}/eng-premier-league/run.json"],
+        input_revision="input-1",
+        result_id=unrelated_id,
+    )
+    unrelated = derive_forecast(data.objects[private_key], unrelated_id)
+    unrelated_pointer = forecast_pointer(unrelated)
+    publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"].append(
+        unrelated_pointer
+    )
+    publish_store.objects[unrelated_pointer["href"]] = unrelated
+    for index in range(250):
+        retained_id = f"retained-{index:03d}"
+        publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"].append(
+            {
+                **unrelated_pointer,
+                "forecast_id": retained_id,
+                "href": f"forecasts/eng-premier-league/{retained_id}.json",
+            }
+        )
+    database_key = "results/eng-premier-league/result.duckdb"
+    data.objects[database_key] = database.read_bytes()
+    data.objects["state/results/eng-premier-league.json"] = {
+        "schema_version": 1,
+        "competition_id": "eng-premier-league",
+        "database_key": database_key,
+        "database_bytes": database.stat().st_size,
+        "database_sha256": file_hash(database),
+    }
+    data.reads.clear()
+    publish_store.reads.clear()
+    session = open_analysis_session(
+        data_store=data,
+        publish_store=publish_store,
+        forecast_ids=[forecast_id],
+    )
+    try:
+        assert session.rows("SELECT count(*) AS n FROM analysis.forecasts") == [{"n": 1}]
+        assert session.rows("SELECT count(*) AS n FROM analysis.forecast_personnel_players") == [
+            {"n": 4}
+        ]
+        assert session.rows(
+            "SELECT home_odds, market_weight FROM analysis.forecast_market_inputs"
+        ) == [{"home_odds": 2.0, "market_weight": 0.25}]
+        assert session.rows(
+            "SELECT count(*) AS n FROM analysis.forecast_simulation_match_frequencies"
+        ) == [{"n": 1}]
+        assert session.rows("SELECT forecast_ids FROM analysis.session") == [
+            {"forecast_ids": json.dumps([forecast_id])}
+        ]
+    finally:
+        session.close()
+    public_href = publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"][
+        0
+    ]["href"]
+    assert database_key in data.reads
+    assert private_key not in data.reads
+    assert public_href not in publish_store.reads
 
 
 def test_catalogs_cover_every_analysis_relation_and_column(tmp_path):

@@ -32,6 +32,8 @@ The helper keeps a disposable session file outside the repository and checks it 
 
 The session loads only the current public model version of the hindcast archive. Use `--hindcast-versions all`, or a comma-separated list of version names, when the question compares model versions. Each selection keeps its own session file, so the first call for a new selection prepares one.
 
+The live forecast tables come from the cumulative typed result database of each division. Use `--forecast-id <ID>` more than once to load only the released live forecasts needed for a historical comparison. Without this option, the session loads all released live forecast IDs that the compact competition archives select.
+
 Use `--sql-file <file>` for long SQL, or use `--sql-file -` to read SQL from stdin. Repeat `--query <name> <sql>` to run several named statements in one analysis session:
 
 ```sh

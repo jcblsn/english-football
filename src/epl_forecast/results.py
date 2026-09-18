@@ -10,7 +10,7 @@ from epl_forecast.datasets import SESSION_TIME_ZONE
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.storage import json_bytes, sha256_bytes
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 RESULT_TABLES = (
     "forecast_matches",
     "forecast_score_metadata",
@@ -48,7 +48,8 @@ def install_result_schema(connection) -> None:
             fit_diagnostics JSON NOT NULL,
             source_document_sha256 VARCHAR NOT NULL,
             schema_version INTEGER NOT NULL,
-            stored_at TIMESTAMPTZ NOT NULL
+            stored_at TIMESTAMPTZ NOT NULL,
+            forecast_metadata JSON
         )
         """
     )
@@ -69,6 +70,7 @@ def install_result_schema(connection) -> None:
             home_discontinuity DOUBLE,
             away_discontinuity DOUBLE,
             home_log_rate_shift DOUBLE,
+            personnel_detail JSON,
             PRIMARY KEY (result_id, match_id)
         )
         """
@@ -108,6 +110,7 @@ def install_result_schema(connection) -> None:
             p_home DOUBLE NOT NULL,
             p_draw DOUBLE NOT NULL,
             p_away DOUBLE NOT NULL,
+            detail JSON,
             PRIMARY KEY (result_id, match_id, stage)
         )
         """
@@ -155,6 +158,7 @@ def install_result_schema(connection) -> None:
             position_sd DOUBLE NOT NULL,
             position_intervals JSON NOT NULL,
             mean_goal_difference DOUBLE NOT NULL,
+            detail JSON,
             PRIMARY KEY (result_id, team_id)
         )
         """
@@ -260,6 +264,18 @@ def install_result_schema(connection) -> None:
         )
         """
     )
+    connection.execute(
+        "ALTER TABLE forecast_result.forecast_runs ADD COLUMN IF NOT EXISTS forecast_metadata JSON"
+    )
+    connection.execute(
+        "ALTER TABLE forecast_result.forecast_matches ADD COLUMN IF NOT EXISTS personnel_detail JSON"
+    )
+    connection.execute(
+        "ALTER TABLE forecast_result.forecast_match_probabilities ADD COLUMN IF NOT EXISTS detail JSON"
+    )
+    connection.execute(
+        "ALTER TABLE forecast_result.forecast_team_seasons ADD COLUMN IF NOT EXISTS detail JSON"
+    )
 
 
 def _json(value) -> str:
@@ -302,6 +318,7 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
                 home.get("discontinuity"),
                 away.get("discontinuity"),
                 personnel.get("home_log_rate_shift"),
+                _json(match.get("personnel")) if match.get("personnel") is not None else None,
             )
         )
         for stage, values in match["stages"].items():
@@ -318,6 +335,9 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
                     values["p_home"],
                     values["p_draw"],
                     values["p_away"],
+                    _json(
+                        {key: value for key, value in values.items() if key != "score_distribution"}
+                    ),
                 )
             )
             scores = values.get("score_distribution")
@@ -348,11 +368,11 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
                     )
     statements = (
         (
-            "INSERT INTO forecast_result.forecast_matches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO forecast_result.forecast_matches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             match_rows,
         ),
         (
-            "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             probability_rows,
         ),
         (
@@ -402,6 +422,7 @@ def _insert_team_rows(connection, result_id: str, forecast: dict) -> dict[str, i
                 team["position_sd"],
                 _json(team.get("position_intervals", {})),
                 team["mean_goal_difference"],
+                _json(team),
             )
         )
         for event, probability in team.items():
@@ -431,7 +452,7 @@ def _insert_team_rows(connection, result_id: str, forecast: dict) -> dict[str, i
         )
     statements = (
         (
-            "INSERT INTO forecast_result.forecast_team_seasons VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO forecast_result.forecast_team_seasons VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             team_rows,
         ),
         (
@@ -564,16 +585,7 @@ def write_forecast_result(
             if key in run
         }
         simulation_metadata = {
-            key: simulation.get(key)
-            for key in (
-                "assumptions",
-                "ranking_rules",
-                "ranking_rules_evidence",
-                "point_adjustments",
-                "playoff_model",
-                "future_state_evolution",
-                "state_uncertainty",
-            )
+            key: value for key, value in simulation.items() if key not in {"teams", "match_impacts"}
         }
         simulation_metadata["publication_context"] = {
             "competition_name": forecast["competition_name"],
@@ -585,21 +597,22 @@ def write_forecast_result(
             "state_uncertainty", forecast.get("state_uncertainty")
         )
         simulation_metadata["simulations"] = simulation["simulations"]
-        provenance = {
-            key: run.get(key)
-            for key in (
-                "code_sha256",
-                "config_sha256",
-                "package_version",
-                "python",
-                "dependencies",
-                "execution",
-            )
+        forecast_metadata = {
+            key: value
+            for key, value in forecast.items()
+            if key
+            not in {
+                "matches",
+                "simulation",
+                "team_names",
+                "team_strengths",
+                "unsettled_fixtures",
+            }
         }
         connection.execute("BEGIN TRANSACTION")
         try:
             connection.execute(
-                "INSERT INTO forecast_result.forecast_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO forecast_result.forecast_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     result_id,
                     forecast["competition_id"],
@@ -613,11 +626,12 @@ def write_forecast_result(
                     _json(model),
                     _json(settings),
                     _json(simulation_metadata),
-                    _json(provenance),
+                    _json(run),
                     _json(forecast.get("fit_diagnostics", {})),
                     source_sha256,
                     RESULT_SCHEMA_VERSION,
                     datetime.now(UTC),
+                    _json(forecast_metadata),
                 ],
             )
             counts = _insert_match_rows(connection, result_id, forecast["matches"])
@@ -671,7 +685,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             """
             SELECT competition_id, season_id, state_observed_at, model_results_cutoff,
                    generated_at, model_spec, simulation_settings, simulation_metadata,
-                   fit_diagnostics
+                   fit_diagnostics, forecast_metadata
             FROM forecast_result.forecast_runs WHERE result_id = ?
             """,
             [result_id],
@@ -686,15 +700,19 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                 [result_id],
             ).fetchall()
         )
-        probabilities = {
+        stage_values = {
             (match_id, stage): {
                 "p_home": p_home,
                 "p_draw": p_draw,
                 "p_away": p_away,
+                "parent_stage": parent_stage,
+                "score_generating": score_generating,
+                **(_decoded(detail) or {}),
             }
-            for match_id, stage, p_home, p_draw, p_away in connection.execute(
+            for match_id, stage, parent_stage, score_generating, p_home, p_draw, p_away, detail in connection.execute(
                 """
-                SELECT match_id, stage, p_home, p_draw, p_away
+                SELECT match_id, stage, parent_stage, score_generating,
+                       p_home, p_draw, p_away, detail
                 FROM forecast_result.forecast_match_probabilities WHERE result_id = ?
                 """,
                 [result_id],
@@ -732,7 +750,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             """
             SELECT match_id, home_team_id, away_team_id, match_date, kickoff_time, status,
                    model_forecast_date, started, primary_stage, personnel_applied,
-                   home_discontinuity, away_discontinuity, home_log_rate_shift
+                   home_discontinuity, away_discontinuity, home_log_rate_shift, personnel_detail
             FROM forecast_result.forecast_matches WHERE result_id = ?
             ORDER BY kickoff_time NULLS LAST, match_id
             """,
@@ -742,8 +760,8 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         seen = set()
         for row in match_rows:
             match_id, home_team_id, away_team_id = row[:3]
-            primary = probabilities[match_id, "personnel_adjusted"]
-            market = probabilities.get((match_id, "market_assisted"))
+            primary = stage_values[match_id, "personnel_adjusted"]
+            market = stage_values.get((match_id, "market_assisted"))
             score_key = (match_id, "personnel_adjusted")
             home_rate, away_rate, omitted, uncertainty = score_metadata[score_key]
             eligible = row[4] is not None and row[4] > generated_at
@@ -753,7 +771,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                 else []
             )
             seen.update(next_for)
-            personnel = (
+            personnel = _decoded(row[13]) or (
                 {
                     "home": {"discontinuity": row[10]},
                     "away": {"discontinuity": row[11]},
@@ -762,6 +780,26 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                 if row[9]
                 else None
             )
+            stages = {}
+            for stage in ("unadjusted", "personnel_adjusted", "market_assisted"):
+                value = stage_values.get((match_id, stage))
+                if value is None:
+                    stages[stage] = None
+                    continue
+                stage_value = dict(value)
+                metadata_key = (match_id, stage)
+                if metadata_key in score_metadata:
+                    stage_home_rate, stage_away_rate, stage_omitted, stage_uncertainty = (
+                        score_metadata[metadata_key]
+                    )
+                    stage_value["score_distribution"] = {
+                        "home_rate": stage_home_rate,
+                        "away_rate": stage_away_rate,
+                        "omitted_probability": stage_omitted,
+                        "uncertainty_components": stage_uncertainty,
+                        "grid_home_rows_away_columns": score_grids[metadata_key],
+                    }
+                stages[stage] = stage_value
             matches.append(
                 {
                     "match_id": match_id,
@@ -772,7 +810,8 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                     "status": row[5],
                     "model_forecast_date": _iso(row[6]),
                     "started": row[7],
-                    **primary,
+                    **{key: primary[key] for key in ("p_home", "p_draw", "p_away")},
+                    "stages": stages,
                     "market_assisted_probabilities": market,
                     "personnel": personnel,
                     "next_match_for_teams": next_for,
@@ -789,7 +828,8 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             """
             SELECT team_id, played, current_points, mean_points, median_points,
                    points_intervals, points_quantiles_05_50_95, mean_position,
-                   median_position, position_sd, position_intervals, mean_goal_difference
+                   median_position, position_sd, position_intervals, mean_goal_difference,
+                   detail
             FROM forecast_result.forecast_team_seasons
             WHERE result_id = ? ORDER BY mean_position
             """,
@@ -821,6 +861,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             ]
             teams.append(
                 {
+                    **(_decoded(row[12]) or {}),
                     "team_id": row[0],
                     "played": row[1],
                     "current_points": row[2],
@@ -839,6 +880,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                 }
             )
         simulation = {
+            **metadata,
             "simulations": settings.get("simulations", metadata["simulations"]),
             "teams": teams,
             "state_uncertainty": metadata.get("state_uncertainty"),
@@ -862,6 +904,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             ).fetchall()
         ]
     return {
+        **(_decoded(run[9]) or {}),
         "competition_id": run[0],
         "competition_name": context["competition_name"],
         "season_id": run[1],
@@ -879,6 +922,18 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         "unsettled_fixtures": unsettled,
         "impact_window": context.get("impact_window"),
     }
+
+
+def read_forecast_run(database: Path, result_id: str) -> dict:
+    with duckdb.connect(str(database), read_only=True) as connection:
+        row = connection.execute(
+            "SELECT software_provenance, schema_version FROM forecast_result.forecast_runs "
+            "WHERE result_id = ?",
+            [result_id],
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown forecast result: {result_id}")
+    return {**(_decoded(row[0]) or {}), "result_schema_version": row[1]}
 
 
 def clone_forecast_result(
@@ -910,6 +965,7 @@ def clone_forecast_result(
     )
     with duckdb.connect(str(database)) as connection:
         connection.execute(SESSION_TIME_ZONE)
+        install_result_schema(connection)
         existing = connection.execute(
             "SELECT source_document_sha256 FROM forecast_result.forecast_runs WHERE result_id = ?",
             [result_id],
@@ -931,7 +987,7 @@ def clone_forecast_result(
                 SELECT ?, competition_id, season_id, state_observed_at, model_results_cutoff,
                        ?, model_id, model_kind, ?, model_spec, simulation_settings,
                        simulation_metadata, software_provenance, fit_diagnostics, ?,
-                       schema_version, ?
+                       schema_version, ?, forecast_metadata
                 FROM forecast_result.forecast_runs WHERE result_id = ?
                 """,
                 [
@@ -1021,11 +1077,12 @@ def _insert_market_probabilities(
                 values["p_home"],
                 values["p_draw"],
                 values["p_away"],
+                _json(values),
             )
         )
     if rows:
         connection.executemany(
-            "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 

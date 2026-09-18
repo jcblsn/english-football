@@ -2,8 +2,10 @@
 
 import json
 import math
+import tempfile
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from epl_forecast.analysis_keys import HINDCAST_INDEX_KEY, MATCH_HINDCAST_INDEX_KEY
 from epl_forecast.competitions import COMPETITION_IDS
@@ -499,7 +501,107 @@ def _simulation_rows(
         )
 
 
-def _live_rows(
+class _SelectedDocuments:
+    def __init__(self, documents: dict[str, dict]):
+        self.documents = documents
+
+    def get_json(self, key: str, default=None):
+        return self.documents.get(key, default)
+
+
+def _typed_live_rows(
+    data_store,
+    publish_store,
+    result_pointers: dict[str, dict | None],
+    forecast_ids: tuple[str, ...] | None,
+):
+    from epl_forecast.publication import derive_forecast
+    from epl_forecast.results import read_forecast_result, read_forecast_run
+    from epl_forecast.storage import file_hash
+
+    private_documents = {}
+    public_documents = {}
+    with tempfile.TemporaryDirectory(prefix="page324-analysis-results-") as directory:
+        for competition_id in COMPETITION_IDS:
+            archive_key = f"forecasts/{competition_id}/archive.json"
+            archive = publish_store.get_json(archive_key)
+            if archive is None:
+                continue
+            entries = [
+                entry
+                for entry in archive["forecasts"]
+                if forecast_ids is None or entry["forecast_id"] in forecast_ids
+            ]
+            public_documents[archive_key] = {**archive, "forecasts": entries}
+            if not entries:
+                continue
+            pointer = result_pointers[competition_id]
+            if pointer is None:
+                raise ValueError(
+                    f"The published {competition_id} archive has no cumulative typed result"
+                )
+            database = Path(directory) / f"{competition_id}.duckdb"
+            data_store.download(pointer["database_key"], database)
+            if database.stat().st_size != pointer["database_bytes"]:
+                raise ValueError("Result database byte count does not match its pointer")
+            if file_hash(database) != pointer["database_sha256"]:
+                raise ValueError("Result database hash does not match its pointer")
+            for entry in entries:
+                result_id = entry["forecast_id"]
+                try:
+                    private = read_forecast_result(database, result_id)
+                    run = read_forecast_run(database, result_id)
+                except KeyError as error:
+                    raise ValueError(
+                        f"The cumulative {competition_id} result does not contain released result {result_id}"
+                    ) from error
+                public = derive_forecast(
+                    private,
+                    result_id,
+                    public_model_version=entry["model_version"],
+                )
+                public_documents[entry["href"]] = public
+                prefix = f"runs/forecasts/{result_id}/{competition_id}"
+                private_documents[f"{prefix}/forecast.json"] = {
+                    **private,
+                    "schema_version": 2,
+                }
+                private_documents[f"{prefix}/run.json"] = run
+    return _legacy_live_rows(
+        _SelectedDocuments(private_documents),
+        _SelectedDocuments(public_documents),
+    )
+
+
+def _live_rows(data_store, publish_store, forecast_ids: tuple[str, ...] | None = None):
+    result_pointers = {
+        competition_id: data_store.get_json(f"state/results/{competition_id}.json")
+        for competition_id in COMPETITION_IDS
+    }
+    if any(result_pointers.values()):
+        return _typed_live_rows(data_store, publish_store, result_pointers, forecast_ids)
+    if forecast_ids is not None:
+        documents = {}
+        for competition_id in COMPETITION_IDS:
+            key = f"forecasts/{competition_id}/archive.json"
+            archive = publish_store.get_json(key)
+            if archive is not None:
+                documents[key] = {
+                    **archive,
+                    "forecasts": [
+                        entry
+                        for entry in archive["forecasts"]
+                        if entry["forecast_id"] in forecast_ids
+                    ],
+                }
+        for archive in documents.values():
+            for entry in archive["forecasts"]:
+                documents[entry["href"]] = publish_store.get_json(entry["href"])
+        publish_store = _SelectedDocuments(documents)
+    return _legacy_live_rows(data_store, publish_store)
+
+
+def _legacy_live_rows(
     data_store,
     publish_store,
 ) -> tuple[dict[str, list], dict, set[str]]:
@@ -2051,9 +2153,13 @@ def _install_artifact_views(connection) -> None:
 
 
 def install_artifact_analysis(
-    connection, data_store, publish_store, hindcast_model_versions: frozenset | None = None
+    connection,
+    data_store,
+    publish_store,
+    hindcast_model_versions: frozenset | None = None,
+    forecast_ids: tuple[str, ...] | None = None,
 ) -> tuple[dict, set[str], set[str]]:
-    live, live_updates, live_versions = _live_rows(data_store, publish_store)
+    live, live_updates, live_versions = _live_rows(data_store, publish_store, forecast_ids)
     hindcasts, hindcast_updates, hindcast_versions = _hindcast_rows(
         data_store, publish_store, hindcast_model_versions
     )
