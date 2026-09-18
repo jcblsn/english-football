@@ -1346,3 +1346,18 @@ def test_a_superseded_match_hindcast_version_is_not_loaded_by_default():
     finally:
         session.close()
     assert older not in publish_store.reads
+
+
+def test_the_published_score_grid_may_round_but_not_drift():
+    """121 rounded cells drift by about 6e-5. A grid that misses by more is an error."""
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    for omitted, fails in ((0.20005, False), (0.21, True)):
+        data, publish_store = match_hindcast_stores(match_id)
+        grid = publish_store.objects[MATCH_HINDCAST_HREF]["matches"][0]["score_probabilities"]
+        grid["omitted_probability"] = omitted
+        if fails:
+            with pytest.raises(ValueError, match="Invalid score distribution total"):
+                open_analysis_session(data_store=data, publish_store=publish_store)
+            continue
+        session = open_analysis_session(data_store=data, publish_store=publish_store)
+        session.close()
