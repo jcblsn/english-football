@@ -143,3 +143,28 @@ def test_a_conditional_r2_write_sends_its_condition_and_reports_a_conflict():
         store.put_json_if("state/manifests.json", {"manifests": []}, "stale")
     assert calls[0]["IfNoneMatch"] == "*" and "IfMatch" not in calls[0]
     assert calls[1]["IfMatch"] == "current" and "IfNoneMatch" not in calls[1]
+
+
+def test_object_identities_use_one_head_request_and_report_absence():
+    calls = []
+
+    class Client:
+        def head_object(self, Bucket, Key):
+            calls.append(Key)
+            if Key == "missing.json":
+                raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+            if Key == "legacy.json":
+                return {"ETag": '"abc"'}
+            return {"Metadata": {"sha256": "d" * 64}, "ETag": '"ignored"'}
+
+        def get_object(self, Bucket, Key):
+            raise AssertionError(f"An identity check must not read a body: {Key}")
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client())
+    assert store.identities(("record.json", "legacy.json", "missing.json")) == {
+        "record.json": "d" * 64,
+        "legacy.json": '"abc"',
+        "missing.json": None,
+    }
+    assert sorted(calls) == ["legacy.json", "missing.json", "record.json"]
+    assert store.identities(()) == {}

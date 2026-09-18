@@ -1,5 +1,6 @@
 import json
 import math
+from datetime import date, datetime
 
 import duckdb
 import pytest
@@ -995,3 +996,353 @@ def test_session_files_are_separate_for_each_cutoff(tmp_path):
     finally:
         current.close()
         historical.close()
+
+
+def hindcast_archive_stores(current_version="v0.3.0"):
+    """Two hindcast generations of one season, with a live forecast that names the current one."""
+    team = {
+        "team_id": "arsenal",
+        "name": "Arsenal",
+        "played": 10,
+        "current_points": 20,
+        "mean_points": 75.0,
+        "median_points": 75,
+        "mean_position": 2.0,
+        "median_position": 2,
+        "position_sd": 1.0,
+        "mean_goal_difference": 25.0,
+        "points_intervals": {"50": [70, 80]},
+        "position_intervals": {"50": [1, 3]},
+        "points_distribution": {"74": 0.4, "75": 0.6},
+        "position_probabilities": [0.3, 0.7],
+        "events": {"title_probability": 0.2},
+    }
+    data_objects = {"state/manifests.json": {"schema_version": 1, "manifests": []}}
+    publish_objects = {}
+    seasons = []
+    for version in ("v0.2", "v0.3.0"):
+        prefix = f"hindcasts/{version}/eng-premier-league/2025-2026"
+        href = f"{prefix}/2025-10-01T080000Z.json"
+        public = {
+            "schema_version": 1,
+            "product": "hindcast",
+            "retrospective": True,
+            "hindcast_id": "2025-10-01T080000Z",
+            "competition_id": "eng-premier-league",
+            "season_id": "2025-2026",
+            "origin_at": "2025-10-01T09:00:00+01:00",
+            "model_results_cutoff": "2025-10-01",
+            "simulations": 10000,
+            "played_matches": 50,
+            "remaining_matches": 330,
+            "model": {"version": version},
+            "teams": [team],
+        }
+        data_objects[f"runs/{href}"] = {**public, "simulation": {"teams": [team]}}
+        publish_objects[href] = public
+        publish_objects[f"{prefix}/series.json"] = {
+            "schema_version": 1,
+            "retrospective": True,
+            "origins": [{"href": href}],
+        }
+        seasons.append({"model_version": version, "href": f"{prefix}/series.json"})
+    publish_objects["hindcasts/index.json"] = {
+        "schema_version": 1,
+        "retrospective": True,
+        "updated_at": "2026-09-17T00:00:00+00:00",
+        "seasons": seasons,
+    }
+    publish_objects["forecasts/current.json"] = {
+        "schema_version": 1,
+        "updated_at": "2026-09-17T15:00:00+00:00",
+        "forecasts": [
+            {
+                "competition_id": "eng-premier-league",
+                "competition_name": "Premier League",
+                "season_id": "2026-2027",
+                "forecast_id": "2026-09-17T144601Z",
+                "generated_at": "2026-09-17T14:56:47+00:00",
+                "model_version": current_version,
+                "matches": 10,
+                "href": "forecasts/eng-premier-league/2026-09-17T144601Z.json",
+            }
+        ],
+    }
+    return ObjectStore(data_objects), ObjectStore(publish_objects)
+
+
+def loaded_hindcast_versions(**kwargs):
+    data, publish_store = hindcast_archive_stores()
+    session = open_analysis_session(data_store=data, publish_store=publish_store, **kwargs)
+    try:
+        return (
+            [
+                row["model_version"]
+                for row in session.rows(
+                    "SELECT DISTINCT model_version FROM analysis.hindcast_origins "
+                    "ORDER BY model_version"
+                )
+            ],
+            session.rows(
+                "SELECT hindcast_version_request, hindcast_model_versions FROM analysis.session"
+            )[0],
+            publish_store.reads,
+        )
+    finally:
+        session.close()
+
+
+def test_the_default_session_loads_only_the_current_model_version():
+    versions, session_row, reads = loaded_hindcast_versions()
+    assert versions == ["v0.3.0"]
+    assert session_row["hindcast_version_request"] == CURRENT_MODEL_VERSION
+    assert json.loads(session_row["hindcast_model_versions"]) == ["v0.3.0"]
+    # The superseded generation is filtered in the index, before its series or its origins.
+    assert not any("/v0.2/" in key for key in reads)
+
+
+def test_an_older_or_every_hindcast_version_stays_available():
+    assert loaded_hindcast_versions(hindcast_versions="v0.2")[0] == ["v0.2"]
+    assert loaded_hindcast_versions(hindcast_versions=("v0.2", "v0.3.0"))[0] == ["v0.2", "v0.3.0"]
+    every, session_row, _ = loaded_hindcast_versions(hindcast_versions=ALL_MODEL_VERSIONS)
+    assert every == ["v0.2", "v0.3.0"]
+    assert session_row["hindcast_version_request"] == ALL_MODEL_VERSIONS
+
+
+def test_a_version_selection_must_name_a_version():
+    data, publish_store = hindcast_archive_stores()
+    with pytest.raises(ValueError, match="one or more model version names"):
+        open_analysis_session(data_store=data, publish_store=publish_store, hindcast_versions=())
+
+
+def test_each_version_selection_keeps_its_own_session_file(tmp_path):
+    data, publish_store = hindcast_archive_stores()
+    directory = tmp_path / "sessions"
+    current = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    every = open_analysis_session(
+        data_store=data,
+        publish_store=publish_store,
+        session_directory=directory,
+        hindcast_versions=ALL_MODEL_VERSIONS,
+    )
+    try:
+        assert current.path != every.path
+        assert sorted(directory.iterdir()) == sorted([current.path, every.path])
+    finally:
+        current.close()
+        every.close()
+
+
+def test_a_warm_session_checks_pointer_identities_without_reading_them(tmp_path):
+    data, publish_store = forecast_stores()
+    directory = tmp_path / "sessions"
+    first = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    first.close()
+
+    data.reads.clear()
+    publish_store.reads.clear()
+    second = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    second.close()
+    assert second.path == first.path
+    assert data.reads == [] and publish_store.reads == []
+
+    publish_store.objects["record.json"]["updated_at"] = "2026-09-11T00:00:00+00:00"
+    third = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    third.close()
+    assert third.path != first.path
+
+
+def test_a_new_hindcast_origin_changes_the_index_and_the_session_identity(tmp_path):
+    """The index is the transitive identity of the series it selects, so nothing reads a series."""
+    data, publish_store = hindcast_archive_stores()
+    directory = tmp_path / "sessions"
+    first = open_analysis_session(
+        data_store=data,
+        publish_store=publish_store,
+        session_directory=directory,
+        hindcast_versions=ALL_MODEL_VERSIONS,
+    )
+    first.close()
+    index = publish_store.objects["hindcasts/index.json"]
+    index["seasons"][1] = {**index["seasons"][1], "origin_count": 2}
+    index["updated_at"] = "2026-09-18T00:00:00+00:00"
+    second = open_analysis_session(
+        data_store=data,
+        publish_store=publish_store,
+        session_directory=directory,
+        hindcast_versions=ALL_MODEL_VERSIONS,
+    )
+    second.close()
+    assert second.path != first.path
+
+
+MATCH_HINDCAST_HREF = "match-hindcasts/v0.3.0/eng-premier-league/2026-2027.json"
+
+
+def match_hindcast_document(match_id, match_date="2026-08-15", model_version="v0.3.0"):
+    return {
+        "schema_version": 1,
+        "product": "match_hindcast",
+        "retrospective": True,
+        "competition_id": "eng-premier-league",
+        "competition_name": "Premier League",
+        "season_id": "2026-2027",
+        "model": {"version": model_version},
+        "prospective_from": "2026-09-17",
+        "last_match_date": match_date,
+        "matches": [
+            {
+                "match_id": match_id,
+                "match_date": match_date,
+                "kickoff_time": f"{match_date}T14:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "origin_at": f"{match_date}T00:00:00+01:00",
+                "model_results_cutoff": match_date,
+                "p_home": 0.5,
+                "p_draw": 0.25,
+                "p_away": 0.25,
+                "unadjusted": {"p_home": 0.52, "p_draw": 0.24, "p_away": 0.24},
+                "personnel": {
+                    "home_discontinuity": 0.1,
+                    "away_discontinuity": 0.3,
+                    "home_log_rate_shift": -0.08,
+                },
+                "score_probabilities": {
+                    "home_rate": 1.6,
+                    "away_rate": 1.2,
+                    "omitted_probability": 0.2,
+                    "grid_home_rows_away_columns": [[0.5, 0.2], [0.1, 0.0]],
+                },
+            }
+        ],
+    }
+
+
+def match_hindcast_stores(match_id, match_date="2026-08-15"):
+    data, publish_store = hindcast_archive_stores()
+    publish_store.objects[MATCH_HINDCAST_HREF] = match_hindcast_document(match_id, match_date)
+    publish_store.objects["match-hindcasts/index.json"] = {
+        "schema_version": 1,
+        "product": "match_hindcast",
+        "retrospective": True,
+        "updated_at": "2026-09-18T00:00:00+00:00",
+        "seasons": [{"model_version": "v0.3.0", "href": MATCH_HINDCAST_HREF}],
+    }
+    return data, publish_store
+
+
+def test_match_hindcasts_carry_retrospective_timing_and_the_realized_result(tmp_path):
+    remote = tmp_path / "remote"
+    manifest = publish(
+        remote,
+        request("2026-08-16T12:00:00+00:00", "a"),
+        {
+            "fixtures": [
+                {
+                    **fixture(),
+                    "match_id": "eng-premier-league:2026-2027:arsenal:chelsea",
+                    "season_id": "2026-2027",
+                    "match_date": "2026-08-15",
+                    "kickoff_time": "2026-08-15T14:00:00+00:00",
+                }
+            ]
+        },
+    )
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id)
+    data.objects["state/manifests.json"] = {"schema_version": 1, "manifests": [manifest]}
+    data.uri = lambda key: str(remote / key)
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows(
+            "SELECT model_version, match_id, retrospective, origin_at, model_results_cutoff, "
+            "prospective_from, personnel_applied, home_log_rate_shift, p_home "
+            "FROM analysis.match_hindcasts"
+        ) == [
+            {
+                "model_version": "v0.3.0",
+                "match_id": match_id,
+                "retrospective": True,
+                "origin_at": datetime.fromisoformat("2026-08-15T00:00:00+01:00"),
+                "model_results_cutoff": date(2026, 8, 15),
+                "prospective_from": date(2026, 9, 17),
+                "personnel_applied": True,
+                "home_log_rate_shift": -0.08,
+                "p_home": 0.5,
+            }
+        ]
+        assert session.rows(
+            "SELECT count(*) AS cells, round(sum(probability), 6) AS total "
+            "FROM analysis.match_hindcast_score_grid"
+        ) == [{"cells": 4, "total": 0.8}]
+        assert session.rows(
+            "SELECT outcome, home_goals, away_goals FROM analysis.match_hindcast_outcomes"
+        ) == [{"outcome": "H", "home_goals": 2, "away_goals": 1}]
+        assert session.rows(
+            "SELECT count(*) AS n FROM analysis.match_hindcasts "
+            "SEMI JOIN analysis.record_matches USING (match_id)"
+        ) == [{"n": 0}]
+    finally:
+        session.close()
+
+
+def test_a_match_hindcast_that_reaches_prospective_coverage_fails_the_session():
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id, match_date="2026-09-17")
+    with pytest.raises(ValueError, match="reaches prospective coverage"):
+        open_analysis_session(data_store=data, publish_store=publish_store)
+
+
+def test_a_match_hindcast_that_is_also_a_prospective_row_fails_the_session():
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id)
+    publish_store.objects["record.json"] = {
+        "schema_version": 2,
+        "updated_at": "2026-09-18T00:00:00+00:00",
+        "pending": [
+            {
+                "match_id": match_id,
+                "competition_id": "eng-premier-league",
+                "season_id": "2026-2027",
+                "forecast_id": "2026-09-17T144601Z",
+                "generated_at": "2026-09-17T14:56:47+00:00",
+                "kickoff_time": "2026-09-19T14:00:00+00:00",
+                "model_version": "v0.3.0",
+                "p_home": 0.5,
+                "p_draw": 0.25,
+                "p_away": 0.25,
+            }
+        ],
+        "settled": [],
+        "summary": {},
+    }
+    with pytest.raises(ValueError, match="also appears in the prospective record"):
+        open_analysis_session(data_store=data, publish_store=publish_store)
+
+
+def test_a_superseded_match_hindcast_version_is_not_loaded_by_default():
+    data, publish_store = match_hindcast_stores("eng-premier-league:2026-2027:arsenal:chelsea")
+    older = "match-hindcasts/v0.2/eng-premier-league/2026-2027.json"
+    publish_store.objects[older] = match_hindcast_document(
+        "eng-premier-league:2026-2027:arsenal:chelsea", model_version="v0.2"
+    )
+    publish_store.objects["match-hindcasts/index.json"]["seasons"].append(
+        {"model_version": "v0.2", "href": older}
+    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows("SELECT DISTINCT model_version FROM analysis.match_hindcasts") == [
+            {"model_version": "v0.3.0"}
+        ]
+    finally:
+        session.close()
+    assert older not in publish_store.reads

@@ -705,7 +705,7 @@ def publish_documents(store, documents: list[dict], policy: dict) -> dict:
     latest = {row["competition_id"]: row for row in current["forecasts"]}
     archives = {}
     for document in documents:
-        if document.get("product") == "hindcast":
+        if document.get("retrospective") or document.get("product") == "hindcast":
             raise ValueError("A hindcast cannot enter the live forecast pointers")
         check_publishable(document, policy, "forecast")
         pointer = forecast_pointer(document)
