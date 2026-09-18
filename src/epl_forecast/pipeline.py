@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from epl_forecast.cloud import sync_data, sync_tree
+from epl_forecast.cloud import sync_data
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError
 from epl_forecast.data.collect import collect
@@ -893,7 +893,6 @@ def _forecast_and_publish(
     if not documents:
         result.update(status="failed", failures=failures, attempt=str(attempt))
         write_immutable(attempt / "pipeline.json", json_bytes(result))
-        sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
         progress(
             "operation_finished",
             elapsed_seconds=round(time.monotonic() - operation_started, 3),
@@ -901,7 +900,6 @@ def _forecast_and_publish(
         )
         return result
     progress("publication_started", forecasts=len(documents))
-    result["private_sync"] = sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
     current = publish_documents(publish_store, documents, policy)
     record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
     publish_store.put_json("record.json", record)
@@ -929,7 +927,6 @@ def _forecast_and_publish(
         }
     data_store.put_json("state/forecast.json", state)
     data_store.put_json("state/impacts.json", impact_state)
-    sync_tree(attempt, data_store, f"runs/forecasts/{run_id}")
     progress(
         "operation_finished",
         elapsed_seconds=round(time.monotonic() - operation_started, 3),

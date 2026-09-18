@@ -47,7 +47,7 @@ export API_FOOTBALL_KEY=...                # or put it in an ignored .env file
 uv run epl-forecast operate
 ```
 
-`operate` collects new data, writes canonical data and private runs to R2, verifies due forecasts, and publishes the sanitized documents to R2. See [operations](docs/operations.md).
+`operate` collects new data, writes canonical data and cumulative typed results to R2, verifies due forecasts, and publishes the sanitized documents to R2. Temporary forecast files are not retained after their typed result commits. See [operations](docs/operations.md).
 
 ## Validation
 

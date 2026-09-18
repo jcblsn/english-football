@@ -38,11 +38,13 @@ R2 is the durable store and the only source of canonical evidence. There is no l
 | `state/manifests.json` | The compact retained base and the canonical batches collected after it. |
 | `state/forecast.json` | The last published effective-input fingerprint for each division. |
 | `state/impacts.json` | For each match of the week, the conditional-impact record of the last forecast made before its kickoff. The published forecast carries it after the result is known. |
-| `runs/forecasts/` | Private forecast archives, logs and verification reports. |
+| `snapshots/` | Immutable verified canonical DuckDB generations. `state/canonical-snapshot.json` names the current generation. |
+| `fits/<competition>/` | Immutable cumulative fit-state generations. `state/fits/<competition>.json` names the current generation. |
+| `results/<competition>/` | Immutable cumulative typed forecast-result generations. `state/results/<competition>.json` names the current generation. |
 | `runs/hindcasts/` | The private simulation output of each weekly hindcast and the frozen model of each public model version. See [operations](operations.md#hindcasts). |
 | `runs/match-hindcasts/` | The private run of each retrospective match-hindcast bridge. See [operations](operations.md#match-hindcasts). |
 
-DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping.
+Collection and maintenance commands read canonical Parquet from R2 with a temporary in-memory secret. Forecasts restore the verified canonical DuckDB snapshot and then run without a remote data read. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping.
 
 The catalogs `state/manifests.json` and `state/collection.json` are the only mutable objects that collection and compaction share. Each update reads the object and its ETag, applies the change to that version, and writes with a condition on the ETag. When another writer changed the object first, R2 refuses the write, and the update starts again from the new version. Two writers therefore cannot remove each other's batches or request records. Compaction keeps the batches that arrive while it runs.
 

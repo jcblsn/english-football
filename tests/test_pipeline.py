@@ -604,7 +604,7 @@ def test_snapshot_commit_conflict_restores_winning_revision(tmp_path, monkeypatc
     assert calls == ["source-1"]
 
 
-def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypatch):
+def test_operation_does_not_retain_the_temporary_run_tree(tmp_path, monkeypatch):
     def fake_forecast(league, cutoff, output, simulations, **kwargs):
         output.mkdir(parents=True, exist_ok=True)
         (output / "forecast.json").write_text(json.dumps(sample_forecast(competition=league)))
@@ -640,15 +640,4 @@ def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypa
     assert set(data_store.objects["state/forecast.json"]["competitions"]) == set(pipeline.LEAGUES)
     assert "forecasts/current.json" in publish_store.objects
     assert "record.json" in publish_store.objects
-    assert any(key.startswith("runs/forecasts/") for key in data_store.objects)
-    private_run = next(
-        index
-        for index, (store, key, _) in enumerate(writes)
-        if store == "private" and key.startswith("runs/forecasts/")
-    )
-    current_pointer = next(
-        index
-        for index, (store, key, _) in enumerate(writes)
-        if store == "public" and key == "forecasts/current.json"
-    )
-    assert private_run < current_pointer
+    assert not any(key.startswith("runs/forecasts/") for key in data_store.objects)

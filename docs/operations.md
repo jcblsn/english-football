@@ -8,16 +8,16 @@ This page states how the product runs, what it publishes and where it keeps old 
 uv run epl-forecast operate
 ```
 
-`operate` does these steps. It keeps the capture and the private archive in temporary directories that it deletes at the end of the run.
+`operate` does these steps. It keeps collection files, forecast renderings and verification reports in temporary directories that it deletes at the end of the run.
 
 1. It loads compact operational state from `page324-data`.
 2. It collects each data source when that source is eligible. A retained response that is still inside its refresh interval is not requested, downloaded or normalized again. The run reads a retained body only when collection needs it, for example to find the teams in a fixture list.
 3. It uploads only the raw payloads and canonical batches created in this run. It updates the state that makes them visible only after those objects exist. When a run collects nothing new, it does not write the collection state, the manifest catalog or an audit with the same content.
 4. It calculates a fingerprint from the effective model inputs, the forecast code and configuration, and the public model version.
 5. It runs each division whose last successful fingerprint differs.
-6. It verifies each private forecast archive against the product contract.
-7. It uploads the private archive to `page324-data`.
-8. It writes each verified public document to `page324-publish`, then updates the forecast index and prospective record. A run that publishes nothing writes `record.json` only when a result changes it.
+6. It writes and verifies each typed private result against the product contract by using its temporary rendering.
+7. It commits the cumulative result database and applicable fit state to `page324-data`. It does not upload the temporary rendering, logs or verification tree.
+8. It writes each verified public document and immutable release receipt to `page324-publish`, then updates the forecast index and prospective record. A run that publishes nothing writes `record.json` only when a result changes it.
 
 A failed or unverified division does not publish. Other verified divisions in the same run can publish and advance their own latest pointers. The next run retries only the divisions that do not have the current successful fingerprint.
 
