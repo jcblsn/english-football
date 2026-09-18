@@ -22,7 +22,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -769,6 +769,16 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
     threshold = float(spec.get("highlight_above", 0.1))
     highlighted = [team for team in order if peak[team] >= threshold]
 
+    # A hindcast origin is weekly. Live forecasts repeat through the day, and several of them on
+    # one London day would draw as one point, so the chart keeps the last forecast of each day.
+    live_by_day = {}
+    for row in data:
+        if not row["retrospective"]:
+            live_by_day[row["observed_at"][:10]] = max(
+                live_by_day.get(row["observed_at"][:10], ""), row["observed_at"]
+            )
+    kept = set(live_by_day.values())
+    data = [row for row in data if row["retrospective"] or row["observed_at"] in kept]
     moments = sorted({row["observed_at"] for row in data})
     values = {(row["team_id"], row["observed_at"]): row for row in data}
     columns = ["Date"]
@@ -786,6 +796,7 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
 
     retrospective = [row["observed_at"] for row in data if row["retrospective"]]
     live = [row["observed_at"] for row in data if not row["retrospective"]]
+    pad = (date.fromisoformat(max(live)[:10]) + timedelta(days=2)).isoformat() + " 12:00"
     lines = {}
     for team in order:
         dark = team in highlighted
@@ -794,7 +805,8 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
             "width": "style0" if dark else "style3",
             "colorKey": False,
             "directLabel": dark,
-            "symbols": {"enabled": True, "style": "circle", "on": "every"},
+            # One live day draws one point, so the marker, not the line, carries the forecast.
+            "symbols": {"enabled": True, "style": "circle", "on": "every", "size": 3.5},
         }
         lines[f"{names[team]} (hindcast)"] = {
             "color": INK if dark else WASH,
@@ -803,6 +815,18 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
             "colorKey": False,
             "directLabel": False,
         }
+    # An event that names a number of places totals that many hundred points at each observation.
+    expected_total = float(spec["percentage_point_total"])
+    totals = [
+        float(
+            sum(
+                points(values[team, moment]["probability"], 1)
+                for team in order
+                if (team, moment) in values
+            )
+        )
+        for moment in moments
+    ]
     return {
         "csv": csv_text(columns, [[str(cell) for cell in line] for line in table]),
         "checks": [
@@ -810,18 +834,23 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
             ("observations", len(moments), len(moments)),
             ("retrospective values", len(retrospective), len(retrospective)),
             ("live values", len(live), len(live)),
+            ("smallest observation total", min(totals), expected_total),
+            ("largest observation total", max(totals), expected_total),
         ],
         "metadata": {
             "describe": {
                 "intro": spec["intro"].format(season=forecast.season),
                 "aria-description": (
                     f"A line chart of {label.lower()} for every club across the season. "
-                    "A dashed line is a retrospective hindcast and a solid line is a live forecast."
+                    "The shaded area holds retrospective hindcasts, and the values after it are "
+                    "live forecasts."
                 ),
             },
             "visualize": {
                 "interpolation": "linear",
                 "connector-lines": False,
+                # Room on the right for the live marker, which otherwise sits on the axis.
+                "custom-range-x": [min(retrospective), pad],
                 "custom-range-y": [0, 100],
                 "y-grid-format": "0%",
                 "y-grid": "on",
@@ -838,7 +867,7 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
                         "color": RULE,
                         "opacity": 45,
                         "x0": min(retrospective),
-                        "x1": max(retrospective),
+                        "x1": min(live),
                         "strokeWidth": 1,
                     }
                 ],
@@ -873,10 +902,10 @@ def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], sh
                 "notes": provenance(
                     forecast,
                     extra=(
-                        "A dashed line is a hindcast: the frozen model made it after the matches "
-                        "were played. A solid line is a published forecast. Live coverage of "
-                        f"model {forecast.model_version} began on {min(live)[:10]}. "
-                        "A hindcast is not in the prospective record."
+                        "A value in the shaded area is a hindcast: the frozen model made it after "
+                        "the matches were played, and the prospective record does not include it. "
+                        f"Live coverage of model {forecast.model_version} began on "
+                        f"{min(live)[:10]}."
                     ),
                 )
             },
