@@ -4,8 +4,8 @@ import pytest
 from test_publication import Store
 
 from epl_forecast import match_hindcast
-from epl_forecast.live import LONDON
 from epl_forecast.competitions import COMPETITION_IDS
+from epl_forecast.live import LONDON
 from epl_forecast.match_hindcast import (
     INDEX_KEY,
     boundaries,
