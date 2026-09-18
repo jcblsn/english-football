@@ -63,11 +63,12 @@ title = "Premier League title race movement"
 intro = "Every Premier League match {window} that moves the title probability of a club by more than {minimum}%. The value is the change for the club that moves the most."
 
 [[charts]]
-chart_id = "PLACEHOLDER"
+chart_id = "JRvvj"
 recipe = "event_trajectory"
 competition = "eng-premier-league"
 event = "top_four_probability"
 value_label = "Top four probability"
 highlight_above = 0.15
+percentage_point_total = 400
 title = "Premier League top four probability across the season"
-intro = "The probability that each club finishes the {season} Premier League in the top four, from the first matchday. A dashed line is a hindcast the frozen model made after the matches were played. A solid line is a forecast the product published before the matches."
+intro = "The probability that each club finishes the {season} Premier League in the top four, from the first matchday. In the shaded area the values are hindcasts: the frozen model made them after the matches were played. After it the values are forecasts that the product published before the matches."
