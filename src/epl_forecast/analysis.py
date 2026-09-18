@@ -847,6 +847,57 @@ COLUMN_MEANINGS = {
         "share",
         "derived",
     ),
+    "retrospective": (
+        "True when the row is a retrospective product, never a forecast that existed at the time.",
+        None,
+        "retrospective",
+    ),
+    "prospective_from": (
+        "First London day on which a live forecast of this model version was published. "
+        "Every retrospective match forecast is earlier than it.",
+        "London date",
+        "match hindcast prospective_from",
+    ),
+    "origin_at": (
+        "Retrospective origin. For a match hindcast it is midnight Europe/London on the match day.",
+        None,
+        "origin_at",
+    ),
+    "model_results_cutoff": (
+        "Latest day whose results the model fit could use.",
+        "London date",
+        "model_results_cutoff",
+    ),
+    "unadjusted_p_home": (
+        "Home-win probability before the matchday-squad continuity adjustment.",
+        "probability from 0 to 1",
+        "unadjusted.p_home",
+    ),
+    "unadjusted_p_draw": (
+        "Draw probability before the matchday-squad continuity adjustment.",
+        "probability from 0 to 1",
+        "unadjusted.p_draw",
+    ),
+    "unadjusted_p_away": (
+        "Away-win probability before the matchday-squad continuity adjustment.",
+        "probability from 0 to 1",
+        "unadjusted.p_away",
+    ),
+    "personnel_applied": (
+        "True when the matchday-squad continuity adjustment applied to this match.",
+        None,
+        "personnel.home_log_rate_shift is not null",
+    ),
+    "home_discontinuity": (
+        "Resolved expected missing player weight of the home club.",
+        "share from 0 to 1",
+        "personnel.home_discontinuity",
+    ),
+    "away_discontinuity": (
+        "Resolved expected missing player weight of the away club.",
+        "share from 0 to 1",
+        "personnel.away_discontinuity",
+    ),
     "market_weight": (
         "Weight of the de-vigged market probabilities in the logarithmic pool.",
         "share from 0 to 1",
