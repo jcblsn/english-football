@@ -5,6 +5,7 @@ import math
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 
+from epl_forecast.analysis_keys import HINDCAST_INDEX_KEY, MATCH_HINDCAST_INDEX_KEY
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.personnel import team_unusable_reason
 
@@ -53,6 +54,8 @@ ARTIFACT_TABLES = (
     "hindcast_simulation_intervals",
     "hindcast_simulation_europe_probabilities",
     "hindcast_simulation_match_frequencies",
+    "match_hindcasts",
+    "match_hindcast_score_grid",
     "record_matches",
     "record_summary",
 )
@@ -806,6 +809,7 @@ def _live_rows(
 def _hindcast_rows(
     data_store,
     publish_store,
+    model_versions: frozenset | None = None,
 ) -> tuple[dict[str, list], dict, set[str]]:
     names = (
         "hindcast_origins",
@@ -825,7 +829,7 @@ def _hindcast_rows(
         "hindcast_simulation_match_frequencies",
     )
     rows = {name: [] for name in names}
-    index = publish_store.get_json("hindcasts/index.json")
+    index = publish_store.get_json(HINDCAST_INDEX_KEY)
     if index is None:
         return rows, {}, set()
     if index.get("schema_version") != 1 or index.get("retrospective") is not True:
@@ -834,6 +838,9 @@ def _hindcast_rows(
     versions = set()
     origins = []
     for pointer in index["seasons"]:
+        _required(pointer, ("href", "model_version"), "hindcast index season")
+        if model_versions is not None and pointer["model_version"] not in model_versions:
+            continue
         series = _document(publish_store, pointer["href"], 1, "hindcast series")
         if series.get("retrospective") is not True:
             raise ValueError(f"Hindcast series is not retrospective: {pointer['href']}")
@@ -892,7 +899,95 @@ def _hindcast_rows(
         versions.add(model_version)
         for table, values in artifact_rows.items():
             rows[table].extend(values)
-    return rows, {"hindcasts/index.json": index["updated_at"]}, versions
+    return rows, {HINDCAST_INDEX_KEY: index["updated_at"]}, versions
+
+
+MATCH_HINDCAST_IDENTITY = ("model_version", "competition_id", "season_id", "match_id")
+
+
+def _match_hindcast_rows(
+    publish_store, model_versions: frozenset | None = None
+) -> tuple[dict[str, list], dict, set[str]]:
+    """Retrospective match forecasts, from the season documents the match-hindcast index selects."""
+    rows = {"match_hindcasts": [], "match_hindcast_score_grid": []}
+    index = publish_store.get_json(MATCH_HINDCAST_INDEX_KEY)
+    if index is None:
+        return rows, {}, set()
+    if index.get("schema_version") != 1 or index.get("retrospective") is not True:
+        raise ValueError("Unsupported or non-retrospective match-hindcast index")
+    _required(index, ("updated_at", "seasons"), "match-hindcast index")
+    selected = []
+    for pointer in index["seasons"]:
+        _required(pointer, ("href", "model_version"), "match-hindcast index season")
+        if model_versions is None or pointer["model_version"] in model_versions:
+            selected.append(pointer)
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        documents = list(
+            pool.map(
+                lambda pointer: _document(publish_store, pointer["href"], 1, "match hindcast"),
+                selected,
+            )
+        )
+    versions = set()
+    for pointer, document in zip(selected, documents, strict=True):
+        if document.get("retrospective") is not True:
+            raise ValueError(f"Match hindcast is not retrospective: {pointer['href']}")
+        _required(
+            document,
+            ("competition_id", "season_id", "model", "prospective_from", "matches"),
+            "match hindcast",
+        )
+        model_version = document["model"]["version"]
+        versions.add(model_version)
+        base = {
+            "model_version": model_version,
+            "competition_id": document["competition_id"],
+            "season_id": document["season_id"],
+        }
+        for match in document["matches"]:
+            personnel = match.get("personnel") or {}
+            scores = match.get("score_probabilities") or {}
+            unadjusted = match.get("unadjusted") or {}
+            rows["match_hindcasts"].append(
+                {
+                    **base,
+                    "match_id": match["match_id"],
+                    "retrospective": True,
+                    "match_date": match["match_date"],
+                    "kickoff_time": match.get("kickoff_time"),
+                    "home_team_id": match["home_team_id"],
+                    "away_team_id": match["away_team_id"],
+                    "origin_at": match["origin_at"],
+                    "model_results_cutoff": match["model_results_cutoff"],
+                    "prospective_from": document["prospective_from"],
+                    "p_home": match["p_home"],
+                    "p_draw": match["p_draw"],
+                    "p_away": match["p_away"],
+                    "unadjusted_p_home": unadjusted.get("p_home"),
+                    "unadjusted_p_draw": unadjusted.get("p_draw"),
+                    "unadjusted_p_away": unadjusted.get("p_away"),
+                    "personnel_applied": personnel.get("home_log_rate_shift") is not None,
+                    "home_discontinuity": personnel.get("home_discontinuity"),
+                    "away_discontinuity": personnel.get("away_discontinuity"),
+                    "home_log_rate_shift": personnel.get("home_log_rate_shift"),
+                    "home_rate": scores.get("home_rate"),
+                    "away_rate": scores.get("away_rate"),
+                    "omitted_probability": scores.get("omitted_probability"),
+                    "public_href": pointer["href"],
+                }
+            )
+            for home_goals, line in enumerate(scores.get("grid_home_rows_away_columns", ())):
+                for away_goals, probability in enumerate(line):
+                    rows["match_hindcast_score_grid"].append(
+                        {
+                            **base,
+                            "match_id": match["match_id"],
+                            "home_goals": home_goals,
+                            "away_goals": away_goals,
+                            "probability": probability,
+                        }
+                    )
+    return rows, {MATCH_HINDCAST_INDEX_KEY: index["updated_at"]}, versions
 
 
 def _record_rows(publish_store) -> tuple[list[dict], list[dict], dict]:
@@ -1489,6 +1584,56 @@ def _install_hindcasts(connection, rows: dict[str, list]) -> None:
     )
 
 
+def _install_match_hindcasts(connection, rows: dict[str, list]) -> None:
+    base = (
+        ("model_version", "VARCHAR"),
+        ("competition_id", "VARCHAR"),
+        ("season_id", "VARCHAR"),
+        ("match_id", "VARCHAR"),
+    )
+    _create_table(
+        connection,
+        "match_hindcasts",
+        base
+        + (
+            ("retrospective", "BOOLEAN"),
+            ("match_date", "DATE"),
+            ("kickoff_time", "TIMESTAMPTZ"),
+            ("home_team_id", "VARCHAR"),
+            ("away_team_id", "VARCHAR"),
+            ("origin_at", "TIMESTAMPTZ"),
+            ("model_results_cutoff", "DATE"),
+            ("prospective_from", "DATE"),
+            ("p_home", "DOUBLE"),
+            ("p_draw", "DOUBLE"),
+            ("p_away", "DOUBLE"),
+            ("unadjusted_p_home", "DOUBLE"),
+            ("unadjusted_p_draw", "DOUBLE"),
+            ("unadjusted_p_away", "DOUBLE"),
+            ("personnel_applied", "BOOLEAN"),
+            ("home_discontinuity", "DOUBLE"),
+            ("away_discontinuity", "DOUBLE"),
+            ("home_log_rate_shift", "DOUBLE"),
+            ("home_rate", "DOUBLE"),
+            ("away_rate", "DOUBLE"),
+            ("omitted_probability", "DOUBLE"),
+            ("public_href", "VARCHAR"),
+        ),
+        rows["match_hindcasts"],
+    )
+    _create_table(
+        connection,
+        "match_hindcast_score_grid",
+        base
+        + (
+            ("home_goals", "INTEGER"),
+            ("away_goals", "INTEGER"),
+            ("probability", "DOUBLE"),
+        ),
+        rows["match_hindcast_score_grid"],
+    )
+
+
 def _install_record(connection, matches: list[dict], summaries: list[dict]) -> None:
     _create_table(
         connection,
@@ -1570,6 +1715,8 @@ def _validate_analysis(connection) -> None:
         "hindcast_simulation_intervals": "hindcast_id, competition_id, season_id, model_version, team_id, estimate, level",
         "hindcast_simulation_europe_probabilities": "hindcast_id, competition_id, season_id, model_version, team_id, scenario",
         "hindcast_simulation_match_frequencies": "hindcast_id, competition_id, season_id, model_version, match_id",
+        "match_hindcasts": "model_version, competition_id, season_id, match_id",
+        "match_hindcast_score_grid": "model_version, competition_id, season_id, match_id, home_goals, away_goals",
         "record_matches": "record_state, match_id",
         "record_summary": "scope",
     }
@@ -1583,12 +1730,36 @@ def _validate_analysis(connection) -> None:
         "forecast_matches": "abs(structural_p_home + structural_p_draw + structural_p_away - 1) > 0.000002 OR (market_assisted_p_home IS NOT NULL AND abs(market_assisted_p_home + market_assisted_p_draw + market_assisted_p_away - 1) > 0.000002)",
         "forecast_match_stages": "available AND abs(p_home + p_draw + p_away - 1) > 0.000002",
         "record_matches": "abs(p_home + p_draw + p_away - 1) > 0.000002",
+        "match_hindcasts": "abs(p_home + p_draw + p_away - 1) > 0.000002 OR abs(unadjusted_p_home + unadjusted_p_draw + unadjusted_p_away - 1) > 0.000002",
     }
     for table, predicate in probability_checks.items():
         if connection.execute(
             f"SELECT 1 FROM analysis.{table} WHERE {predicate} LIMIT 1"
         ).fetchone():
             raise ValueError(f"Invalid probability sum in analysis.{table}")
+    if connection.execute(
+        """
+        SELECT 1 FROM analysis.match_hindcasts hindcast
+        JOIN (
+            SELECT model_version, competition_id, season_id, match_id,
+                   sum(probability) AS grid_probability
+            FROM analysis.match_hindcast_score_grid
+            GROUP BY model_version, competition_id, season_id, match_id
+        ) grid USING (model_version, competition_id, season_id, match_id)
+        WHERE abs(grid_probability + omitted_probability - 1) > 0.000002
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Invalid score distribution total in analysis.match_hindcast_score_grid")
+    if connection.execute(
+        "SELECT 1 FROM analysis.match_hindcasts WHERE match_date >= prospective_from LIMIT 1"
+    ).fetchone():
+        raise ValueError("A retrospective match forecast reaches prospective coverage")
+    if connection.execute(
+        "SELECT 1 FROM analysis.match_hindcasts hindcast "
+        "JOIN analysis.record_matches record USING (match_id, model_version) LIMIT 1"
+    ).fetchone():
+        raise ValueError("A retrospective match forecast also appears in the prospective record")
     if connection.execute(
         """
         SELECT 1 FROM analysis.forecast_score_distributions distribution
@@ -1701,22 +1872,14 @@ def _validate_analysis(connection) -> None:
             raise ValueError(f"Unknown team identity in analysis.{prefix}_team_events")
 
 
-def publication_indexes(publish_store) -> dict:
-    """Read the mutable publication indexes that select every derived artifact."""
-    archive_keys = [
-        f"forecasts/{competition_id}/archive.json" for competition_id in COMPETITION_IDS
-    ]
-    base_keys = [*archive_keys, "hindcasts/index.json", "record.json"]
-    with ThreadPoolExecutor(max_workers=len(base_keys)) as pool:
-        documents = dict(zip(base_keys, pool.map(publish_store.get_json, base_keys), strict=True))
-    index = documents["hindcasts/index.json"]
-    if index is not None:
-        series_keys = [pointer["href"] for pointer in index["seasons"]]
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            documents.update(
-                zip(series_keys, pool.map(publish_store.get_json, series_keys), strict=True)
-            )
-    return documents
+def current_model_version(publish_store) -> str | None:
+    """The public model version of the newest live forecast, or None when there is none."""
+    current = publish_store.get_json("forecasts/current.json") or {}
+    pointers = [row for row in current.get("forecasts", ()) if row.get("model_version")]
+    if not pointers:
+        return None
+    newest = max(pointers, key=lambda row: (row["generated_at"], row["forecast_id"]))
+    return newest["model_version"]
 
 
 def _install_projection_view(connection) -> None:
@@ -1784,6 +1947,30 @@ def _install_match_stage_comparison(connection) -> None:
     )
 
 
+def _install_match_hindcast_view(connection) -> None:
+    """The retrospective match forecast beside the realized result, for scoring it.
+
+    It is a separate product from `analysis.record_matches`. Nothing unions the two, because a
+    retrospective forecast must never read as a prospective one.
+    """
+    connection.execute(
+        """
+        CREATE VIEW analysis.match_hindcast_outcomes AS
+        SELECT h.model_version, h.competition_id, h.season_id, h.match_id, h.retrospective,
+               h.match_date, h.kickoff_time, h.home_team_id, h.away_team_id, h.origin_at,
+               h.model_results_cutoff, h.prospective_from, h.p_home, h.p_draw, h.p_away,
+               h.unadjusted_p_home, h.unadjusted_p_draw, h.unadjusted_p_away,
+               h.personnel_applied, h.home_log_rate_shift, h.home_rate, h.away_rate,
+               m.status, m.home_goals, m.away_goals,
+               CASE WHEN m.status <> 'finished' THEN NULL
+                    WHEN m.home_goals > m.away_goals THEN 'H'
+                    WHEN m.home_goals = m.away_goals THEN 'D' ELSE 'A' END AS outcome
+        FROM analysis.match_hindcasts h
+        LEFT JOIN analysis.matches m USING (match_id)
+        """
+    )
+
+
 def _install_artifact_views(connection) -> None:
     has_players = connection.execute(
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'players' LIMIT 1"
@@ -1799,16 +1986,29 @@ def _install_artifact_views(connection) -> None:
         )
     _install_projection_view(connection)
     _install_match_stage_comparison(connection)
+    _install_match_hindcast_view(connection)
 
 
-def install_artifact_analysis(connection, data_store, publish_store) -> tuple[dict, set[str]]:
+def install_artifact_analysis(
+    connection, data_store, publish_store, hindcast_model_versions: frozenset | None = None
+) -> tuple[dict, set[str], set[str]]:
     live, live_updates, live_versions = _live_rows(data_store, publish_store)
-    hindcasts, hindcast_updates, hindcast_versions = _hindcast_rows(data_store, publish_store)
+    hindcasts, hindcast_updates, hindcast_versions = _hindcast_rows(
+        data_store, publish_store, hindcast_model_versions
+    )
+    match_hindcasts, match_updates, match_versions = _match_hindcast_rows(
+        publish_store, hindcast_model_versions
+    )
     record_matches, record_summary, record_updates = _record_rows(publish_store)
     _install_live(connection, live)
     _install_hindcasts(connection, hindcasts)
+    _install_match_hindcasts(connection, match_hindcasts)
     _install_record(connection, record_matches, record_summary)
     _validate_analysis(connection)
     _install_artifact_views(connection)
-    publication_updates = {**live_updates, **hindcast_updates, **record_updates}
-    return publication_updates, live_versions | hindcast_versions
+    publication_updates = {**live_updates, **hindcast_updates, **match_updates, **record_updates}
+    return (
+        publication_updates,
+        live_versions | hindcast_versions | match_versions,
+        hindcast_versions | match_versions,
+    )

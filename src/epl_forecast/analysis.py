@@ -12,10 +12,15 @@ import duckdb
 
 import epl_forecast
 from epl_forecast import analysis_contract
+from epl_forecast.analysis_keys import CANONICAL_ROOTS, publication_identities
 from epl_forecast.datasets import SESSION_TIME_ZONE, Dataset, timestamp
 from epl_forecast.storage import R2Store, json_bytes
 
 SESSION_DIRECTORY = Path(tempfile.gettempdir()) / "page324-analysis"
+# The hindcast archive keeps every published model version. An ordinary analysis reads the
+# current one, and asks for an older version, or for every version, only to compare versions.
+CURRENT_MODEL_VERSION = "current"
+ALL_MODEL_VERSIONS = "all"
 
 
 def _ident(value: str) -> str:
@@ -270,6 +275,33 @@ CATALOG_ROWS = (
         "Join hindcast_origins for explicit retrospective timing. Filter model_version to select one hindcast generation.",
         False,
         None,
+    ),
+    (
+        "match_hindcasts",
+        "one row per hindcast model version, competition, season, and match",
+        "Retrospective match forecast that bridges the start of the season to live coverage.",
+        "successful public match-hindcast documents",
+        "origin_at is midnight Europe/London on the match day, and model_results_cutoff is that day. Every match_date is before prospective_from.",
+        False,
+        "Retrospective only. These rows are never in analysis.record_matches and never score as prospective forecasts.",
+    ),
+    (
+        "match_hindcast_score_grid",
+        "one row per hindcast model version, competition, season, match, and score",
+        "Retained finite score grid of the retrospective match forecast.",
+        "successful public match-hindcast documents",
+        "Join analysis.match_hindcasts for the retrospective timing.",
+        False,
+        "The grid omits probability outside the retained scores; see omitted_probability.",
+    ),
+    (
+        "match_hindcast_outcomes",
+        "one row per hindcast model version, competition, season, and match",
+        "Retrospective match forecast beside the realized result, for scoring it.",
+        "analysis.match_hindcasts and analysis.matches",
+        "The forecast timing is retrospective; the result is the canonical one.",
+        False,
+        "Retrospective only. Do not union it with analysis.record_matches; the two are separate products.",
     ),
     (
         "record_matches",
@@ -671,6 +703,8 @@ def _install_metadata(
     loaded_at: datetime,
     publication_index_timestamps: dict | None = None,
     model_versions: set[str] | None = None,
+    hindcast_version_request=None,
+    hindcast_model_versions: set[str] | None = None,
 ) -> None:
     connection = data.con
     catalog = [
@@ -715,6 +749,8 @@ def _install_metadata(
             ("canonical_catalog_schema_version", "INTEGER"),
             ("publication_index_timestamps", "JSON"),
             ("loaded_model_versions", "JSON"),
+            ("hindcast_version_request", "VARCHAR"),
+            ("hindcast_model_versions", "JSON"),
         ),
         (
             {
@@ -727,6 +763,12 @@ def _install_metadata(
                 "canonical_catalog_schema_version": catalog_state.get("schema_version"),
                 "publication_index_timestamps": _json(publication_index_timestamps or {}),
                 "loaded_model_versions": _json(sorted(model_versions or set())),
+                "hindcast_version_request": (
+                    hindcast_version_request
+                    if isinstance(hindcast_version_request, str)
+                    else ",".join(hindcast_version_request or ())
+                ),
+                "hindcast_model_versions": _json(sorted(hindcast_model_versions or set())),
             },
         ),
     )
@@ -920,6 +962,32 @@ def _install_column_catalog(connection) -> None:
     )
 
 
+def _requested_versions(hindcast_versions) -> str | tuple[str, ...]:
+    """Normalize the hindcast version request into a value that names a session slot."""
+    if hindcast_versions in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS):
+        return hindcast_versions
+    versions = (
+        (hindcast_versions,) if isinstance(hindcast_versions, str) else tuple(hindcast_versions)
+    )
+    if not versions or not all(isinstance(version, str) and version for version in versions):
+        raise ValueError(
+            "Hindcast versions must be 'current', 'all', or one or more model version names"
+        )
+    return tuple(sorted(set(versions)))
+
+
+def _selected_versions(publish_store, requested) -> frozenset | None:
+    """The model versions to load, or None to load every version in the archive."""
+    if requested == ALL_MODEL_VERSIONS:
+        return None
+    if requested == CURRENT_MODEL_VERSION:
+        from epl_forecast.analysis_artifacts import current_model_version
+
+        version = current_model_version(publish_store)
+        return None if version is None else frozenset({version})
+    return frozenset(requested)
+
+
 def open_analysis_session(
     cutoff=None,
     *,
@@ -927,8 +995,14 @@ def open_analysis_session(
     publish_store=None,
     include_derived: bool = True,
     session_directory: Path | None = None,
+    hindcast_versions=CURRENT_MODEL_VERSION,
 ) -> AnalysisSession:
     """Open the authoritative remote corpus and install its analytical namespace.
+
+    `hindcast_versions` selects the hindcast surface: `CURRENT_MODEL_VERSION` loads only the model
+    version of the newest live forecast, `ALL_MODEL_VERSIONS` loads the whole archive, and a name
+    or a sequence of names loads those versions. The archive keeps superseded versions, so an
+    ordinary session would otherwise pay for generations it does not analyze.
 
     With a session directory, the prepared namespace is kept as a read-only DuckDB file. The file
     name is the identity of the R2 state and the analysis code, so a changed input opens a new file.
@@ -936,14 +1010,21 @@ def open_analysis_session(
     data_store = data_store or R2Store.from_environment("R2_DATA_BUCKET")
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
+    requested = _requested_versions(hindcast_versions)
     if session_directory is None:
-        return _build_analysis_session(cutoff, data_store, publish_store, include_derived)
-    slot, identity = _session_identity(cutoff, data_store, publish_store, include_derived)
+        return _build_analysis_session(
+            cutoff, data_store, publish_store, include_derived, requested
+        )
+    slot, identity = _session_identity(
+        cutoff, data_store, publish_store, include_derived, requested
+    )
     path = session_directory / f"{slot}-{identity}.duckdb"
     if not path.exists():
         session_directory.mkdir(parents=True, exist_ok=True)
         temporary = session_directory / f".{path.stem}.{os.getpid()}.tmp"
-        session = _build_analysis_session(cutoff, data_store, publish_store, include_derived)
+        session = _build_analysis_session(
+            cutoff, data_store, publish_store, include_derived, requested
+        )
         try:
             _write_session_file(session.connection, temporary)
         finally:
@@ -958,7 +1039,7 @@ def open_analysis_session(
 
 
 def _build_analysis_session(
-    cutoff, data_store, publish_store, include_derived: bool
+    cutoff, data_store, publish_store, include_derived: bool, requested
 ) -> AnalysisSession:
     dataset = Dataset(cutoff, store=data_store)
     try:
@@ -967,13 +1048,28 @@ def _build_analysis_session(
         _install_canonical_analysis(dataset)
         publication_index_timestamps = {}
         model_versions = set()
+        hindcast_versions = set()
         if include_derived:
             from epl_forecast.analysis_artifacts import install_artifact_analysis
 
-            publication_index_timestamps, model_versions = install_artifact_analysis(
-                dataset.con, data_store, publish_store
+            (
+                publication_index_timestamps,
+                model_versions,
+                hindcast_versions,
+            ) = install_artifact_analysis(
+                dataset.con,
+                data_store,
+                publish_store,
+                _selected_versions(publish_store, requested),
             )
-        _install_metadata(dataset, datetime.now(UTC), publication_index_timestamps, model_versions)
+        _install_metadata(
+            dataset,
+            datetime.now(UTC),
+            publication_index_timestamps,
+            model_versions,
+            requested,
+            hindcast_versions,
+        )
         _install_column_catalog(dataset.con)
         return AnalysisSession(dataset.con, dataset)
     except Exception:
@@ -981,12 +1077,19 @@ def _build_analysis_session(
         raise
 
 
-def _session_identity(cutoff, data_store, publish_store, include_derived: bool) -> tuple[str, str]:
-    from epl_forecast.analysis_artifacts import publication_indexes
+def _session_identity(
+    cutoff, data_store, publish_store, include_derived: bool, requested
+) -> tuple[str, str]:
+    """The slot and the content identity of a prepared session file.
 
+    Interactive querying trusts immutable R2 objects once an authoritative mutable pointer selects
+    them, so the identity is a compact change token for each pointer rather than its body. Full
+    byte-level verification stays an audit, replay and write concern.
+    """
     scope = {
         "cutoff": None if cutoff is None else timestamp(cutoff).isoformat(),
         "include_derived": include_derived,
+        "hindcast_versions": requested,
     }
     package = Path(epl_forecast.__file__).parent
     source = hashlib.sha256()
@@ -999,8 +1102,8 @@ def _session_identity(cutoff, data_store, publish_store, include_derived: bool) 
         "analysis_schema_version": analysis_contract.ANALYSIS_SCHEMA_VERSION,
         "duckdb_version": duckdb.__version__,
         "source": source.hexdigest(),
-        "manifests": data_store.get_json("state/manifests.json", {}),
-        "publication": publication_indexes(publish_store) if include_derived else None,
+        "canonical": data_store.identities(CANONICAL_ROOTS),
+        "publication": publication_identities(publish_store) if include_derived else None,
     }
     return (
         hashlib.sha256(json_bytes(scope)).hexdigest()[:12],

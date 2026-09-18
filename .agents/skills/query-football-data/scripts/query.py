@@ -8,7 +8,12 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from epl_forecast.analysis import SESSION_DIRECTORY, open_analysis_session
+from epl_forecast.analysis import (
+    ALL_MODEL_VERSIONS,
+    CURRENT_MODEL_VERSION,
+    SESSION_DIRECTORY,
+    open_analysis_session,
+)
 from epl_forecast.storage import load_environment
 
 DEFAULT_MAX_ROWS = 40
@@ -46,6 +51,12 @@ def parser() -> argparse.ArgumentParser:
         help="Run a named SQL query. Repeat the option to run several queries in one session.",
     )
     result.add_argument("--cutoff", type=datetime.fromisoformat)
+    result.add_argument(
+        "--hindcast-versions",
+        default=CURRENT_MODEL_VERSION,
+        metavar="SELECTION",
+        help="Hindcast model versions to load: current (default), all, or a comma-separated list.",
+    )
     result.add_argument("--max-rows", type=positive_int, default=DEFAULT_MAX_ROWS)
     result.add_argument("--max-cell-chars", type=positive_int, default=DEFAULT_MAX_CELL_CHARS)
     result.add_argument("--max-output-chars", type=positive_int, default=DEFAULT_MAX_OUTPUT_CHARS)
@@ -54,6 +65,16 @@ def parser() -> argparse.ArgumentParser:
     precision.add_argument("--full-precision", action="store_true")
     result.add_argument("--pretty", action="store_true")
     return result
+
+
+def hindcast_versions(value: str):
+    """`current`, `all`, or explicit model versions, which a session file keeps in its own slot."""
+    if value in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS):
+        return value
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    if not names:
+        raise argparse.ArgumentTypeError("hindcast versions must name at least one model version")
+    return tuple(names)
 
 
 def positive_int(value: str) -> int:
@@ -181,7 +202,11 @@ def main() -> None:
     except ValueError as error:
         parser().error(str(error))
     load_environment()
-    session = open_analysis_session(args.cutoff, session_directory=SESSION_DIRECTORY)
+    session = open_analysis_session(
+        args.cutoff,
+        session_directory=SESSION_DIRECTORY,
+        hindcast_versions=hindcast_versions(args.hindcast_versions),
+    )
     try:
         results = []
         for name, sql, parameters in queries:

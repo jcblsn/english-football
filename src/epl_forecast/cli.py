@@ -240,6 +240,20 @@ def hindcast_command(args) -> None:
     print(json.dumps(result, indent=2))
 
 
+def match_hindcast_command(args) -> None:
+    from epl_forecast.match_hindcast import run_match_hindcasts
+    from epl_forecast.storage import R2Store
+
+    result = run_match_hindcasts(
+        R2Store.from_environment("R2_DATA_BUCKET"),
+        R2Store.from_environment("R2_PUBLISH_BUCKET"),
+        tuple(args.competition or COMPETITION_IDS),
+        args.season,
+        args.workers,
+    )
+    print(json.dumps(result, indent=2))
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         description="Probabilistic forecasts and season simulation for England's four league divisions"
@@ -305,6 +319,14 @@ def parser() -> argparse.ArgumentParser:
     hindcast.add_argument("--simulations", type=int, default=10000)
     hindcast.add_argument("--workers", type=int, default=4)
     hindcast.set_defaults(func=hindcast_command)
+    match_hindcast = commands.add_parser(
+        "match-hindcast",
+        help="Make retrospective match forecasts from the start of the season until live coverage",
+    )
+    match_hindcast.add_argument("--competition", action="append", choices=COMPETITION_IDS)
+    match_hindcast.add_argument("--season", help="Season identifier, such as 2026-2027")
+    match_hindcast.add_argument("--workers", type=int, default=4)
+    match_hindcast.set_defaults(func=match_hindcast_command)
     evaluate = commands.add_parser(
         "evaluate", help="Score rolling historical match forecasts for M10 and M2"
     )
