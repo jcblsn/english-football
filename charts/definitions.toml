@@ -1,0 +1,45 @@
+# The defined set of Page 324 Datawrapper charts.
+#
+# Each entry is one editorial instance. The recipe names the chart form and its
+# settings. The extraction and the recipe live in scripts/refresh_charts.py.
+# A chart ID here is a draft reference, not a product contract.
+
+[defaults]
+# Display labels for a dense table, where the full club name makes every column wide.
+# These are display labels only. Team identity stays with team_id.
+short_labels = { "manchester-city" = "Man City", "manchester-united" = "Man Utd", "nottingham-forest" = "Forest", "crystal-palace" = "Palace", "sheffield-wednesday" = "Sheff Wed", "sheffield-united" = "Sheff Utd", "west-bromwich-albion" = "West Brom", "wolverhampton-wanderers" = "Wolves", "queens-park-rangers" = "QPR", "milton-keynes-dons" = "MK Dons" }
+
+[[charts]]
+chart_id = "iRGbS"
+recipe = "season_event_bars"
+competition = "eng-premier-league"
+event = "title_probability"
+value_label = "Title probability"
+title = "Premier League title probability"
+intro = "The probability that each club wins the {season} Premier League title."
+
+[[charts]]
+chart_id = "fIPRH"
+recipe = "match_outcome_bars"
+competition = "eng-premier-league"
+title = "Premier League match probabilities"
+intro = "The probability of each result for the Premier League matches {window}. The matches are in kick-off order. Each bar shows the home win, the draw and the away win from the left, and the most likely result is black."
+
+[[charts]]
+chart_id = "0mkG0"
+recipe = "position_matrix"
+competition = "eng-premier-league"
+short_club_labels = true
+mobile_positions = 5
+title = "Premier League final position probability"
+intro = "The probability that each club finishes the {season} Premier League in each final position. Every value is a percentage."
+
+[[charts]]
+chart_id = "htmjC"
+recipe = "forecast_standings"
+competition = "eng-premier-league"
+interval_level = 80
+events = [["title_probability", "Title"], ["top_four_probability", "Top four"], ["relegation_probability", "Relegation"]]
+mobile_columns = ["Club", "Title", "Relegation"]
+title = "Premier League forecast standings"
+intro = "The current Premier League table with the forecast for the end of the {season} season. The clubs are in the order of their expected final position."

@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "name": "Page 324",
+  "status": "provisional",
+  "principles": [
+    "editorial_not_corporate",
+    "data_and_typography_first",
+    "rigorous_and_quantitative",
+    "football_literate_without_cliches",
+    "modular_without_teletext_pastiche"
+  ],
+  "color": {
+    "brand": {
+      "accent": "#FFD400",
+      "ink": "#121210",
+      "canvas": "#FFFFFF",
+      "paper": "#F4F2EC",
+      "rule": "#D8D5CC",
+      "secondary": "#6C6A64",
+      "quiet": "#ECEAE4"
+    },
+    "rules": {
+      "accent_is_semantic": false,
+      "yellow_text_on_white": false,
+      "preferred_accent_text": "#121210",
+      "data_palette_is_separate": true
+    }
+  },
+  "typography": {
+    "display": {
+      "family": "Libre Franklin",
+      "fallback": [
+        "Arial",
+        "Helvetica",
+        "sans-serif"
+      ],
+      "headline_weight": 800
+    },
+    "body": {
+      "family": "Source Serif 4",
+      "fallback": [
+        "Georgia",
+        "serif"
+      ],
+      "weight": 400
+    },
+    "numeric": {
+      "family": "Libre Franklin",
+      "fallback": [
+        "Arial",
+        "Helvetica",
+        "sans-serif"
+      ],
+      "weight": 500,
+      "features": [
+        "tabular-nums",
+        "lining-nums"
+      ]
+    },
+    "mono": {
+      "use": "technical_metadata_only"
+    }
+  },
+  "layout": {
+    "grid_columns": 12,
+    "container_max_px": 1440,
+    "desktop_gutter_px": 32,
+    "mobile_gutter_px": 16,
+    "spacing_unit_px": 8,
+    "prose_max_px": 720,
+    "chart_preferred_columns": 8,
+    "dense_table_preferred_columns": 12
+  },
+  "rules": {
+    "default_width_px": 1,
+    "default_color": "#D8D5CC",
+    "selected_width_px": 3,
+    "selected_color": "#FFD400"
+  },
+  "navigation": {
+    "selected_state": "accent_bottom_rule",
+    "selected_rule_px": 3,
+    "avoid_pill_navigation": true
+  },
+  "tables": {
+    "row_height_px": 40,
+    "vertical_rules": false,
+    "zebra_striping": false,
+    "numeric_alignment": "right",
+    "numeric_features": [
+      "tabular-nums",
+      "lining-nums"
+    ],
+    "header_style": "quiet",
+    "sticky_headers_preferred": true
+  },
+  "probability": {
+    "always_show_numeric_value": true,
+    "bars_are_supplementary": true,
+    "brand_accent_means_magnitude": false,
+    "brand_accent_means_positive": false,
+    "brand_accent_means_negative": false
+  },
+  "logo": {
+    "mark": {
+      "construction": "3-2-4_blocks",
+      "small_use": "clean_solid"
+    },
+    "wordmark": {
+      "texture": "slightly_imperfect_print",
+      "texture_use": "large_only"
+    },
+    "texture": {
+      "role": "signature",
+      "all_over": false,
+      "max_prominent_uses_per_page": 1
+    }
+  },
+  "datawrapper": {
+    "plan_assumption": "free",
+    "standard_theme_acceptable": true,
+    "standard_roboto_acceptable": true,
+    "canvas": "#FFFFFF",
+    "wrap_in_card": false,
+    "duplicate_chart_titles": false,
+    "brand_via": [
+      "data_colors",
+      "annotation_conventions",
+      "number_formats",
+      "chart_selection",
+      "editorial_practice"
+    ],
+    "brand_accent_is_default_series_color": false,
+    "attribution_visible": true
+  },
+  "charts": {
+    "status": "provisional",
+    "editorial_voice": {
+      "title_describes_the_measure": true,
+      "title_makes_a_claim": false,
+      "intro_holds_only_durable_facts": true
+    },
+    "ordering": {
+      "ranked_by": "the plotted probability, before rounding",
+      "tie_break": "expected final position",
+      "tie_break_is_alphabetical": false,
+      "state_order_in_notes": true,
+      "sort_in_the_extraction_not_the_chart_tool": true
+    },
+    "probability": {
+      "chart_decimal_places": 0,
+      "table_decimal_places": 1,
+      "dense_matrix_decimal_places": 0,
+      "uploaded_unit": "percentage_points",
+      "displayed_zero_means_below_threshold": true,
+      "displayed_zero_means_impossible": false,
+      "state_threshold_in_notes": true
+    },
+    "axis": {
+      "one_winner_event_range_percent": [
+        0,
+        100
+      ]
+    },
+    "color": {
+      "single_series": "#121210",
+      "bar_track": null,
+      "focal_series": "#121210",
+      "supporting_series": [
+        "#6C6A64",
+        "#9E9B93",
+        "#D8D5CC"
+      ],
+      "cell_scale": {
+        "low": "#FFFFFF",
+        "high": "#B9B5AA"
+      },
+      "grayscale_first": true,
+      "hue_needs_a_reason": true
+    },
+    "labels": {
+      "show_every_value": true,
+      "stacked_bars_use_block_labels": true
+    },
+    "notes_record": [
+      "forecast_time",
+      "public_model_version",
+      "simulations"
+    ],
+    "review_widths_px": {
+      "desktop": 640,
+      "wide_table": 1040,
+      "mobile": 320
+    },
+    "tables": {
+      "cell_scale": "grayscale_only",
+      "cell_scale_shares_one_unit": true,
+      "dense_matrix_decimal_places": 0,
+      "blank_below_threshold": true,
+      "state_blank_meaning_in_notes": true,
+      "sticky_first_column": true,
+      "choose_mobile_columns_explicitly": true,
+      "allow_data_download": true,
+      "short_club_labels_in_dense_tables": true,
+      "min_numeric_column_px": 45,
+      "mobile_fallback": true
+    },
+    "notes_max_sentences": 3,
+    "notes_are_not_disclaimers": true,
+    "datawrapper_blocks": {
+      "embed": true,
+      "download_image": true,
+      "get_the_data": true,
+      "download_pdf": false,
+      "download_svg": false,
+      "logo": false
+    },
+    "attribution": {
+      "source_name": "Page 324",
+      "byline": "Page 324",
+      "source_url": "https://page324.substack.com/"
+    },
+    "bars": {
+      "track_behind_bars": false,
+      "one_winner_axis_percent": [
+        0,
+        100
+      ]
+    },
+    "definition_of_the_chart_set": "charts/definitions.toml",
+    "forecast_time_format": "YYYY-MM-DD HH:MM UTC"
+  },
+  "avoid": [
+    "ceefax_pastiche",
+    "pixel_fonts",
+    "crt_effects",
+    "scanlines",
+    "teletext_motifs",
+    "generic_saas_chrome",
+    "football_green_as_brand_default",
+    "excessive_gradients",
+    "glass_effects",
+    "card_everything",
+    "decorative_data_motifs"
+  ]
+}
