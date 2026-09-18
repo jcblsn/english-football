@@ -55,7 +55,7 @@ def update_record(
     pending = {row["match_id"]: row for row in record["pending"]}
     settled = {row["match_id"]: row for row in record["settled"]}
     for document in documents:
-        if document.get("product") == "hindcast":
+        if document.get("retrospective") or document.get("product") == "hindcast":
             raise ValueError("A hindcast cannot enter the prospective record")
         generated = timestamp(document["generated_at"])
         for match in document["matches"]:
