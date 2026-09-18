@@ -207,3 +207,95 @@ def test_an_origin_uses_only_results_available_on_its_day(full_season, monkeypat
     assert "match_frequencies" not in simulation
     assert all("goal_difference_distribution" not in row for row in simulation["teams"])
     assert sum(row["played"] for row in simulation["teams"]) == 320
+
+
+def test_bridge_origins_stop_before_live_coverage_of_the_version():
+    origins = hindcast.bridge_origins(date(2026, 8, 14), date(2026, 9, 17))
+    assert [origin.date() for origin in origins] == [
+        date(2026, 8, 12),
+        date(2026, 8, 19),
+        date(2026, 8, 26),
+        date(2026, 9, 2),
+        date(2026, 9, 9),
+        date(2026, 9, 16),
+    ]
+    assert all(origin.weekday() == ORIGIN_WEEKDAY for origin in origins)
+    assert all(origin.tzinfo is LONDON and origin.hour == 9 for origin in origins)
+    with pytest.raises(ValueError, match="nothing for a retrospective bridge to cover"):
+        hindcast.bridge_origins(date(2026, 9, 18), date(2026, 9, 17))
+
+
+def test_the_bridge_needs_the_whole_calendar_of_the_season():
+    rows = [
+        {
+            "match_id": "eng-premier-league:2026-2027:arsenal:chelsea",
+            "competition_id": "eng-premier-league",
+            "season_id": "2026-2027",
+            "stage": "regular",
+            "match_date": date(2026, 8, 15),
+            "home_team_id": "arsenal",
+            "away_team_id": "chelsea",
+        }
+    ]
+    with pytest.raises(ValueError, match="1 of 380 regular fixtures"):
+        hindcast.season_fixtures(rows, "eng-premier-league", "2026-2027")
+
+
+def test_a_bridge_document_says_it_is_a_hindcast_of_a_season_in_play():
+    task = record("2026-09-16T080000Z", "2026-09-16T09:00:00+01:00", "2026-09-16")
+    task.update(
+        season_id="2026-2027",
+        notice=hindcast.BRIDGE_NOTICE,
+        assumptions=list(hindcast.BRIDGE_ASSUMPTIONS),
+    )
+    document = derive_hindcast(task, NAMES)
+    check_publishable(document, load_policy(), "hindcast")
+    assert document["retrospective"] is True
+    assert "after these matches were played" in document["notice"]
+    assert document["assumptions"][-1].startswith("The series stops before the London day")
+    assert "now scheduled" in document["assumptions"][2]
+    assert document_kind(document) == "hindcast"
+
+
+def test_a_bridge_origin_projects_the_unplayed_calendar(full_season, monkeypatch):
+    def fitted(matches, config, model_id, as_of):
+        training = [m for m in matches if m.available_on <= as_of]
+        return AttackDefensePoisson().fit(training, as_of), {}, training
+
+    monkeypatch.setattr(hindcast, "fitted_model", fitted)
+    rows = [
+        {
+            "match_id": m.fixture.match_id,
+            "competition_id": m.fixture.competition_id,
+            "season_id": m.fixture.season_id,
+            "stage": "regular",
+            "match_date": m.fixture.match_date,
+            "home_team_id": m.fixture.home_team_id,
+            "away_team_id": m.fixture.away_team_id,
+        }
+        for m in full_season
+    ]
+    # One fixture has no date at the origin, as a postponed match has.
+    rows[-1]["match_date"] = None
+    key = ("eng-premier-league", "2020-2021")
+    hindcast._bridge_initialize(
+        full_season, [], {"rows": {}, "histories": {}, "kickoffs": {}}, {key: rows}
+    )
+    result = hindcast.simulate_bridge_origin(
+        {
+            "model_version": "v0.0",
+            "competition_id": "eng-premier-league",
+            "season_id": "2020-2021",
+            "hindcast_id": "2020-08-17T080000Z",
+            "origin_at": "2020-08-17T09:00:00+01:00",
+            "model_results_cutoff": "2020-08-17",
+            "simulations": 20,
+            "seed": SEED,
+            "adjustments": [],
+        }
+    )
+    simulation = result["simulation"]
+    assert simulation["played_matches"] == 160
+    assert simulation["remaining_matches"] == len(full_season) - 160
+    assert result["training_matches"] == 160
+    assert sum(row["played"] for row in simulation["teams"]) == 320

@@ -226,16 +226,20 @@ def materialize_command(args) -> None:
 
 
 def hindcast_command(args) -> None:
-    from epl_forecast.hindcast import run_hindcasts
+    from epl_forecast.hindcast import run_hindcasts, run_season_bridge
     from epl_forecast.storage import R2Store
 
-    result = run_hindcasts(
+    stores = (
         R2Store.from_environment("R2_DATA_BUCKET"),
         R2Store.from_environment("R2_PUBLISH_BUCKET"),
-        tuple(args.competition or COMPETITION_IDS),
-        tuple(args.seasons),
-        args.simulations,
-        args.workers,
+    )
+    competitions = tuple(args.competition or COMPETITION_IDS)
+    result = (
+        run_season_bridge(*stores, competitions, args.season, args.simulations, args.workers)
+        if args.bridge
+        else run_hindcasts(
+            *stores, competitions, tuple(args.seasons), args.simulations, args.workers
+        )
     )
     print(json.dumps(result, indent=2))
 
@@ -316,6 +320,12 @@ def parser() -> argparse.ArgumentParser:
     )
     hindcast.add_argument("--competition", action="append", choices=COMPETITION_IDS)
     hindcast.add_argument("--seasons", nargs="+", type=int, default=list(range(2021, 2026)))
+    hindcast.add_argument(
+        "--bridge",
+        action="store_true",
+        help="Make the weekly hindcasts of the season in play, up to live coverage of the version",
+    )
+    hindcast.add_argument("--season", help="Season identifier for --bridge, such as 2026-2027")
     hindcast.add_argument("--simulations", type=int, default=10000)
     hindcast.add_argument("--workers", type=int, default=4)
     hindcast.set_defaults(func=hindcast_command)

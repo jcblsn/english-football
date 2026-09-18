@@ -1947,6 +1947,33 @@ def _install_match_stage_comparison(connection) -> None:
     )
 
 
+def _install_event_probability_view(connection) -> None:
+    """Live and retrospective season event probabilities in one relation, with their provenance.
+
+    `retrospective` separates the two. A hindcast origin is a retrospective time, so do not read
+    `origin_at` and `generated_at` as one clock.
+    """
+    connection.execute(
+        """
+        CREATE VIEW analysis.team_event_probabilities AS
+        SELECT 'live' AS product, false AS retrospective, f.forecast_id,
+               NULL::VARCHAR AS hindcast_id, f.competition_id, f.season_id,
+               f.public_model_version AS model_version, f.generated_at,
+               NULL::TIMESTAMPTZ AS origin_at, f.model_results_cutoff,
+               f.generated_at AS observed_at, e.team_id, e.event, e.probability
+        FROM analysis.forecast_team_events e JOIN analysis.forecasts f
+        USING (forecast_id, competition_id, season_id)
+        UNION ALL
+        SELECT 'hindcast' AS product, true AS retrospective, NULL::VARCHAR AS forecast_id,
+               h.hindcast_id, h.competition_id, h.season_id, h.model_version,
+               h.generated_at, h.origin_at, h.model_results_cutoff,
+               h.origin_at AS observed_at, e.team_id, e.event, e.probability
+        FROM analysis.hindcast_team_events e JOIN analysis.hindcast_origins h
+        USING (hindcast_id, competition_id, season_id, model_version)
+        """
+    )
+
+
 def _install_match_hindcast_view(connection) -> None:
     """The retrospective match forecast beside the realized result, for scoring it.
 
@@ -1986,6 +2013,7 @@ def _install_artifact_views(connection) -> None:
         )
     _install_projection_view(connection)
     _install_match_stage_comparison(connection)
+    _install_event_probability_view(connection)
     _install_match_hindcast_view(connection)
 
 

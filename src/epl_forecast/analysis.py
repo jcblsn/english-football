@@ -277,6 +277,15 @@ CATALOG_ROWS = (
         None,
     ),
     (
+        "team_event_probabilities",
+        "one row per live forecast or hindcast origin, team, and event",
+        "Live and retrospective season event probabilities in one relation.",
+        "analysis.forecast_team_events and analysis.hindcast_team_events",
+        "observed_at is generated_at for a live forecast and the retrospective origin_at for a hindcast. Use retrospective to keep the two apart.",
+        False,
+        "Filter model_version. A season trajectory that mixes model versions is not one trajectory.",
+    ),
+    (
         "match_hindcasts",
         "one row per hindcast model version, competition, season, and match",
         "Retrospective match forecast that bridges the start of the season to live coverage.",
@@ -846,6 +855,17 @@ COLUMN_MEANINGS = {
         "Resolved player contribution to team discontinuity.",
         "share",
         "derived",
+    ),
+    "observed_at": (
+        "Time the row describes: the live generation time, or the retrospective origin.",
+        None,
+        "generated_at or origin_at",
+    ),
+    "event": ("Season event name.", None, "team events map key"),
+    "probability": (
+        "Probability of the row's event or outcome.",
+        "probability from 0 to 1",
+        "probability",
     ),
     "retrospective": (
         "True when the row is a retrospective product, never a forecast that existed at the time.",

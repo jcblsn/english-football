@@ -161,6 +161,21 @@ To get the weekly estimates of a club, read `hindcasts/index.json`, then the `se
 
 Hindcasts do not overwrite the mutable production objects. You do not have to stop production to make them.
 
+### The season in play
+
+```sh
+uv run epl-forecast hindcast --bridge --workers 7
+```
+
+`--bridge` makes the weekly hindcasts of the season that is still being played, from the first origin of the season to the last origin before the day live coverage of the model version began. It is the season-state half of the retrospective bridge, and it uses the same handoff day as the [match hindcasts](#match-hindcasts). The origin protocol, the keys, the edition file and the series are those of the completed-season archive, so the analysis schema and the public viewer need no change.
+
+Two rules differ from a completed season, and each document records them in `assumptions`:
+
+- The simulation projects the calendar the provider now schedules. A fixture with no usable date, and a result the origin cannot yet see, are both simulated on the origin day. At the origin time some of those dates were not known.
+- The series stops before the handoff day. A later origin would be a forecast, not a hindcast.
+
+The command needs the whole regular-season calendar of the division. It stops if the provider has not published every fixture, because a season projection cannot be made from a partial calendar.
+
 ## Match hindcasts
 
 A season hindcast is a season-state trajectory of a completed season. A match hindcast is a retrospective forecast of one match of the current season. It fills the gap between the first matchday and the day the live product began to publish forecasts with the current model version, so that version has match-level coverage of the whole season.
