@@ -18,8 +18,8 @@ from epl_forecast.match_hindcast import (
 )
 from epl_forecast.models.baselines import AttackDefensePoisson
 from epl_forecast.publication import check_publishable, document_kind, load_policy
-from epl_forecast.storage import json_bytes
 from epl_forecast.record import update_record
+from epl_forecast.storage import json_bytes
 
 HANDOFF = {"prospective_from": "2026-09-17", "last_match_date": "2026-09-16"}
 
