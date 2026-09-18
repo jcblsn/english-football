@@ -88,6 +88,8 @@ At the end of the base year, a changed wake can download and upload a snapshot o
 
 The current two-bucket backup would contain about 3.07 GB before compression or versioning. The projection assumes that the protected backup is outside the two steady product buckets. A backup copied into the same R2 product account must be added in full and would consume most of the headroom.
 
+The read-only retention planner resolved 2,721 protected objects and listed 50,591 deletion candidates with 1,221,840,776 bytes. The candidate total contains 201,719,150 bytes of unreferenced canonical Parquet, 19,710,509 bytes of unselected manifests and 1,000,411,117 bytes of superseded run objects. It listed all 1,624 `research/` objects and 738,048,127 bytes separately for owner review. The plan is ignored local evidence at `runs/refactor/m4/retention-plan.json`; no candidate was deleted.
+
 Each immutable pointer commit temporarily holds the old and new database. The projection reports only one steady generation. Migration can also hold the 3.07 GB old layout, the new 1.86 GB layout and the backup at the same time. That migration and recovery peak is separate from the steady target.
 
 The capacity gate is locally supported but not live-certified. Certification still needs an authorized staging transfer at representative projected size, a clean-machine restore, an observed complete input-to-public operation, and the reviewed deletion manifest after both bucket backups are verified.

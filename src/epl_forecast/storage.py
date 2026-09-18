@@ -268,6 +268,19 @@ class R2Store:
             for row in page.get("Contents", []):
                 yield row["Key"]
 
+    def inventory(self, prefix: str = "") -> Iterator[dict]:
+        """List exact object keys and sizes without reading object bodies."""
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.config.bucket, Prefix=prefix):
+            self._record("LIST")
+            for row in page.get("Contents", []):
+                yield {
+                    "key": row["Key"],
+                    "bytes": row["Size"],
+                    "etag": row.get("ETag", "").strip('"'),
+                    "last_modified": row["LastModified"].isoformat(),
+                }
+
     def configure_duckdb(self, connection, name: str = "page324_r2") -> None:
         def quote(value: str) -> str:
             return "'" + value.replace("'", "''") + "'"

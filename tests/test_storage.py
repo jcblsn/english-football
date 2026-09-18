@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import UTC, datetime
 
 import pytest
 from botocore.exceptions import ClientError
@@ -168,3 +169,37 @@ def test_object_identities_use_one_head_request_and_report_absence():
     }
     assert sorted(calls) == ["legacy.json", "missing.json", "record.json"]
     assert store.identities(()) == {}
+
+
+def test_inventory_returns_exact_list_metadata_and_counts_the_request():
+    class Paginator:
+        def paginate(self, **arguments):
+            assert arguments == {"Bucket": "bucket", "Prefix": "results/"}
+            return [
+                {
+                    "Contents": [
+                        {
+                            "Key": "results/current.duckdb",
+                            "Size": 123,
+                            "ETag": '"etag"',
+                            "LastModified": datetime(2026, 9, 18, tzinfo=UTC),
+                        }
+                    ]
+                }
+            ]
+
+    class Client:
+        def get_paginator(self, operation):
+            assert operation == "list_objects_v2"
+            return Paginator()
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client())
+    assert list(store.inventory("results/")) == [
+        {
+            "key": "results/current.duckdb",
+            "bytes": 123,
+            "etag": "etag",
+            "last_modified": "2026-09-18T00:00:00+00:00",
+        }
+    ]
+    assert store.metrics() == {"list_requests": 1, "request_bytes": 0, "response_bytes": 0}

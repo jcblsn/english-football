@@ -36,7 +36,11 @@ Protect these roots or exact pointer targets:
 
 ## Deletion-manifest candidates
 
-Generate exact keys, sizes and hashes. Do not delete from these prefixes by prefix alone.
+Generate exact keys, sizes and ETags. Do not delete from these prefixes by prefix alone. The read-only planner writes the candidate manifest and makes no mutation:
+
+```sh
+uv run python scripts/plan_r2_retention.py runs/migration/retention-plan.json
+```
 
 | Candidate | Required proof before deletion |
 | --- | --- |

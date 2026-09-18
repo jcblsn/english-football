@@ -5,7 +5,7 @@ Status: M0 through M3 pass for the local code path. M4 production migration, liv
 ## Assignment and authority
 
 Owner-approved scope: Local implementation, local tests, and read-only use of available repository evidence. The assignment does not authorize production writes, workflow cutover, bucket deletion, or a paid service.
-Local branch/worktree: `refactor-start`; the last pushed implementation commit is `92da8e6`. The checkout was clean before implementation started.
+Local branch/worktree: `refactor-start`; implementation checkpoints are pushed to the branch after each verified slice. The checkout was clean before implementation started.
 Authorized remote reads/staging prefix: Read credentials for both private buckets are configured in the ignored `.env`. No staging prefix is designated, so no remote staging write is authorized.
 Production mutation/cutover/deletion authority: Not recorded.
 Verified backup and restore evidence: Not established.
@@ -69,6 +69,8 @@ Completed evidence:
 - A read-only bucket inventory found 3,072,450,503 bytes. `runs/forecasts/` held 946,027,443 bytes, private hindcasts held 171,573,273 bytes, old run snapshots held 54,383,674 bytes, and `research/` held 738,048,127 bytes.
 - The measured capacity model is in `docs/capacity.md`. The projected post-cutover product start is 1.86 GB. The 12-month base and 60-busy-day cases are 5.50 GB and 5.98 GB. The 24-month sensitivities exceed 7 GB and require a review at 6 GB or nine months. Projected monthly requests are about 78,000 Class B and 26,000 Class A in the base case, and 112,000 Class B and 38,000 Class A in the busy case.
 - `docs/migration.md` defines the retention roots, deletion candidates, cutover prerequisites and bounded rollback. No production object was created, changed or deleted while collecting this evidence.
+- The read-only retention planner protected 2,721 current objects and listed 50,591 exact deletion candidates totaling 1,221,840,776 bytes. It separated 1,624 `research/` objects totaling 738,048,127 bytes for owner review. The ignored plan is `runs/refactor/m4/retention-plan.json`; it made no mutation.
+- Routine operation no longer uploads its temporary forecast renderings, logs or verification tree to `runs/forecasts/`. The typed result commits before public release, and a test proves that the legacy run prefix is not written.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -98,8 +100,8 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 
 ## Restart point
 
-Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 414 tests in 46.10 seconds at pushed commit `92da8e6`. The later focused changed-entry test passed all 7 fit-state tests in 3.85 seconds.
-Next action: Run the final full verification and local operation-path benchmark, then prepare the reviewed migration artifacts without making a production write.
+Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 417 tests in 45.81 seconds.
+Next action: Prepare the reviewed migration artifacts without making a production write.
 Next test/gate: Authorized staging restore/upload, backup restore R4, final reconciliation, workflow cutover and deletion-manifest execution.
 Working files to inspect before cutover: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
 Remote objects created or modified by this agent: None.
