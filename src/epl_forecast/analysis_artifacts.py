@@ -509,6 +509,42 @@ class _SelectedDocuments:
         return self.documents.get(key, default)
 
 
+def _public_analysis_projection(public: dict) -> dict:
+    matches = []
+    for row in public["matches"]:
+        match = dict(row)
+        match["market_assisted_probabilities"] = row.get("market_assisted")
+        matches.append(match)
+    teams = []
+    for row in public["teams"]:
+        team = dict(row)
+        team.update(
+            {
+                event: probability
+                for event, probability in row.get("events", {}).items()
+                if event.endswith("_probability")
+            }
+        )
+        teams.append(team)
+    return {
+        "schema_version": 1,
+        "competition_id": public["competition_id"],
+        "season_id": public["season_id"],
+        "generated_at": public["generated_at"],
+        "state_observed_at": public["state_observed_at"],
+        "model_results_cutoff": public["model_results_cutoff"],
+        "model": {},
+        "matches": matches,
+        "simulation": {
+            "simulations": public["simulations"],
+            "state_uncertainty": public.get("state_uncertainty"),
+            "teams": teams,
+        },
+        "team_names": {row["team_id"]: row.get("name") for row in public["teams"]},
+        "state_uncertainty": public.get("state_uncertainty"),
+    }
+
+
 def _typed_live_rows(
     data_store,
     publish_store,
@@ -516,7 +552,12 @@ def _typed_live_rows(
     forecast_ids: tuple[str, ...] | None,
 ):
     from epl_forecast.publication import derive_forecast
-    from epl_forecast.results import read_forecast_result, read_forecast_run
+    from epl_forecast.results import (
+        ForecastDetailExpired,
+        read_forecast_result,
+        read_forecast_run,
+        read_public_projection,
+    )
     from epl_forecast.storage import file_hash
 
     private_documents = {}
@@ -551,20 +592,24 @@ def _typed_live_rows(
                 try:
                     private = read_forecast_result(database, result_id)
                     run = read_forecast_run(database, result_id)
+                    public = derive_forecast(
+                        private,
+                        result_id,
+                        public_model_version=entry["model_version"],
+                    )
+                except ForecastDetailExpired:
+                    public = read_public_projection(database, result_id)
+                    private = _public_analysis_projection(public)
+                    run = read_forecast_run(database, result_id)
                 except KeyError as error:
                     raise ValueError(
                         f"The cumulative {competition_id} result does not contain released result {result_id}"
                     ) from error
-                public = derive_forecast(
-                    private,
-                    result_id,
-                    public_model_version=entry["model_version"],
-                )
                 public_documents[entry["href"]] = public
                 prefix = f"runs/forecasts/{result_id}/{competition_id}"
                 private_documents[f"{prefix}/forecast.json"] = {
                     **private,
-                    "schema_version": 2,
+                    "schema_version": private.get("schema_version", 2),
                 }
                 private_documents[f"{prefix}/run.json"] = run
     return _legacy_live_rows(

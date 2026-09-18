@@ -126,6 +126,8 @@ def disable_fit_store(monkeypatch):
     monkeypatch.setattr(pipeline, "commit_fit_store", lambda *args: {})
     monkeypatch.setattr(pipeline, "prepare_result_store", lambda *args: None)
     monkeypatch.setattr(pipeline, "commit_result_store", lambda *args: {})
+    monkeypatch.setattr(pipeline, "store_public_projection", lambda *args: None)
+    monkeypatch.setattr(pipeline, "expire_forecast_detail", lambda *args: {"expired_results": 0})
     monkeypatch.setattr(
         pipeline,
         "read_forecast_result",

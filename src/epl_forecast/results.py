@@ -11,6 +11,26 @@ from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.storage import json_bytes, sha256_bytes
 
 RESULT_SCHEMA_VERSION = 4
+RESULT_DETAIL_TABLES = (
+    "forecast_matches",
+    "forecast_team_names",
+    "forecast_unsettled_fixtures",
+    "forecast_match_probabilities",
+    "forecast_score_metadata",
+    "forecast_scores",
+    "forecast_team_seasons",
+    "forecast_team_events",
+    "forecast_team_points",
+    "forecast_team_positions",
+    "forecast_team_strengths",
+    "forecast_conditionals",
+    "forecast_impact_metadata",
+    "forecast_impact_fixtures",
+)
+
+
+class ForecastDetailExpired(KeyError):
+    pass
 
 
 def install_result_schema(connection) -> None:
@@ -37,6 +57,15 @@ def install_result_schema(connection) -> None:
             stored_at TIMESTAMPTZ NOT NULL,
             forecast_metadata JSON,
             source_result_id VARCHAR
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_result.forecast_public_documents (
+            result_id VARCHAR PRIMARY KEY,
+            document JSON NOT NULL,
+            stored_at TIMESTAMPTZ NOT NULL
         )
         """
     )
@@ -668,6 +697,98 @@ def _iso(value):
     return None if value is None else value.isoformat()
 
 
+def store_public_projection(database: Path, result_id: str, document: dict) -> None:
+    payload = _json(document)
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(SESSION_TIME_ZONE)
+        install_result_schema(connection)
+        existing = connection.execute(
+            "SELECT document FROM forecast_result.forecast_public_documents WHERE result_id = ?",
+            [result_id],
+        ).fetchone()
+        if existing:
+            if _decoded(existing[0]) != document:
+                raise ValueError(f"Public result ID already names different content: {result_id}")
+            return
+        connection.execute(
+            "INSERT INTO forecast_result.forecast_public_documents VALUES (?, ?, ?)",
+            [result_id, payload, datetime.now(UTC)],
+        )
+        connection.execute("CHECKPOINT")
+
+
+def read_public_projection(database: Path, result_id: str) -> dict:
+    with duckdb.connect(str(database), read_only=True) as connection:
+        row = connection.execute(
+            "SELECT document FROM forecast_result.forecast_public_documents WHERE result_id = ?",
+            [result_id],
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown public forecast result: {result_id}")
+    return _decoded(row[0])
+
+
+def expire_forecast_detail(database: Path, before: datetime) -> dict:
+    """Remove old private detail only after its compact public projection is durable locally."""
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(SESSION_TIME_ZONE)
+        install_result_schema(connection)
+        missing = connection.execute(
+            """
+            SELECT r.result_id
+            FROM forecast_result.forecast_runs r
+            LEFT JOIN forecast_result.forecast_public_documents p USING (result_id)
+            WHERE r.generated_at < ? AND p.result_id IS NULL
+            ORDER BY r.result_id
+            """,
+            [before],
+        ).fetchall()
+        if missing:
+            raise ValueError(
+                "Cannot expire forecast detail without a public projection: "
+                + ", ".join(row[0] for row in missing[:5])
+            )
+        protected = connection.execute(
+            """
+            WITH RECURSIVE retained(result_id) AS (
+                SELECT result_id FROM forecast_result.forecast_runs WHERE generated_at >= ?
+                UNION
+                SELECT r.source_result_id
+                FROM forecast_result.forecast_runs r
+                JOIN retained p ON r.result_id = p.result_id
+                WHERE r.source_result_id IS NOT NULL
+            )
+            SELECT result_id FROM retained
+            """,
+            [before],
+        ).fetchall()
+        protected_ids = {row[0] for row in protected}
+        candidates = {
+            row[0]
+            for row in connection.execute(
+                "SELECT result_id FROM forecast_result.forecast_runs WHERE generated_at < ?",
+                [before],
+            ).fetchall()
+        } - protected_ids
+        if not candidates:
+            return {"expired_results": 0, "retained_sources": len(protected_ids)}
+        placeholders = ", ".join("?" for _ in candidates)
+        arguments = sorted(candidates)
+        connection.execute("BEGIN TRANSACTION")
+        try:
+            for table in RESULT_DETAIL_TABLES:
+                connection.execute(
+                    f"DELETE FROM forecast_result.{table} WHERE result_id IN ({placeholders})",
+                    arguments,
+                )
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("CHECKPOINT")
+    return {"expired_results": len(candidates), "retained_sources": len(protected_ids)}
+
+
 def _result_lineage(connection, result_id: str) -> list[str]:
     lineage = []
     current = result_id
@@ -774,6 +895,8 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             """,
             [structural_result_id],
         ).fetchall()
+        if not match_rows:
+            raise ForecastDetailExpired(f"Private forecast detail expired: {result_id}")
         generated_at = run[4]
         seen = set()
         for row in match_rows:

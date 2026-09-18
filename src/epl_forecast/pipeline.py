@@ -8,7 +8,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,7 +25,12 @@ from epl_forecast.publication import (
     update_impact_state,
 )
 from epl_forecast.record import realized_outcomes, update_record
-from epl_forecast.results import clone_forecast_result, read_forecast_result
+from epl_forecast.results import (
+    clone_forecast_result,
+    expire_forecast_detail,
+    read_forecast_result,
+    store_public_projection,
+)
 from epl_forecast.schema import Fixture
 from epl_forecast.snapshot import (
     SnapshotDataset,
@@ -49,6 +54,7 @@ LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
 SNAPSHOT_POINTER = "state/canonical-snapshot.json"
 LONDON = ZoneInfo("Europe/London")
+RESULT_DETAIL_RETENTION = timedelta(days=14)
 
 
 @dataclass
@@ -801,6 +807,16 @@ def _forecast_and_publish(
         if row.failure:
             failures.append(row.failure)
             continue
+        document = update_impact_state(
+            derive_forecast(
+                read_forecast_result(row.result_store, run_id),
+                run_id,
+                public_model_version=policy["product"]["model_version"],
+            ),
+            impact_state,
+        )
+        store_public_projection(row.result_store, run_id, document)
+        expire_forecast_detail(row.result_store, now - RESULT_DETAIL_RETENTION)
         try:
             commit_result_store(data_store, league, row.result_store, row.result_version)
         except ConditionalWriteFailed:
@@ -817,16 +833,7 @@ def _forecast_and_publish(
             commit_fit_store(data_store, league, row.fit_store, row.fit_version)
         except ConditionalWriteFailed:
             progress("fit_checkpoint_conflict", competition_id=league)
-        documents.append(
-            update_impact_state(
-                derive_forecast(
-                    read_forecast_result(row.result_store, run_id),
-                    run_id,
-                    public_model_version=policy["product"]["model_version"],
-                ),
-                impact_state,
-            )
-        )
+        documents.append(document)
     market_pool = json.loads((REPOSITORY / "configs/market_pool.json").read_text())
     if market_pool.get("structural_model_id") != PRODUCT_MODEL:
         market_pool = None
@@ -855,6 +862,16 @@ def _forecast_and_publish(
                     values["team_names"] if action in {"display", "market_display"} else None
                 ),
             )
+            document = update_impact_state(
+                derive_forecast(
+                    read_forecast_result(result_store, run_id),
+                    run_id,
+                    public_model_version=policy["product"]["model_version"],
+                ),
+                impact_state,
+            )
+            store_public_projection(result_store, run_id, document)
+            expire_forecast_detail(result_store, now - RESULT_DETAIL_RETENTION)
             commit_result_store(data_store, league, result_store, result_version)
             refresh_log = attempt / league / "refresh.json"
             refresh_log.parent.mkdir(parents=True)
@@ -869,16 +886,7 @@ def _forecast_and_publish(
                     }
                 ),
             )
-            documents.append(
-                update_impact_state(
-                    derive_forecast(
-                        read_forecast_result(result_store, run_id),
-                        run_id,
-                        public_model_version=policy["product"]["model_version"],
-                    ),
-                    impact_state,
-                )
-            )
+            documents.append(document)
         except (ConditionalWriteFailed, KeyError, ValueError) as error:
             progress("result_refresh_failed", competition_id=league, detail=str(error))
             failures.append({"league": league, "stage": "result_refresh", "detail": str(error)})
