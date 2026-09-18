@@ -9,21 +9,19 @@ MODEL_TYPES = {
 }
 
 
-def make_model(spec: dict):
+def make_model(spec: dict, *, observations=None):
     try:
         model_type = MODEL_TYPES[spec["kind"]]
     except KeyError as error:
         raise ValueError(f"Unknown model kind: {spec.get('kind')}") from error
     parameters = dict(spec.get("parameters", {}))
     competition = parameters.pop("competition_id", "eng-premier-league")
-    if parameters.pop("canonical_xg", False):
-        from epl_forecast.datasets import Dataset
-
-        data = Dataset(parameters.pop("data_cutoff", None))
-        try:
-            parameters["observations"] = data.xg_observations()
-        finally:
-            data.close()
+    canonical_xg = parameters.pop("canonical_xg", False)
+    parameters.pop("data_cutoff", None)
+    if canonical_xg and observations is not None:
+        parameters["observations"] = observations
+    if canonical_xg and "observations" not in parameters:
+        raise ValueError("Canonical xG must be passed as an explicit model input")
     try:
         model = model_type(**parameters)
     except TypeError as error:

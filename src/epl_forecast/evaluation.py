@@ -69,7 +69,12 @@ def metrics(rows: list[dict], bins: int = 10) -> tuple[dict, list[dict]]:
 
 
 def rolling_predictions(
-    matches: list[Match], config: dict, start: date, end: date, progress: bool = False
+    matches: list[Match],
+    config: dict,
+    start: date,
+    end: date,
+    progress: bool = False,
+    observations=None,
 ) -> list[dict]:
     if start >= end or config["train_window_days"] <= 0 or config["min_train_matches"] < 1:
         raise ValueError("Invalid evaluation dates or training limits")
@@ -87,7 +92,7 @@ def rolling_predictions(
         raise ValueError("No evaluation matches in the requested interval")
     predictions = []
     previous_season = None
-    models = {spec["id"]: make_model(spec) for spec in specs}
+    models = {spec["id"]: make_model(spec, observations=observations) for spec in specs}
     for forecast_date, day_iter in groupby(targets, key=lambda m: m.fixture.match_date):
         day = list(day_iter)
         if progress and day[0].fixture.season_id != previous_season:

@@ -1,10 +1,12 @@
 import hashlib
 import json
 import os
+from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import boto3
@@ -85,6 +87,8 @@ class R2Config:
 class R2Store:
     def __init__(self, config: R2Config, client=None):
         self.config = config
+        self._metrics = Counter()
+        self._metrics_lock = Lock()
         self.client = client or boto3.client(
             "s3",
             endpoint_url=f"https://{config.endpoint}",
@@ -92,6 +96,16 @@ class R2Store:
             aws_secret_access_key=config.secret_access_key,
             region_name="auto",
         )
+
+    def _record(self, operation: str, *, read=0, written=0) -> None:
+        with self._metrics_lock:
+            self._metrics[f"{operation.lower()}_requests"] += 1
+            self._metrics["response_bytes"] += read
+            self._metrics["request_bytes"] += written
+
+    def metrics(self) -> dict[str, int]:
+        with self._metrics_lock:
+            return dict(sorted(self._metrics.items()))
 
     @classmethod
     def from_environment(cls, bucket_variable: str) -> "R2Store":
@@ -107,16 +121,21 @@ class R2Store:
             if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
                 return False
             raise
+        finally:
+            self._record("HEAD")
         return True
 
     def get_bytes(self, key: str) -> bytes:
         try:
             response = self.client.get_object(Bucket=self.config.bucket, Key=key)
         except ClientError as error:
+            self._record("GET")
             if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
                 raise FileNotFoundError(key) from None
             raise
-        return response["Body"].read()
+        payload = response["Body"].read()
+        self._record("GET", read=len(payload))
+        return payload
 
     def get_json(self, key: str, default=None):
         try:
@@ -144,6 +163,8 @@ class R2Store:
             if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
                 return None
             raise
+        finally:
+            self._record("HEAD")
         return (
             head.get("Metadata", {}).get("sha256")
             or head.get("ETag")
@@ -155,10 +176,13 @@ class R2Store:
         try:
             response = self.client.get_object(Bucket=self.config.bucket, Key=key)
         except ClientError as error:
+            self._record("GET")
             if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
                 return default, None
             raise
-        return json.loads(response["Body"].read()), response["ETag"]
+        payload = response["Body"].read()
+        self._record("GET", read=len(payload))
+        return json.loads(payload), response["ETag"]
 
     def put_json_if(self, key: str, value, version: str | None) -> None:
         """Write only when the object still has this ETag, or is still absent when it is None."""
@@ -179,6 +203,8 @@ class R2Store:
             if code in {"PreconditionFailed", "ConditionalRequestConflict"} or status in {409, 412}:
                 raise ConditionalWriteFailed(key) from None
             raise
+        finally:
+            self._record("PUT", written=len(payload))
 
     def put_bytes(
         self,
@@ -200,6 +226,8 @@ class R2Store:
                 if old_digest == digest or self.get_bytes(key) == payload:
                     return
                 raise ValueError(f"Refusing to overwrite immutable R2 object: {key}")
+            finally:
+                self._record("HEAD")
         arguments = {
             "Bucket": self.config.bucket,
             "Key": key,
@@ -208,7 +236,10 @@ class R2Store:
         }
         if content_type:
             arguments["ContentType"] = content_type
-        self.client.put_object(**arguments)
+        try:
+            self.client.put_object(**arguments)
+        finally:
+            self._record("PUT", written=len(payload))
 
     def put_json(self, key: str, value, *, immutable: bool = False) -> None:
         self.put_bytes(key, json_bytes(value), immutable=immutable, content_type="application/json")
@@ -233,6 +264,7 @@ class R2Store:
     def keys(self, prefix: str = "") -> Iterator[str]:
         paginator = self.client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self.config.bucket, Prefix=prefix):
+            self._record("LIST")
             for row in page.get("Contents", []):
                 yield row["Key"]
 

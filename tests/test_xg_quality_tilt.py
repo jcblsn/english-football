@@ -101,6 +101,13 @@ def test_canonical_observations_and_factory(small_history):
     assert not any("M4" in str(v) or "M5" in str(v) for v in model.fit_diagnostics.values())
     with pytest.raises(ValueError, match="Unknown model kind"):
         make_model({"kind": "centered_quality_tilt"})
+    with pytest.raises(ValueError, match="explicit model input"):
+        make_model(
+            {
+                "kind": "bayesian_xg_quality_tilt",
+                "parameters": {"canonical_xg": True},
+            }
+        )
 
 
 def test_zero_weight_mixture_likelihood_is_silent():

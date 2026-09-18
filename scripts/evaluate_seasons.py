@@ -61,6 +61,7 @@ def main():
     data = Dataset()
     try:
         matches = data.matches()
+        observations = data.xg_observations()
         manifest = data.provenance()
         sanctions = load_registry(data)
     finally:
@@ -131,7 +132,13 @@ def main():
                 else:
                     print(f"Fitting {season} {origin} {name} ({len(played)} played)", flush=True)
                     config = metadata["configs"][name]
-                    model, _, _ = fitted_model(matches, config, SPECS[name][1], as_of)
+                    model, _, _ = fitted_model(
+                        matches,
+                        config,
+                        SPECS[name][1],
+                        as_of,
+                        observations=observations,
+                    )
                     forecast = simulate_season(
                         model,
                         played,

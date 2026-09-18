@@ -15,9 +15,9 @@ from epl_forecast.live import LONDON, load_live_season
 from epl_forecast.live_forecast import check_freshness, export_forecast
 from epl_forecast.models import make_model
 from epl_forecast.personnel import current_adjustments
-from epl_forecast.sanctions import load_sanctions
+from epl_forecast.sanctions import load_registry
 from epl_forecast.simulation import EuropeScenario
-from epl_forecast.storage import file_hash, write_json
+from epl_forecast.storage import file_hash, json_bytes, sha256_bytes, write_json
 from epl_forecast.training import training_matches
 
 
@@ -37,12 +37,44 @@ def load_config(path: Path) -> dict:
     return config
 
 
-def fitted_model(matches: list, config: dict, model_id: str, as_of: date):
+def fitted_model(
+    matches: list,
+    config: dict,
+    model_id: str,
+    as_of: date,
+    *,
+    observations=None,
+    fit_store: Path | None = None,
+    input_revision: str | None = None,
+):
     specs = [spec for spec in config["models"] if spec["id"] == model_id]
     if len(specs) != 1:
         raise ValueError(f"Unknown or duplicate model ID: {model_id}")
     training = training_matches(matches, config, specs[0], as_of)
-    return make_model(specs[0]).fit(training, as_of), specs[0], training
+    if fit_store is None:
+        model = make_model(specs[0], observations=observations).fit(training, as_of)
+    else:
+        if input_revision is None:
+            raise ValueError("A fit checkpoint requires an input revision")
+        from epl_forecast.fit_state import checkpoint_identity, fitted_model_from_checkpoint
+
+        model, reused = fitted_model_from_checkpoint(
+            fit_store,
+            specs[0],
+            training,
+            as_of,
+            input_revision,
+            observations=observations,
+        )
+        checkpoint_id, _, _, _ = checkpoint_identity(
+            specs[0], training, as_of, observations=observations
+        )
+        model.fit_checkpoint = {
+            "checkpoint_id": checkpoint_id,
+            "reused": reused,
+            "status": model.fit_state_status,
+        }
+    return model, specs[0], training
 
 
 def save_rows(path: Path, rows: list[dict]) -> None:
@@ -52,11 +84,20 @@ def save_rows(path: Path, rows: list[dict]) -> None:
 
 def evaluate_command(args) -> None:
     config = load_config(args.config)
-    matches, odds, manifest = load_dataset()
+    data = Dataset()
+    try:
+        matches = data.matches()
+        odds = data.rows("SELECT * FROM odds")
+        manifest = data.provenance()
+        observations = data.xg_observations()
+    finally:
+        data.close()
     start = date.fromisoformat(config[f"{args.split}_start"])
     end = date.fromisoformat(config[f"{args.split}_end"])
     new_run_directory(args.output)
-    predictions = rolling_predictions(matches, config, start, end, progress=True)
+    predictions = rolling_predictions(
+        matches, config, start, end, progress=True, observations=observations
+    )
     markets = market_predictions(predictions, odds)
     summary = summarize(predictions, markets, config)
     evaluation_context = {
@@ -86,25 +127,24 @@ def evaluate_command(args) -> None:
 
 
 def forecast_command(args) -> None:
-    live = load_live_season(args.cutoff, args.competition, args.season)
-    check_freshness(live, args.max_snapshot_age_hours)
-    config = load_config(args.config)
-    config["competition_id"] = live.competition_id
-    for model in config["models"]:
-        model.setdefault("parameters", {})["competition_id"] = live.competition_id
-        if model.get("parameters", {}).get("canonical_xg"):
-            model["parameters"]["data_cutoff"] = live.observed_at.isoformat()
-    history, odds, manifest = load_dataset(live.observed_at)
-    history = [
-        match
-        for match in history
-        if (match.fixture.competition_id, match.fixture.season_id)
-        != (live.competition_id, live.season_id)
-    ] + live.played
-    as_of = live.observed_at.astimezone(LONDON).date()
-    model, spec, training = fitted_model(history, config, args.model, as_of)
-    data = Dataset(live.observed_at)
+    cutoff = timestamp(args.cutoff) if args.cutoff else datetime.now(UTC)
+    if args.snapshot_manifest and not args.snapshot:
+        raise ValueError("--snapshot-manifest requires --snapshot")
+    if args.result_id and not args.results:
+        raise ValueError("--result-id requires --results")
+    if args.snapshot:
+        from epl_forecast.snapshot import SnapshotDataset
+
+        data = SnapshotDataset(args.snapshot, cutoff, manifest_path=args.snapshot_manifest)
+    else:
+        data = Dataset(cutoff)
     try:
+        live = load_live_season(cutoff, args.competition, args.season, data=data)
+        check_freshness(live, args.max_snapshot_age_hours)
+        history, odds, manifest = load_dataset(data=data)
+        observations = data.xg_observations()
+        input_revision = getattr(data, "data_revision", sha256_bytes(json_bytes(manifest)))
+        sanctions = load_registry(data)
         personnel = current_adjustments(
             data,
             live.remaining,
@@ -117,6 +157,28 @@ def forecast_command(args) -> None:
         )
     finally:
         data.close()
+    config = load_config(args.config)
+    config["competition_id"] = live.competition_id
+    for model in config["models"]:
+        model.setdefault("parameters", {})["competition_id"] = live.competition_id
+        if model.get("parameters", {}).get("canonical_xg"):
+            model["parameters"]["data_cutoff"] = live.observed_at.isoformat()
+    history = [
+        match
+        for match in history
+        if (match.fixture.competition_id, match.fixture.season_id)
+        != (live.competition_id, live.season_id)
+    ] + live.played
+    as_of = live.observed_at.astimezone(LONDON).date()
+    model, spec, training = fitted_model(
+        history,
+        config,
+        args.model,
+        as_of,
+        observations=observations,
+        fit_store=args.fits,
+        input_revision=input_revision,
+    )
     europe = (
         EuropeScenario(**json.loads(args.europe_scenario.read_text()))
         if args.europe_scenario
@@ -125,9 +187,7 @@ def forecast_command(args) -> None:
     adjustments = (
         json.loads(args.adjustments.read_text())
         if args.adjustments
-        else load_sanctions(live.observed_at).known_adjustments(
-            live.competition_id, live.season_id, as_of
-        )
+        else sanctions.known_adjustments(live.competition_id, live.season_id, as_of)
     )
     output = args.output or Path("runs/forecasts") / datetime.now(UTC).strftime(
         "%Y-%m-%dT%H%M%S.%fZ"
@@ -140,24 +200,26 @@ def forecast_command(args) -> None:
         for quote in odds
         if (quote["competition_id"], quote["season_id"]) == (live.competition_id, live.season_id)
     ]
+    run = {
+        **provenance(config, manifest),
+        "model": spec,
+        "fit_checkpoint": getattr(model, "fit_checkpoint", None),
+        "data_cutoff": live.observed_at.isoformat(),
+        "live_snapshot": live.manifest,
+        "seed": args.seed,
+        "simulations": args.simulations,
+        "max_goals": args.max_goals,
+        "europe_scenario": None if europe is None else vars(europe),
+        "adjustments": adjustments,
+        "market_pool": None
+        if market_pool is None
+        else {**market_pool, "config_sha256": file_hash(args.market_pool)},
+    }
     result = export_forecast(
         live,
         model,
         training,
-        {
-            **provenance(config, manifest),
-            "model": spec,
-            "data_cutoff": live.observed_at.isoformat(),
-            "live_snapshot": live.manifest,
-            "seed": args.seed,
-            "simulations": args.simulations,
-            "max_goals": args.max_goals,
-            "europe_scenario": None if europe is None else vars(europe),
-            "adjustments": adjustments,
-            "market_pool": None
-            if market_pool is None
-            else {**market_pool, "config_sha256": file_hash(args.market_pool)},
-        },
+        run,
         output,
         args.simulations,
         args.seed,
@@ -168,6 +230,17 @@ def forecast_command(args) -> None:
         market_pool,
         personnel=personnel,
     )
+    if args.results:
+        from epl_forecast.results import write_forecast_result
+
+        stored = write_forecast_result(
+            args.results,
+            result,
+            run,
+            input_revision=input_revision,
+            result_id=args.result_id,
+        )
+        print(f"Stored typed forecast result {stored['result_id']} in {args.results}")
     print(
         f"Archived {len(result['matches'])} match forecasts and "
         f"{len(result['team_strengths'])} team strengths to {output}"
@@ -196,6 +269,38 @@ def operate_command(args) -> None:
             stream.write(f"published={len(result['published'])}\n")
     if result["status"] in ("failed", "skipped"):
         raise SystemExit(1)
+
+
+def snapshot_command(args) -> None:
+    from epl_forecast.snapshot import create_snapshot
+    from epl_forecast.storage import R2Store
+
+    store = R2Store.from_environment("R2_DATA_BUCKET")
+    source_revision = store.identities(["state/manifests.json"])["state/manifests.json"]
+    if source_revision is None:
+        raise ValueError("The canonical manifest pointer does not exist")
+    data = Dataset(store=store, log_http=True)
+    try:
+        manifest = create_snapshot(data, args.output, source_revision=source_revision)
+    finally:
+        data.close()
+    print(
+        json.dumps(
+            {
+                key: manifest[key]
+                for key in (
+                    "schema_version",
+                    "source_revision",
+                    "data_revision",
+                    "database_bytes",
+                    "database_sha256",
+                    "source_http",
+                    "source_client",
+                )
+            },
+            indent=2,
+        )
+    )
 
 
 def verify_command(args) -> None:
@@ -274,6 +379,11 @@ def parser() -> argparse.ArgumentParser:
     forecast.add_argument("--seed", type=int, default=20260905)
     forecast.add_argument("--max-goals", type=int, default=10)
     forecast.add_argument("--max-snapshot-age-hours", type=float, default=24)
+    forecast.add_argument("--snapshot", type=Path)
+    forecast.add_argument("--snapshot-manifest", type=Path)
+    forecast.add_argument("--results", type=Path)
+    forecast.add_argument("--result-id")
+    forecast.add_argument("--fits", type=Path)
     forecast.add_argument("--europe-scenario", type=Path)
     forecast.add_argument("--adjustments", type=Path)
     forecast.add_argument("--market-pool", type=Path, default=Path("configs/market_pool.json"))
@@ -285,6 +395,11 @@ def parser() -> argparse.ArgumentParser:
     operate.add_argument("--force", action="store_true")
     operate.add_argument("--no-collect", action="store_true")
     operate.set_defaults(func=operate_command)
+    snapshot = commands.add_parser(
+        "snapshot", help="Create one verified local database from the canonical R2 revision"
+    )
+    snapshot.add_argument("--output", type=Path, required=True)
+    snapshot.set_defaults(func=snapshot_command)
     verify = commands.add_parser(
         "verify", help="Check forecast archives against the product contract"
     )

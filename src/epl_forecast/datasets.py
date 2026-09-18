@@ -221,6 +221,37 @@ def publish(root, request, tables):
     return manifest
 
 
+def install_current_views(connection, tables=None) -> None:
+    """Install the effective canonical row for each evidence key."""
+    selected = tuple(tables) if tables is not None else tuple(SCHEMAS)
+    for table in selected:
+        schema = SCHEMAS[table]
+        keys = ",".join(["provider", *KEYS[table]])
+        if table == "players":
+            columns = [column.split()[0] for column in (schema + ", " + COMMON).split(", ")]
+            selections = ["player_id"] + [
+                (
+                    "arg_max(name, (birth_date IS NOT NULL, retrieved_at, source_sha256)) AS name"
+                    if column == "name"
+                    else f"arg_max({column}, (retrieved_at, source_sha256)) AS {column}"
+                )
+                for column in columns
+                if column != "player_id"
+            ]
+            connection.execute(
+                "CREATE VIEW players AS SELECT "
+                + ", ".join(selections)
+                + " FROM players_observations GROUP BY player_id"
+            )
+        else:
+            connection.execute(
+                f"CREATE VIEW {table} AS SELECT * FROM {table}_observations "
+                f"QUALIFY row_number() OVER (PARTITION BY {keys} "
+                "ORDER BY retrieved_at DESC, source_sha256 DESC, "
+                "normalization_version DESC NULLS LAST)=1"
+            )
+
+
 class Dataset:
     """Canonical evidence from the R2 catalog and, during a capture, from its temporary workspace.
 
@@ -232,7 +263,16 @@ class Dataset:
     one table does not pay for the whole history. The other tables are then absent, not empty.
     """
 
-    def __init__(self, cutoff=None, *, store=None, workspace=None, manifests=None, tables=None):
+    def __init__(
+        self,
+        cutoff=None,
+        *,
+        store=None,
+        workspace=None,
+        manifests=None,
+        tables=None,
+        log_http=False,
+    ):
         self.store = store if store is not None else r2_store_if_configured("R2_DATA_BUCKET")
         self.workspace = Path(workspace) if workspace is not None else None
         if self.store is None and self.workspace is None:
@@ -269,7 +309,10 @@ class Dataset:
         self.con.execute(SESSION_TIME_ZONE)
         if self.store:
             self.store.configure_duckdb(self.con)
-        for table in tables if tables is not None else SCHEMAS:
+        if log_http:
+            self.con.execute("CALL enable_logging(['HTTP'])")
+        selected_tables = tuple(tables) if tables is not None else tuple(SCHEMAS)
+        for table in selected_tables:
             schema = SCHEMAS[table]
             paths = []
             for manifest in self.manifests:
@@ -293,31 +336,7 @@ class Dataset:
                 )
             else:
                 self.con.execute(f"CREATE TABLE {table}_observations ({schema}, {COMMON})")
-            keys = ",".join(["provider", *KEYS[table]])
-            if table == "players":
-                columns = [c.split()[0] for c in (schema + ", " + COMMON).split(", ")]
-                selections = ["player_id"] + [
-                    (
-                        "arg_max(name, (birth_date IS NOT NULL, "
-                        "retrieved_at, source_sha256)) AS name"
-                        if c == "name"
-                        else f"arg_max({c}, (retrieved_at, source_sha256)) AS {c}"
-                    )
-                    for c in columns
-                    if c != "player_id"
-                ]
-                self.con.execute(
-                    "CREATE VIEW players AS SELECT "
-                    + ", ".join(selections)
-                    + " FROM players_observations GROUP BY player_id"
-                )
-            else:
-                self.con.execute(
-                    f"CREATE VIEW {table} AS SELECT * FROM {table}_observations "
-                    f"QUALIFY row_number() OVER (PARTITION BY {keys} "
-                    "ORDER BY retrieved_at DESC, source_sha256 DESC, "
-                    "normalization_version DESC NULLS LAST)=1"
-                )
+        install_current_views(self.con, selected_tables)
 
     def _location(self, manifest, file) -> str:
         if manifest["batch_id"] in self.local_batches:
@@ -331,6 +350,23 @@ class Dataset:
         result = self.con.execute(sql, parameters or [])
         columns = [c[0] for c in result.description]
         return [dict(zip(columns, r, strict=True)) for r in result.fetchall()]
+
+    def http_metrics(self) -> dict:
+        rows = self.rows(
+            "SELECT request.type AS method, count(*) AS requests, "
+            "sum(CASE WHEN request.type='GET' THEN "
+            "coalesce(try_cast(response.headers['Content-Length'] AS UBIGINT), 0) ELSE 0 END) "
+            "AS response_bytes, coalesce(sum(request.request_body_length), 0) AS request_bytes, "
+            "sum(request.duration_ms) AS duration_ms "
+            "FROM duckdb_logs_parsed('HTTP') GROUP BY request.type ORDER BY request.type"
+        )
+        return {
+            "requests": sum(row["requests"] for row in rows),
+            "response_bytes": sum(row["response_bytes"] for row in rows),
+            "request_bytes": sum(row["request_bytes"] for row in rows),
+            "duration_ms": sum(row["duration_ms"] for row in rows),
+            "by_method": rows,
+        }
 
     def provenance(self):
         return {
@@ -420,12 +456,14 @@ class Dataset:
         )
 
 
-def load_dataset(cutoff=None, store=None):
-    data = Dataset(cutoff, store=store)
+def load_dataset(cutoff=None, store=None, data=None):
+    owns_data = data is None
+    data = data or Dataset(cutoff, store=store)
     try:
         return data.matches(), data.rows("SELECT * FROM odds"), data.provenance()
     finally:
-        data.close()
+        if owns_data:
+            data.close()
 
 
 def match_xg(matches, rows):

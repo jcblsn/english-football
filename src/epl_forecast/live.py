@@ -23,11 +23,16 @@ class LiveSeason:
     competition_id: str = "eng-premier-league"
 
 
-def load_live_season(cutoff=None, competition="eng-premier-league", season=None, store=None):
+def load_live_season(
+    cutoff=None, competition="eng-premier-league", season=None, store=None, data=None
+):
     cutoff = timestamp(cutoff) if cutoff else datetime.now(UTC)
     year = cutoff.year - (cutoff.month < 7)
     season = season or f"{year}-{year + 1}"
-    data = Dataset(cutoff, store=store)
+    owns_data = data is None
+    data = data or Dataset(cutoff, store=store)
+    if data.cutoff != cutoff:
+        raise ValueError("The prepared data cutoff does not match the forecast cutoff")
     try:
         records = [
             r
@@ -113,4 +118,5 @@ def load_live_season(cutoff=None, competition="eng-premier-league", season=None,
             competition_id=competition,
         )
     finally:
-        data.close()
+        if owns_data:
+            data.close()
