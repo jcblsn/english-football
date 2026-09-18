@@ -52,6 +52,48 @@ def _table_digest(connection, table: str) -> dict:
     return {"rows": count, "sha256": digest.hexdigest()}
 
 
+def _finalize_snapshot(database: Path, source, source_revision: str, manifests: list[dict]) -> dict:
+    created_at = datetime.now(UTC).isoformat()
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(SESSION_TIME_ZONE)
+        tables = {table: _table_digest(connection, table) for table in SCHEMAS}
+        data_revision = hashlib.sha256(json_bytes(tables)).hexdigest()
+        internal = {
+            "schema_version": SNAPSHOT_SCHEMA_VERSION,
+            "created_at": created_at,
+            "source_revision": source_revision,
+            "data_revision": data_revision,
+            "manifests": manifests,
+            "tables": tables,
+        }
+        connection.execute("DROP TABLE IF EXISTS metadata.snapshot")
+        connection.execute(
+            f"CREATE TABLE {_qualified(connection, 'metadata', 'snapshot')} AS "
+            "SELECT ?::INTEGER AS schema_version, "
+            "?::VARCHAR AS created_at, ?::VARCHAR AS source_revision, "
+            "?::VARCHAR AS data_revision, ?::JSON AS manifest",
+            [
+                SNAPSHOT_SCHEMA_VERSION,
+                created_at,
+                source_revision,
+                data_revision,
+                json.dumps(internal, separators=(",", ":")),
+            ],
+        )
+        connection.execute("CHECKPOINT")
+    manifest = {
+        **internal,
+        "database_bytes": database.stat().st_size,
+        "database_sha256": file_hash(database),
+    }
+    try:
+        manifest["source_http"] = source.http_metrics()
+    except duckdb.Error:
+        manifest["source_http"] = None
+    manifest["source_client"] = source.store.metrics() if source.store else None
+    return manifest
+
+
 def create_snapshot(
     source: Dataset,
     destination: Path,
@@ -81,44 +123,52 @@ def create_snapshot(
         finally:
             source.con.execute(f"DETACH {alias}")
 
-        created_at = datetime.now(UTC).isoformat()
-        with duckdb.connect(str(temporary)) as connection:
-            connection.execute(SESSION_TIME_ZONE)
-            tables = {table: _table_digest(connection, table) for table in SCHEMAS}
-            data_revision = hashlib.sha256(json_bytes(tables)).hexdigest()
-            internal = {
-                "schema_version": SNAPSHOT_SCHEMA_VERSION,
-                "created_at": created_at,
-                "source_revision": source_revision,
-                "data_revision": data_revision,
-                "manifests": source.manifests,
-                "tables": tables,
-            }
-            connection.execute(
-                f"CREATE TABLE {_qualified(connection, 'metadata', 'snapshot')} AS "
-                "SELECT ?::INTEGER AS schema_version, "
-                "?::VARCHAR AS created_at, ?::VARCHAR AS source_revision, "
-                "?::VARCHAR AS data_revision, ?::JSON AS manifest",
-                [
-                    SNAPSHOT_SCHEMA_VERSION,
-                    created_at,
-                    source_revision,
-                    data_revision,
-                    json.dumps(internal, separators=(",", ":")),
-                ],
-            )
-            connection.execute("CHECKPOINT")
+        manifest = _finalize_snapshot(temporary, source, source_revision, source.manifests)
         temporary.replace(destination)
-        manifest = {
-            **internal,
-            "database_bytes": destination.stat().st_size,
-            "database_sha256": file_hash(destination),
-        }
+        write_immutable(manifest_path, json_bytes(manifest))
+        return manifest
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def extend_snapshot(
+    previous: Path,
+    additions: Dataset,
+    destination: Path,
+    *,
+    source_revision: str,
+    previous_manifest_path: Path | None = None,
+    manifest_path: Path | None = None,
+) -> dict:
+    """Append new canonical manifest batches to a verified prior snapshot."""
+    previous = Path(previous)
+    destination = Path(destination)
+    manifest_path = Path(manifest_path or snapshot_manifest_path(destination))
+    prior = verify_snapshot(previous, previous_manifest_path, deep=False)
+    prior_batches = {item["batch_id"] for item in prior["manifests"]}
+    repeated = prior_batches & {item["batch_id"] for item in additions.manifests}
+    if repeated:
+        raise ValueError("Snapshot additions contain an existing manifest batch")
+    if destination.exists():
+        raise FileExistsError(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.parent / f".{destination.name}.{uuid4().hex}.tmp"
+    alias = f"snapshot_{uuid4().hex}"
+    try:
+        shutil.copyfile(previous, temporary)
+        additions.con.execute(f"ATTACH {_literal(str(temporary))} AS {alias}")
         try:
-            manifest["source_http"] = source.http_metrics()
-        except duckdb.Error:
-            manifest["source_http"] = None
-        manifest["source_client"] = source.store.metrics() if source.store else None
+            for table in SCHEMAS:
+                additions.con.execute(
+                    f"INSERT INTO {alias}.canonical.{table}_observations "
+                    f"SELECT * FROM {table}_observations"
+                )
+            additions.con.execute(f"CHECKPOINT {alias}")
+        finally:
+            additions.con.execute(f"DETACH {alias}")
+        manifests = [*prior["manifests"], *additions.manifests]
+        manifest = _finalize_snapshot(temporary, additions, source_revision, manifests)
+        temporary.replace(destination)
         write_immutable(manifest_path, json_bytes(manifest))
         return manifest
     finally:

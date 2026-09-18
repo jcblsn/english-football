@@ -27,7 +27,13 @@ from epl_forecast.publication import (
 from epl_forecast.record import realized_outcomes, update_record
 from epl_forecast.results import clone_forecast_result, read_forecast_result
 from epl_forecast.schema import Fixture
-from epl_forecast.snapshot import SnapshotDataset, create_snapshot, snapshot_manifest_path
+from epl_forecast.snapshot import (
+    SnapshotDataset,
+    create_snapshot,
+    extend_snapshot,
+    snapshot_manifest_path,
+    verify_snapshot,
+)
 from epl_forecast.storage import (
     ConditionalWriteFailed,
     file_hash,
@@ -431,14 +437,60 @@ def prepare_operation_snapshot(cutoff: datetime, data_store, workspace: Path) ->
     if pointer is not None and pointer.get("source_revision") == source_revision:
         return restore(pointer)
 
-    source = Dataset(cutoff, store=data_store, log_http=True)
-    try:
-        manifest = create_snapshot(source, database, source_revision=source_revision)
-    finally:
-        source.close()
+    manifest = None
+    if pointer is not None and all(
+        key in pointer
+        for key in ("database_key", "manifest_key", "database_bytes", "database_sha256")
+    ):
+        previous = workspace / "previous-canonical.duckdb"
+        previous_manifest = snapshot_manifest_path(previous)
+        data_store.download(pointer["database_key"], previous)
+        data_store.download(pointer["manifest_key"], previous_manifest)
+        prior = verify_snapshot(previous, previous_manifest, deep=False)
+        if (
+            previous.stat().st_size != pointer["database_bytes"]
+            or file_hash(previous) != pointer["database_sha256"]
+        ):
+            raise ValueError("Prior snapshot does not match its pointer")
+        catalog = data_store.get_json("state/manifests.json", {})
+        current_manifests = catalog.get("manifests", [])
+        current_by_batch = {item["batch_id"]: item for item in current_manifests}
+        prior_batches = {item["batch_id"] for item in prior["manifests"]}
+        can_extend = all(
+            current_by_batch.get(item["batch_id"]) == item for item in prior["manifests"]
+        )
+        if can_extend:
+            additions = Dataset(
+                cutoff,
+                store=data_store,
+                manifests=[
+                    item for item in current_manifests if item["batch_id"] not in prior_batches
+                ],
+                log_http=True,
+            )
+            try:
+                manifest = extend_snapshot(
+                    previous,
+                    additions,
+                    database,
+                    source_revision=source_revision,
+                    previous_manifest_path=previous_manifest,
+                )
+            finally:
+                additions.close()
+    if manifest is None:
+        source = Dataset(cutoff, store=data_store, log_http=True)
+        try:
+            manifest = create_snapshot(source, database, source_revision=source_revision)
+        finally:
+            source.close()
+    current_revision = data_store.identities(["state/manifests.json"])["state/manifests.json"]
+    if current_revision != source_revision:
+        raise ConditionalWriteFailed("state/manifests.json")
     data_revision = manifest["data_revision"]
-    database_key = f"snapshots/{data_revision}.duckdb"
-    manifest_key = f"snapshots/{data_revision}.manifest.json"
+    snapshot_id = manifest["database_sha256"]
+    database_key = f"snapshots/{snapshot_id}.duckdb"
+    manifest_key = f"snapshots/{snapshot_id}.manifest.json"
     data_store.upload(database, database_key, immutable=True)
     data_store.upload(manifest_path, manifest_key, immutable=True)
     replacement = {

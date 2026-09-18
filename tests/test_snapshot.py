@@ -7,6 +7,7 @@ from epl_forecast.datasets import Dataset, publish
 from epl_forecast.snapshot import (
     SnapshotDataset,
     create_snapshot,
+    extend_snapshot,
     restore_snapshot,
     snapshot_manifest_path,
     verify_snapshot,
@@ -79,6 +80,63 @@ def test_snapshot_reconstructs_a_correction_without_changing_the_old_revision(tm
     finally:
         old.close()
         current.close()
+
+
+def test_snapshot_extension_reads_only_new_manifest_batches(tmp_path):
+    database, original = make_snapshot(
+        tmp_path / "original",
+        [
+            (
+                evidence("2026-09-21T10:00:00+00:00"),
+                {"fixtures": [fixture(status="finished", home_goals=1)]},
+            )
+        ],
+    )
+    delta_workspace = tmp_path / "delta"
+    publish(
+        delta_workspace,
+        evidence("2026-09-22T10:00:00+00:00", "b"),
+        {"fixtures": [fixture(status="finished", home_goals=2)]},
+    )
+    additions = Dataset(workspace=delta_workspace)
+    extended = tmp_path / "extended.duckdb"
+    try:
+        manifest = extend_snapshot(
+            database,
+            additions,
+            extended,
+            source_revision="revision-2",
+        )
+    finally:
+        additions.close()
+    assert original["tables"]["fixtures"]["rows"] == 1
+    assert manifest["tables"]["fixtures"]["rows"] == 2
+    assert len(manifest["manifests"]) == 2
+    assert verify_snapshot(database)["source_revision"] == "revision-1"
+    current = SnapshotDataset(extended)
+    try:
+        assert current.matches()[0].home_goals == 2
+    finally:
+        current.close()
+
+
+def test_snapshot_extension_rejects_a_batch_already_in_the_prior_snapshot(tmp_path):
+    database, original = make_snapshot(
+        tmp_path / "original",
+        [(evidence("2026-09-21T10:00:00+00:00"), {"fixtures": [fixture()]})],
+    )
+    additions = Dataset(workspace=tmp_path / "original" / "canonical")
+    try:
+        with pytest.raises(ValueError, match="existing manifest batch"):
+            extend_snapshot(
+                database,
+                additions,
+                tmp_path / "invalid.duckdb",
+                source_revision="revision-2",
+            )
+    finally:
+        additions.close()
+    assert verify_snapshot(database)["data_revision"] == original["data_revision"]
 
 
 def test_snapshot_keeps_empty_scope_and_repeated_capture_receipts(tmp_path):

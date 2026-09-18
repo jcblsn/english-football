@@ -8,8 +8,10 @@ from test_publication import sample_forecast, sample_run
 from test_results import result_forecast
 
 from epl_forecast import pipeline
+from epl_forecast.datasets import Dataset, publish
 from epl_forecast.pipeline import due, due_reasons, forecast_id, production_fingerprint
 from epl_forecast.results import write_forecast_result
+from epl_forecast.snapshot import create_snapshot, snapshot_manifest_path
 from epl_forecast.storage import ConditionalWriteFailed
 
 NOW = datetime(2026, 9, 10, 22, 43, 3, tzinfo=UTC)
@@ -84,6 +86,15 @@ class Store:
 
     def exists(self, key):
         return key in self.objects
+
+    def configure_duckdb(self, connection, name="page324_r2"):
+        pass
+
+    def uri(self, key):
+        raise AssertionError(f"Unexpected remote table read: {key}")
+
+    def metrics(self):
+        return {"requests": 0, "read_bytes": 0, "written_bytes": 0, "by_method": {}}
 
 
 def prepared_snapshot(workspace):
@@ -462,9 +473,12 @@ def test_snapshot_pointer_commits_after_immutable_objects_and_restores(tmp_path,
     prepared = pipeline.prepare_operation_snapshot(NOW, store, first)
     prepared.data.close()
     keys = [key for _, key, _ in store.writes]
+    snapshot_id = store.objects[pipeline.SNAPSHOT_POINTER]["database_sha256"]
     assert keys[-1] == pipeline.SNAPSHOT_POINTER
-    assert keys.index("snapshots/data-1.duckdb") < keys.index(pipeline.SNAPSHOT_POINTER)
-    assert keys.index("snapshots/data-1.manifest.json") < keys.index(pipeline.SNAPSHOT_POINTER)
+    assert keys.index(f"snapshots/{snapshot_id}.duckdb") < keys.index(pipeline.SNAPSHOT_POINTER)
+    assert keys.index(f"snapshots/{snapshot_id}.manifest.json") < keys.index(
+        pipeline.SNAPSHOT_POINTER
+    )
     assert calls == ["source-1"]
 
     second = tmp_path / "second"
@@ -473,6 +487,83 @@ def test_snapshot_pointer_commits_after_immutable_objects_and_restores(tmp_path,
     restored.data.close()
     assert restored.database.read_bytes() == b"snapshot"
     assert calls == ["source-1"]
+
+
+def test_changed_catalog_extends_the_prior_snapshot_without_full_history_read(
+    tmp_path, monkeypatch
+):
+    capture = tmp_path / "capture"
+    first = publish(
+        capture,
+        {
+            "provider": "test",
+            "retrieved_at": "2026-09-18T10:00:00+00:00",
+            "evidence_basis": "captured",
+            "source_sha256": "a" * 64,
+        },
+        {},
+    )
+    source = Dataset(workspace=capture)
+    base = tmp_path / "base.duckdb"
+    try:
+        base_manifest = create_snapshot(source, base, source_revision="source-1")
+    finally:
+        source.close()
+    second = publish(
+        capture,
+        {
+            "provider": "test",
+            "retrieved_at": "2026-09-18T11:00:00+00:00",
+            "evidence_basis": "captured",
+            "source_sha256": "b" * 64,
+        },
+        {},
+    )
+    store = Store()
+    database_key = "snapshots/base.duckdb"
+    manifest_key = "snapshots/base.manifest.json"
+    store.upload(base, database_key, immutable=True)
+    store.upload(snapshot_manifest_path(base), manifest_key, immutable=True)
+    store.put_json(
+        pipeline.SNAPSHOT_POINTER,
+        {
+            "schema_version": 1,
+            "source_revision": "source-1",
+            "data_revision": base_manifest["data_revision"],
+            "database_key": database_key,
+            "manifest_key": manifest_key,
+            "database_bytes": base_manifest["database_bytes"],
+            "database_sha256": base_manifest["database_sha256"],
+            "created_at": base_manifest["created_at"],
+        },
+    )
+    store.objects["state/manifests.json"] = {
+        "schema_version": 1,
+        "manifests": [first, second],
+    }
+    store.versions["state/manifests.json"] = "source-2"
+    monkeypatch.setattr(
+        pipeline,
+        "create_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("A changed append-only catalog must extend the prior snapshot")
+        ),
+    )
+    workspace = tmp_path / "operation"
+    workspace.mkdir()
+    prepared = pipeline.prepare_operation_snapshot(
+        datetime(2026, 9, 23, tzinfo=UTC), store, workspace
+    )
+    try:
+        assert prepared.data.source_revision == "source-2"
+        assert prepared.manifest["data_revision"] == base_manifest["data_revision"]
+        assert [row["batch_id"] for row in prepared.manifest["manifests"]] == [
+            first["batch_id"],
+            second["batch_id"],
+        ]
+        assert store.objects[pipeline.SNAPSHOT_POINTER]["database_key"] != database_key
+    finally:
+        prepared.data.close()
 
 
 def test_snapshot_pointer_failure_keeps_last_good_revision(tmp_path, monkeypatch):
