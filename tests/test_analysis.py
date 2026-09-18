@@ -6,10 +6,21 @@ import pytest
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast import analysis_contract
-from epl_forecast.analysis import open_analysis_session, start_ui
+from epl_forecast.analysis import (
+    ALL_MODEL_VERSIONS,
+    CURRENT_MODEL_VERSION,
+    open_analysis_session,
+    start_ui,
+)
 from epl_forecast.datasets import publish
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast, forecast_pointer
+from epl_forecast.storage import json_bytes, sha256_bytes
+
+
+def identity(value):
+    """The compact change token of a mutable pointer, as `R2Store.identities` returns it."""
+    return None if value is None else sha256_bytes(json_bytes(value))
 
 
 class Store:
@@ -25,6 +36,9 @@ class Store:
     def uri(self, key):
         return str(self.directory / key)
 
+    def identities(self, keys):
+        return {key: identity(self.get_json(key)) for key in keys}
+
     def configure_duckdb(self, connection, name="page324_r2"):
         pass
 
@@ -37,6 +51,9 @@ class ObjectStore:
     def get_json(self, key, default=None):
         self.reads.append(key)
         return self.objects.get(key, default)
+
+    def identities(self, keys):
+        return {key: identity(self.objects.get(key)) for key in keys}
 
     def uri(self, key):
         raise AssertionError(f"Unexpected Parquet read: {key}")
@@ -747,7 +764,7 @@ def test_hindcasts_are_pointer_driven_and_explicitly_retrospective(tmp_path):
                 "schema_version": 1,
                 "retrospective": True,
                 "updated_at": "2026-09-01T00:00:00+00:00",
-                "seasons": [{"href": series_href}],
+                "seasons": [{"model_version": "v0.2", "href": series_href}],
             },
             series_href: {
                 "schema_version": 1,
@@ -827,7 +844,10 @@ def test_the_hindcast_archive_keeps_every_published_model_version(tmp_path):
                 "schema_version": 1,
                 "retrospective": True,
                 "updated_at": "2026-09-17T00:00:00+00:00",
-                "seasons": [{"href": older_series}, {"href": newer_series}],
+                "seasons": [
+                    {"model_version": "v0.2", "href": older_series},
+                    {"model_version": "v0.3.0", "href": newer_series},
+                ],
             },
             older_series: {
                 "schema_version": 1,
@@ -843,7 +863,9 @@ def test_the_hindcast_archive_keeps_every_published_model_version(tmp_path):
             newer_href: newer,
         }
     )
-    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    session = open_analysis_session(
+        data_store=data, publish_store=publish_store, hindcast_versions=ALL_MODEL_VERSIONS
+    )
     try:
         assert session.rows(
             "SELECT model_version FROM analysis.hindcast_origins ORDER BY model_version"

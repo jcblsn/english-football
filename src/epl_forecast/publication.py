@@ -204,6 +204,62 @@ HINDCAST_INDEX_KEYS = {
     "seasons",
     "updated_at",
 }
+# A retrospective match forecast. It scores one match, so it carries no season projection and
+# no simulation. It never enters the prospective record: `prospective_from` states the London day
+# on which live coverage of the model version began, and every match here is earlier.
+MATCH_HINDCAST_KEYS = {
+    "assumptions",
+    "away_discontinuity",
+    "away_rate",
+    "away_team_id",
+    "competition_id",
+    "competition_name",
+    "grid_home_rows_away_columns",
+    "home_discontinuity",
+    "home_log_rate_shift",
+    "home_rate",
+    "home_team_id",
+    "kickoff_time",
+    "last_match_date",
+    "match_date",
+    "match_id",
+    "matches",
+    "model",
+    "model_results_cutoff",
+    "notice",
+    "omitted_probability",
+    "origin_at",
+    "origin_rule",
+    "p_away",
+    "p_draw",
+    "p_home",
+    "personnel",
+    "product",
+    "prospective_from",
+    "retrospective",
+    "schema_version",
+    "score_probabilities",
+    "season_id",
+    "unadjusted",
+    "version",
+}
+MATCH_HINDCAST_INDEX_KEYS = {
+    "competition_id",
+    "competition_name",
+    "first_match_date",
+    "href",
+    "last_match_date",
+    "match_count",
+    "model_version",
+    "notice",
+    "product",
+    "prospective_from",
+    "retrospective",
+    "schema_version",
+    "season_id",
+    "seasons",
+    "updated_at",
+}
 CONTRACT_KEYS = {
     "forecast": FORECAST_KEYS,
     "current": POINTER_KEYS,
@@ -212,6 +268,8 @@ CONTRACT_KEYS = {
     "hindcast": HINDCAST_KEYS,
     "hindcast_series": HINDCAST_SERIES_KEYS,
     "hindcast_index": HINDCAST_INDEX_KEYS,
+    "match_hindcast": MATCH_HINDCAST_KEYS,
+    "match_hindcast_index": MATCH_HINDCAST_INDEX_KEYS,
 }
 # A hindcast is retrospective. Its documents stay under their own prefix, so no live pointer can name one.
 NAMESPACES = {
@@ -219,6 +277,7 @@ NAMESPACES = {
     "archive": "forecasts/",
     "hindcast_series": "hindcasts/",
     "hindcast_index": "hindcasts/",
+    "match_hindcast_index": "match-hindcasts/",
 }
 
 
@@ -238,6 +297,8 @@ def load_policy(path: Path = POLICY_PATH) -> dict:
 
 
 def document_kind(document: dict) -> str:
+    if document.get("product") == "match_hindcast":
+        return "match_hindcast_index" if "seasons" in document else "match_hindcast"
     if document.get("product") == "hindcast":
         if "origins" in document:
             return "hindcast_series"

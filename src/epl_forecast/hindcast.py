@@ -5,6 +5,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import UTC, date, datetime, time, timedelta
 
+from epl_forecast.analysis_keys import HINDCAST_INDEX_KEY
 from epl_forecast.cli import fitted_model, load_config
 from epl_forecast.competitions import COMPETITION_IDS, competition
 from epl_forecast.datasets import Dataset
@@ -28,7 +29,7 @@ from epl_forecast.sanctions import load_registry
 from epl_forecast.simulation import simulate_season
 
 PREFIX = "hindcasts"
-INDEX_KEY = f"{PREFIX}/index.json"
+INDEX_KEY = HINDCAST_INDEX_KEY
 SEED = 20260905
 SEASONS = tuple(range(2021, 2026))
 ORIGIN_TIME = time(9)

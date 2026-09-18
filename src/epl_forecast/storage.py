@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,32 @@ class R2Store:
             return json.loads(self.get_bytes(key))
         except FileNotFoundError:
             return default
+
+    def identities(self, keys) -> dict[str, str | None]:
+        """A compact change token for each key, or None where the object is absent.
+
+        The token is the `sha256` metadata that `put_bytes` writes, and the ETag when an
+        object has no such metadata. One HEAD request answers for each key, so a reader that
+        only needs to know whether a mutable pointer changed never reads its body.
+        """
+        keys = list(keys)
+        if not keys:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(16, len(keys))) as pool:
+            return dict(zip(keys, pool.map(self._identity, keys), strict=True))
+
+    def _identity(self, key: str) -> str | None:
+        try:
+            head = self.client.head_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        return (
+            head.get("Metadata", {}).get("sha256")
+            or head.get("ETag")
+            or sha256_bytes(self.get_bytes(key))
+        )
 
     def get_json_versioned(self, key: str, default=None) -> tuple[Any, str | None]:
         """The JSON value and its ETag, or the default and None when the object is absent."""
