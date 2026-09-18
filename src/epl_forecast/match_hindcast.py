@@ -203,7 +203,9 @@ def forecast_day(task: dict) -> list[dict]:
 
 # A fixture the calendar places before the handoff, which the canonical history says was not
 # played then. It has no retrospective forecast, and the document names it so the gap is visible.
-DEFERRED_STATUSES = ("postponed", "unscheduled", "cancelled")
+# The canonical status vocabulary is finished, in_progress, postponed and scheduled, and it folds
+# a cancelled or abandoned match into postponed, so this is the whole of it.
+DEFERRED_STATUSES = ("postponed",)
 
 
 def scope(fixtures, competition_id: str, season_id: str, handoff: dict) -> tuple[list, list]:
@@ -224,7 +226,8 @@ def scope(fixtures, competition_id: str, season_id: str, handoff: dict) -> tuple
     ]
     played = [row for row in in_scope if row["status"] == "finished"]
     deferred = [row for row in in_scope if row["status"] in DEFERRED_STATUSES]
-    unaccounted = [row for row in in_scope if row["status"] != "finished" and row not in deferred]
+    accounted = ("finished", *DEFERRED_STATUSES)
+    unaccounted = [row for row in in_scope if row["status"] not in accounted]
     if unaccounted:
         named = ", ".join(f"{row['match_id']} ({row['status']})" for row in unaccounted[:3])
         raise ValueError(

@@ -160,10 +160,9 @@ def test_the_calendar_before_the_handoff_must_be_accounted_for():
     assert [row["match_id"] for row in played] == [fixtures[0]["match_id"]]
     assert [row["status"] for row in deferred] == ["postponed"]
 
-    with pytest.raises(ValueError, match="no result and no reason"):
-        scope(calendar(statuses=("finished", "scheduled")), *SEASON, HANDOFF)
-    with pytest.raises(ValueError, match="no result and no reason"):
-        scope(calendar(statuses=("awaiting_result",)), *SEASON, HANDOFF)
+    for status in ("scheduled", "in_progress"):
+        with pytest.raises(ValueError, match="no result and no reason"):
+            scope(calendar(statuses=("finished", status)), *SEASON, HANDOFF)
     with pytest.raises(ValueError, match="No eng-premier-league 2026-2027 match was played"):
         scope(calendar(statuses=("postponed",)), *SEASON, HANDOFF)
 
