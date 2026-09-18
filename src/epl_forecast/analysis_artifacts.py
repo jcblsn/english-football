@@ -1669,6 +1669,13 @@ def _install_record(connection, matches: list[dict], summaries: list[dict]) -> N
     )
 
 
+# The live score grid comes from the private run and keeps full precision. A published match
+# hindcast rounds each of its 121 cells to six decimal places, so the total of the grid and the
+# omitted probability can drift by about 6e-5. The tolerance states that, and stays far below any
+# difference a reader would act on.
+MATCH_HINDCAST_GRID_TOLERANCE = 0.0002
+
+
 def _validate_analysis(connection) -> None:
     grains = {
         "forecasts": "forecast_id, competition_id",
@@ -1738,7 +1745,7 @@ def _validate_analysis(connection) -> None:
         ).fetchone():
             raise ValueError(f"Invalid probability sum in analysis.{table}")
     if connection.execute(
-        """
+        f"""
         SELECT 1 FROM analysis.match_hindcasts hindcast
         JOIN (
             SELECT model_version, competition_id, season_id, match_id,
@@ -1746,7 +1753,7 @@ def _validate_analysis(connection) -> None:
             FROM analysis.match_hindcast_score_grid
             GROUP BY model_version, competition_id, season_id, match_id
         ) grid USING (model_version, competition_id, season_id, match_id)
-        WHERE abs(grid_probability + omitted_probability - 1) > 0.000002
+        WHERE abs(grid_probability + omitted_probability - 1) > {MATCH_HINDCAST_GRID_TOLERANCE}
         LIMIT 1
         """
     ).fetchone():
