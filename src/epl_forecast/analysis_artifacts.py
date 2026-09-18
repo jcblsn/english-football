@@ -1759,6 +1759,25 @@ def _validate_analysis(connection) -> None:
     ).fetchone():
         raise ValueError("Invalid score distribution total in analysis.match_hindcast_score_grid")
     if connection.execute(
+        f"""
+        SELECT 1
+        FROM analysis.match_hindcasts hindcast
+        JOIN (
+            SELECT model_version, competition_id, season_id, match_id,
+                   sum(probability) FILTER (home_goals > away_goals) AS p_home,
+                   sum(probability) FILTER (home_goals = away_goals) AS p_draw,
+                   sum(probability) FILTER (home_goals < away_goals) AS p_away
+            FROM analysis.match_hindcast_score_grid
+            GROUP BY model_version, competition_id, season_id, match_id
+        ) grid USING (model_version, competition_id, season_id, match_id)
+        WHERE greatest(abs(hindcast.p_home - grid.p_home), abs(hindcast.p_draw - grid.p_draw),
+                       abs(hindcast.p_away - grid.p_away))
+              > hindcast.omitted_probability + {MATCH_HINDCAST_GRID_TOLERANCE}
+        LIMIT 1
+        """
+    ).fetchone():
+        raise ValueError("Score grid does not reproduce its match-hindcast probabilities")
+    if connection.execute(
         "SELECT 1 FROM analysis.match_hindcasts WHERE match_date >= prospective_from LIMIT 1"
     ).fetchone():
         raise ValueError("A retrospective match forecast reaches prospective coverage")
@@ -1879,14 +1898,17 @@ def _validate_analysis(connection) -> None:
             raise ValueError(f"Unknown team identity in analysis.{prefix}_team_events")
 
 
-def current_model_version(publish_store) -> str | None:
-    """The public model version of the newest live forecast, or None when there is none."""
+def current_model_versions(publish_store) -> frozenset:
+    """Every public model version that a division is currently live on.
+
+    Production publishes each division on its own and allows one to fail, so a release can leave
+    the divisions on different versions for a time. Taking the newest version alone would hide the
+    hindcasts of a division that is still on the older one.
+    """
     current = publish_store.get_json("forecasts/current.json") or {}
-    pointers = [row for row in current.get("forecasts", ()) if row.get("model_version")]
-    if not pointers:
-        return None
-    newest = max(pointers, key=lambda row: (row["generated_at"], row["forecast_id"]))
-    return newest["model_version"]
+    return frozenset(
+        row["model_version"] for row in current.get("forecasts", ()) if row.get("model_version")
+    )
 
 
 def _install_projection_view(connection) -> None:

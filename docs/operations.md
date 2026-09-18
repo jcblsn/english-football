@@ -192,12 +192,14 @@ The rules for each match hindcast:
 - Results and expected goals follow the same availability rules as the season hindcasts.
 - In the Premier League and the Championship the match carries the matchday-squad continuity adjustment, estimated from matchday squads of earlier matches and from dated transfers alone. History has no injury lists, squad captures or team sheets.
 - The model uses no betting market.
-- The bridge covers finished regular-season matches only, so it can never hold a forecast of a match the prospective record will later cover.
+- The command reconciles the whole regular-season calendar before the handoff. Every fixture there must be finished with a result, or carry a status that says it was not played. Anything else stops the run rather than publishing a bridge with a hole in it. A fixture that was not played is named in `deferred_fixtures`.
 - Each document lists these assumptions in `assumptions`, and has `"product": "match_hindcast"` and `"retrospective": true`.
 
 ### The retrospective and prospective handoff
 
-`prospective_from` is the first London day on which a live forecast of the model version was published. It is derived from the competition forecast archives, which are the authority for what the product published, so no separate release metadata can drift away from it. A published forecast covers only kickoffs after it was generated, so no prospective row of a version can fall before that day. The bridge therefore ends on the day before, and the two products can never overlap. For `v0.3.0` the first live forecast was published on 2026-09-17, so the bridge ends on 2026-09-16.
+`prospective_from` is the first London day on which a live forecast of the model version covered that division. It is derived from the division's forecast archive, which is the authority for what the product published, so no separate release metadata can drift away from it. A published forecast covers only kickoffs after it was generated, so no prospective row of a version in that division can fall before that day. The bridge therefore ends on the day before, and the two products can never overlap. For `v0.3.0` the first live forecast of each division was published on 2026-09-17, so every bridge ends on 2026-09-16.
+
+The handoff belongs to the division, not to the release. Production publishes each division on its own and lets one fail while the others go out, so a release can leave the divisions on different versions for a time. A division that has no live forecast of the version gets no bridge at all, rather than one that stops on a day its own coverage never reached, and the run result names it under `skipped`.
 
 Each published document records `prospective_from`, so a reader does not recompute it. The analysis bootstrap fails if a match hindcast reaches that day or shares a match and model version with the prospective record.
 
@@ -205,9 +207,11 @@ The command writes these objects:
 
 | Bucket | Key | Content |
 | --- | --- | --- |
-| `page324-data` | `runs/match-hindcasts/<version>/<competition>/<season>.json` | The private run: the model code hashes, the grid size, the handoff and the full personnel record of each match. |
-| `page324-publish` | `match-hindcasts/<version>/<competition>/<season>.json` | One retrospective forecast for each match: the probabilities before and after the personnel adjustment, the club discontinuities and the home log-rate shift, and the retained score grid. |
-| `page324-publish` | `match-hindcasts/index.json` | One row for each public model version, division and season, with the match count, the first and last match day, the handoff day and a link to the document. |
+| `page324-data` | `runs/match-hindcasts/<version>/<competition>/<season>/<content>.json` | The private run: the model code hashes, the grid size, the handoff and the club continuity of each match. It is immutable. |
+| `page324-publish` | `match-hindcasts/<version>/<competition>/<season>/<content>.json` | One retrospective forecast for each match: the probabilities before and after the personnel adjustment, the club discontinuities and the home log-rate shift, and the retained score grid. It is immutable. |
+| `page324-publish` | `match-hindcasts/index.json` | One row for each public model version, division and season, with the match count, the deferred count, the first and last match day, the handoff day and a link to the document. |
+
+`<content>` is the identity of the document's own content. The analysis session trusts an object once a mutable pointer selects it, so a bridge that changes must change the pointer. A stable key would let new probabilities arrive under an index entry that did not change, and a warm session would keep serving the old ones. A regenerated bridge therefore writes new objects and moves the index; the superseded objects stay where they are.
 
 A match hindcast never enters `forecasts/current.json`, a competition archive or `record.json`. The publication contracts refuse a retrospective link in a live pointer, and the prospective record refuses a retrospective document.
 

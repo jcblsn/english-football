@@ -15,7 +15,7 @@ from epl_forecast.analysis_keys import MATCH_HINDCAST_INDEX_KEY
 from epl_forecast.cli import fitted_model
 from epl_forecast.competitions import COMPETITION_IDS, competition
 from epl_forecast.datasets import Dataset, timestamp
-from epl_forecast.hindcast import load_personnel_history, model_config
+from epl_forecast.hindcast import XG_ASSUMPTION, load_personnel_history, model_config
 from epl_forecast.live import LONDON
 from epl_forecast.live_forecast import forecast_probability_stages
 from epl_forecast.personnel import COMPETITIONS as PERSONNEL_COMPETITIONS
@@ -27,6 +27,7 @@ from epl_forecast.publication import (
     probability,
     public_personnel,
 )
+from epl_forecast.storage import json_bytes, sha256_bytes
 
 PREFIX = "match-hindcasts"
 INDEX_KEY = MATCH_HINDCAST_INDEX_KEY
@@ -41,9 +42,12 @@ NOTICE = (
     "It is not a forecast that existed before the match, and the prospective record does not "
     "include it."
 )
+# The document key carries this many hex characters of the content digest. A published value of
+# 32 or more would read as a leaked source hash, which the publication boundary refuses.
+CONTENT_ID_LENGTH = 16
 ASSUMPTIONS = (
     "The model uses only the results of matches played before the London day of the match.",
-    "In the Premier League, the model also uses expected goals. It assumes that the expected goals of a match were available on the day after the match. The data does not show when they were first available.",
+    XG_ASSUMPTION,
     "In the Premier League and the Championship, the match gets the matchday-squad continuity adjustment. The hindcast estimates it from the matchday squads of earlier matches and from dated transfers. It does not use injury lists, squad captures or team sheets, because the data does not show when they were first known.",
     "The model does not use betting markets.",
     "A retrospective match forecast stops before the London day on which live coverage of this model version began. It is never a prospective forecast.",
@@ -55,41 +59,70 @@ def origin_at(match_date: date) -> datetime:
     return datetime.combine(match_date, time.min, tzinfo=LONDON)
 
 
-def document_key(model_version: str, competition_id: str, season_id: str) -> str:
-    return f"{PREFIX}/{model_version}/{competition_id}/{season_id}.json"
+def content_id(document: dict) -> str:
+    """The identity of one document's content, which names the object that holds it."""
+    return sha256_bytes(json_bytes(document))[:CONTENT_ID_LENGTH]
 
 
-def private_key(model_version: str, competition_id: str, season_id: str) -> str:
-    return f"runs/{document_key(model_version, competition_id, season_id)}"
+def season_prefix(model_version: str, competition_id: str, season_id: str) -> str:
+    return f"{PREFIX}/{model_version}/{competition_id}/{season_id}"
 
 
-def prospective_start(publish_store, model_version: str) -> date | None:
-    """The first London day on which a live forecast of this model version was published.
+def document_key(model_version: str, competition_id: str, season_id: str, identity: str) -> str:
+    """Content addresses the document, so a changed bridge never hides behind a known key.
 
-    The forecast archives are the authority, so no release metadata can drift away from what
-    the product actually published. A published forecast only covers kickoffs after it was
-    generated, so no prospective row of this version can fall before this day.
+    The analysis session trusts an object that a mutable pointer selects, and only re-reads when
+    the pointer changes. A stable key would let new probabilities arrive under an index entry that
+    is unchanged, and a warm session would keep serving the old ones.
     """
-    days = []
-    for competition_id in COMPETITION_IDS:
-        archive = publish_store.get_json(f"forecasts/{competition_id}/archive.json")
-        days.extend(
-            timestamp(pointer["generated_at"]).astimezone(LONDON).date()
-            for pointer in (archive or {}).get("forecasts", ())
-            if pointer.get("model_version") == model_version
-        )
+    return f"{season_prefix(model_version, competition_id, season_id)}/{identity}.json"
+
+
+def private_key(model_version: str, competition_id: str, season_id: str, identity: str) -> str:
+    return f"runs/{document_key(model_version, competition_id, season_id, identity)}"
+
+
+def prospective_start(publish_store, model_version: str, competition_id: str) -> date | None:
+    """The first London day a live forecast of this model version covered this division.
+
+    The forecast archive of the division is the authority, so no release metadata can drift away
+    from what the product actually published. A published forecast only covers kickoffs after it
+    was generated, so no prospective row of this version in this division falls before this day.
+    Production publishes each division on its own, so one division can reach a version days
+    before another, and a division that failed may not have reached it at all.
+    """
+    archive = publish_store.get_json(f"forecasts/{competition_id}/archive.json")
+    days = [
+        timestamp(pointer["generated_at"]).astimezone(LONDON).date()
+        for pointer in (archive or {}).get("forecasts", ())
+        if pointer.get("model_version") == model_version
+    ]
     return min(days) if days else None
 
 
-def boundary(publish_store, model_version: str) -> dict:
-    """The retrospective/prospective handoff of one model version."""
-    start = prospective_start(publish_store, model_version)
+def boundary(publish_store, model_version: str, competition_id: str) -> dict:
+    """The retrospective/prospective handoff of one model version in one division."""
+    start = prospective_start(publish_store, model_version, competition_id)
     if start is None:
         raise ValueError(
-            f"No published forecast carries model version {model_version}, so the retrospective "
-            "bridge has no end. Publish the live forecasts first."
+            f"No published {competition_id} forecast carries model version {model_version}, so "
+            "the retrospective bridge of that division has no end. Publish its live forecast "
+            "first."
         )
     return {"prospective_from": str(start), "last_match_date": str(start - timedelta(days=1))}
+
+
+def boundaries(publish_store, model_version: str, competitions) -> dict:
+    """The handoff of each division that has live coverage of the version, and nothing else."""
+    result = {}
+    for competition_id in competitions:
+        start = prospective_start(publish_store, model_version, competition_id)
+        if start is not None:
+            result[competition_id] = {
+                "prospective_from": str(start),
+                "last_match_date": str(start - timedelta(days=1)),
+            }
+    return result
 
 
 def season_of(day: date) -> str:
@@ -168,12 +201,48 @@ def forecast_day(task: dict) -> list[dict]:
     return rows
 
 
+# A fixture the calendar places before the handoff, which the canonical history says was not
+# played then. It has no retrospective forecast, and the document names it so the gap is visible.
+DEFERRED_STATUSES = ("postponed", "unscheduled", "cancelled")
+
+
+def scope(fixtures, competition_id: str, season_id: str, handoff: dict) -> tuple[list, list]:
+    """Reconcile the calendar before the handoff: what must be forecast, and what was not played.
+
+    `Dataset.matches()` holds finished regular-season matches only, so it proves that every
+    forecast has a result but never that every fixture has a forecast. This reads the whole
+    regular-season calendar instead and refuses anything it cannot account for.
+    """
+    last = handoff["last_match_date"]
+    in_scope = [
+        row
+        for row in fixtures
+        if (row["competition_id"], row["season_id"], row["stage"])
+        == (competition_id, season_id, "regular")
+        and row["match_date"] is not None
+        and str(row["match_date"]) <= last
+    ]
+    played = [row for row in in_scope if row["status"] == "finished"]
+    deferred = [row for row in in_scope if row["status"] in DEFERRED_STATUSES]
+    unaccounted = [row for row in in_scope if row["status"] != "finished" and row not in deferred]
+    if unaccounted:
+        named = ", ".join(f"{row['match_id']} ({row['status']})" for row in unaccounted[:3])
+        raise ValueError(
+            f"{len(unaccounted)} {competition_id} {season_id} fixtures on or before {last} have "
+            f"no result and no reason: {named}. Collect the results before you make the bridge."
+        )
+    if not played:
+        raise ValueError(f"No {competition_id} {season_id} match was played on or before {last}")
+    return played, deferred
+
+
 def derive_match_hindcast(
     model_version: str,
     competition_id: str,
     season_id: str,
     rows: list[dict],
     handoff: dict,
+    deferred: list[dict] = (),
 ) -> dict:
     """The published document: one retrospective forecast for each match, and no simulation."""
     if not rows:
@@ -229,22 +298,36 @@ def derive_match_hindcast(
         "assumptions": list(ASSUMPTIONS),
         "prospective_from": handoff["prospective_from"],
         "last_match_date": matches[-1]["match_date"],
+        "deferred_fixtures": [
+            {
+                "match_id": row["match_id"],
+                "match_date": str(row["match_date"]),
+                "status": row["status"],
+            }
+            for row in sorted(deferred, key=lambda row: (str(row["match_date"]), row["match_id"]))
+        ],
         "matches": matches,
     }
 
 
 def index_entry(document: dict) -> dict:
+    """The pointer to one division's bridge. Its href holds the content identity of the document,
+    so any change to the document changes this entry and every reader of the index sees it."""
     return {
         "model_version": document["model"]["version"],
         "competition_id": document["competition_id"],
         "competition_name": document["competition_name"],
         "season_id": document["season_id"],
         "match_count": len(document["matches"]),
+        "deferred_count": len(document["deferred_fixtures"]),
         "first_match_date": document["matches"][0]["match_date"],
         "last_match_date": document["last_match_date"],
         "prospective_from": document["prospective_from"],
         "href": document_key(
-            document["model"]["version"], document["competition_id"], document["season_id"]
+            document["model"]["version"],
+            document["competition_id"],
+            document["season_id"],
+            content_id(document),
         ),
     }
 
@@ -284,37 +367,55 @@ def run_match_hindcasts(
     workers: int = 4,
     log=print,
 ) -> dict:
-    """Forecast every finished match of the season before live coverage of the model began."""
+    """Forecast every match each division played before live coverage of the model began.
+
+    Each division has its own handoff, because production publishes each division on its own and
+    one of them can fail while the others go out. A division that has no live forecast of this
+    model version has no handoff, so it gets no bridge and the result says so.
+    """
     policy = load_policy()
     model_version = policy["product"]["model_version"]
-    handoff = boundary(publish_store, model_version)
-    last = date.fromisoformat(handoff["last_match_date"])
-    season_id = season_id or season_of(last)
+    handoffs = boundaries(publish_store, model_version, competitions)
+    skipped = [competition_id for competition_id in competitions if competition_id not in handoffs]
+    if not handoffs:
+        raise ValueError(
+            f"No published forecast of any division carries model version {model_version}, so "
+            "the retrospective bridge has no end. Publish the live forecasts first."
+        )
+    for competition_id in skipped:
+        log(f"Skipping {competition_id}: no live forecast carries {model_version} yet")
+    latest = max(date.fromisoformat(h["last_match_date"]) for h in handoffs.values())
+    season_id = season_id or season_of(latest)
     data = Dataset(store=data_store)
     try:
         matches = data.matches()
         observations = data.xg_observations()
-        kickoffs = {row["match_id"]: row["kickoff_time"] for row in data.fixtures()}
+        fixtures = data.fixtures()
+        kickoffs = {row["match_id"]: row["kickoff_time"] for row in fixtures}
         personnel = load_personnel_history(data, (int(season_id[:4]),))
     finally:
         data.close()
-    targets = defaultdict(list)
-    for match in matches:
-        fixture = match.fixture
-        if fixture.competition_id not in competitions or fixture.season_id != season_id:
-            continue
-        if fixture.match_date > last:
-            continue
-        targets[fixture.competition_id, str(fixture.match_date)].append(fixture.match_id)
-    if not targets:
-        raise ValueError(f"No finished {season_id} matches before {handoff['prospective_from']}")
+    results = {match.fixture.match_id: match for match in matches}
+    expected, deferred, targets = {}, {}, defaultdict(list)
+    for competition_id, handoff in handoffs.items():
+        played, not_played = scope(fixtures, competition_id, season_id, handoff)
+        missing = [row["match_id"] for row in played if row["match_id"] not in results]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} finished {competition_id} {season_id} fixtures have no canonical "
+                f"result: {', '.join(missing[:3])}"
+            )
+        expected[competition_id] = {row["match_id"] for row in played}
+        deferred[competition_id] = not_played
+        for row in played:
+            targets[competition_id, str(row["match_date"])].append(row["match_id"])
     tasks = [
         {"competition_id": competition_id, "match_date": day, "matches": sorted(match_ids)}
         for (competition_id, day), match_ids in sorted(targets.items())
     ]
     log(
-        f"{sum(len(task['matches']) for task in tasks)} matches on {len(tasks)} division days "
-        f"before {handoff['prospective_from']}"
+        f"{sum(len(task['matches']) for task in tasks)} matches on {len(tasks)} division days, "
+        f"in {len(handoffs)} divisions"
     )
     rows = defaultdict(list)
     with ProcessPoolExecutor(
@@ -328,15 +429,30 @@ def run_match_hindcasts(
             rows[task["competition_id"]].extend(future.result())
             log(f"[{done}/{len(tasks)}] {task['competition_id']} {task['match_date']}")
     entries = []
-    for competition_id in competitions:
-        if not rows[competition_id]:
-            continue
+    for competition_id, handoff in handoffs.items():
+        forecast = {row["match_id"] for row in rows[competition_id]}
+        if forecast != expected[competition_id]:
+            gap = sorted(expected[competition_id] - forecast) or sorted(
+                forecast - expected[competition_id]
+            )
+            raise ValueError(
+                f"The {competition_id} bridge covers {len(forecast)} of "
+                f"{len(expected[competition_id])} matches: {', '.join(gap[:3])}"
+            )
         document = derive_match_hindcast(
-            model_version, competition_id, season_id, rows[competition_id], handoff
+            model_version,
+            competition_id,
+            season_id,
+            rows[competition_id],
+            handoff,
+            deferred[competition_id],
         )
         check_publishable(document, policy, "match_hindcast")
+        identity = content_id(document)
+        # The private run first, then the sanitized public document, both immutable at a key that
+        # the content names. A regenerated bridge writes new objects and moves the index.
         data_store.put_json(
-            private_key(model_version, competition_id, season_id),
+            private_key(model_version, competition_id, season_id, identity),
             {
                 "schema_version": 1,
                 "model_version": model_version,
@@ -349,17 +465,19 @@ def run_match_hindcasts(
                 **handoff,
                 "matches": sorted(rows[competition_id], key=lambda row: row["match_id"]),
             },
+            immutable=True,
         )
-        key = document_key(model_version, competition_id, season_id)
-        if publish_store.get_json(key) != document:
-            publish_store.put_json(key, document)
+        key = document_key(model_version, competition_id, season_id, identity)
+        publish_store.put_json(key, document, immutable=True)
         entries.append(index_entry(document))
         log(f"Published {key} ({len(document['matches'])} matches)")
     publish_index(publish_store, entries, policy)
     return {
         "model_version": model_version,
         "season_id": season_id,
-        **handoff,
+        "handoffs": {c: h["prospective_from"] for c, h in handoffs.items()},
+        "skipped": skipped,
         "divisions": len(entries),
         "matches": sum(entry["match_count"] for entry in entries),
+        "deferred": sum(entry["deferred_count"] for entry in entries),
     }

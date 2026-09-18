@@ -1033,18 +1033,23 @@ def _install_column_catalog(connection) -> None:
     )
 
 
-def _requested_versions(hindcast_versions) -> str | tuple[str, ...]:
-    """Normalize the hindcast version request into a value that names a session slot."""
+def normalize_hindcast_versions(hindcast_versions) -> str | tuple[str, ...]:
+    """Normalize the hindcast version request into a value that names a session slot.
+
+    It is `CURRENT_MODEL_VERSION`, `ALL_MODEL_VERSIONS`, or distinct model version names.
+    """
     if hindcast_versions in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS):
         return hindcast_versions
-    versions = (
-        (hindcast_versions,) if isinstance(hindcast_versions, str) else tuple(hindcast_versions)
+    names = (
+        [hindcast_versions] if isinstance(hindcast_versions, str) else list(hindcast_versions or ())
     )
-    if not versions or not all(isinstance(version, str) and version for version in versions):
+    versions = {name.strip() for name in names if isinstance(name, str) and name.strip()}
+    if not versions or len(versions) != len(names):
         raise ValueError(
-            "Hindcast versions must be 'current', 'all', or one or more model version names"
+            f"Hindcast versions must be {CURRENT_MODEL_VERSION!r}, {ALL_MODEL_VERSIONS!r}, or "
+            "distinct, nonempty model version names"
         )
-    return tuple(sorted(set(versions)))
+    return tuple(sorted(versions))
 
 
 def _selected_versions(publish_store, requested) -> frozenset | None:
@@ -1052,10 +1057,11 @@ def _selected_versions(publish_store, requested) -> frozenset | None:
     if requested == ALL_MODEL_VERSIONS:
         return None
     if requested == CURRENT_MODEL_VERSION:
-        from epl_forecast.analysis_artifacts import current_model_version
+        from epl_forecast.analysis_artifacts import current_model_versions
 
-        version = current_model_version(publish_store)
-        return None if version is None else frozenset({version})
+        # No live forecast means no current version, and so no current hindcast generation. The
+        # whole archive is what ALL_MODEL_VERSIONS asks for, and it is never an accidental default.
+        return current_model_versions(publish_store)
     return frozenset(requested)
 
 
@@ -1081,7 +1087,7 @@ def open_analysis_session(
     data_store = data_store or R2Store.from_environment("R2_DATA_BUCKET")
     if include_derived:
         publish_store = publish_store or R2Store.from_environment("R2_PUBLISH_BUCKET")
-    requested = _requested_versions(hindcast_versions)
+    requested = normalize_hindcast_versions(hindcast_versions)
     if session_directory is None:
         return _build_analysis_session(
             cutoff, data_store, publish_store, include_derived, requested

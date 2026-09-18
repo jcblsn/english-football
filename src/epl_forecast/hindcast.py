@@ -51,10 +51,23 @@ SERIES_FIELDS = (
     "position_sd",
     "mean_goal_difference",
 )
+# The model observes expected goals in every division that has them, not only in the Premier
+# League: the Premier League from 2014, the Championship from 2023, and League One and League Two
+# from the 2026/27 season.
+XG_ASSUMPTION = (
+    "The model also uses expected goals, in each division from the first match for which the "
+    "history records them. It assumes that the expected goals of a match were available on the "
+    "day after the match. The data does not show when they were first available."
+)
 NOTICE = (
     "This is a hindcast. The frozen public model made it after the season was complete. "
     "It is not a forecast that existed at the origin time, and the prospective record does not include it."
 )
+# The second line names the Premier League alone, which is not true of the model: the Championship
+# has expected goals from 2023. Every completed-season document already published carries this
+# wording and is immutable, so correcting it here would put the code at odds with the archive and
+# would break a series that mixes the two. The retrospective bridges below use XG_ASSUMPTION, and
+# rewording the completed-season archive is a separate decision.
 ASSUMPTIONS = (
     "The model uses only the results of matches played before the London day of the origin.",
     "In the Premier League, the model also uses expected goals. It assumes that the expected goals of a match were available on the day after the match. The data does not show when they were first available.",
@@ -74,7 +87,7 @@ BRIDGE_NOTICE = (
 )
 BRIDGE_ASSUMPTIONS = (
     ASSUMPTIONS[0],
-    ASSUMPTIONS[1],
+    XG_ASSUMPTION,
     "The simulation uses the dates on which the remaining matches are now scheduled. At the origin time, some of these dates were not known.",
     ASSUMPTIONS[3],
     ASSUMPTIONS[4],
@@ -408,6 +421,13 @@ def derive_series(documents: list[dict]) -> dict:
     clubs = {frozenset(row["team_id"] for row in d["teams"]) for d in documents}
     if len(identity) != 1 or len(clubs) != 1:
         raise ValueError("A hindcast series needs one division, season, model and club list")
+    # The series states one notice and one set of assumptions for every origin it carries, so it
+    # may not be built from origins that describe themselves differently.
+    metadata = {(d["notice"], tuple(d["assumptions"])) for d in documents}
+    if len(metadata) != 1:
+        raise ValueError(
+            "A hindcast series needs one notice and one set of assumptions across its origins"
+        )
     by_team = [{row["team_id"]: row for row in d["teams"]} for d in documents]
     teams = []
     for team in last["teams"]:
@@ -635,16 +655,25 @@ def run_season_bridge(
     It is the season-state half of the retrospective bridge. `epl_forecast.match_hindcast` is the
     match-level half, and the two use the same handoff day.
     """
-    from epl_forecast.match_hindcast import boundary, season_of
+    from epl_forecast.match_hindcast import boundaries, season_of
 
     if simulations < MINIMUM_SIMULATIONS:
         raise ValueError(f"Hindcasts need at least {MINIMUM_SIMULATIONS} simulated paths")
     policy = load_policy()
     model_version = policy["product"]["model_version"]
     claim_edition(data_store, edition(model_version, simulations))
-    handoff = boundary(publish_store, model_version)
-    prospective_from = date.fromisoformat(handoff["prospective_from"])
-    season_id = season_id or season_of(date.fromisoformat(handoff["last_match_date"]))
+    handoffs = boundaries(publish_store, model_version, competitions)
+    skipped = [competition_id for competition_id in competitions if competition_id not in handoffs]
+    if not handoffs:
+        raise ValueError(
+            f"No published forecast of any division carries model version {model_version}, so "
+            "the retrospective bridge has no end. Publish the live forecasts first."
+        )
+    for competition_id in skipped:
+        log(f"Skipping {competition_id}: no live forecast carries {model_version} yet")
+    season_id = season_id or season_of(
+        max(date.fromisoformat(h["last_match_date"]) for h in handoffs.values())
+    )
     data = Dataset(store=data_store)
     try:
         matches = data.matches()
@@ -656,7 +685,8 @@ def run_season_bridge(
     finally:
         data.close()
     fixtures, plans, tasks, recovered = {}, {}, [], []
-    for competition_id in competitions:
+    for competition_id, handoff in handoffs.items():
+        prospective_from = date.fromisoformat(handoff["prospective_from"])
         season = season_fixtures(rows, competition_id, season_id)
         fixtures[competition_id, season_id] = season
         first = min(row["match_date"] for row in season if row["match_date"])
@@ -685,7 +715,8 @@ def run_season_bridge(
             (recovered if private_key(task) in archived else tasks).append(task)
         plans[competition_id, season_id] = plan
     log(
-        f"{sum(map(len, plans.values()))} bridge origins before {prospective_from}; {len(tasks)} to simulate"
+        f"{sum(map(len, plans.values()))} bridge origins in {len(handoffs)} divisions; "
+        f"{len(tasks)} to simulate"
     )
     for task in recovered:
         publish_origin(
@@ -711,7 +742,8 @@ def run_season_bridge(
     return {
         "model_version": model_version,
         "season_id": season_id,
-        **handoff,
+        "handoffs": {c: h["prospective_from"] for c, h in handoffs.items()},
+        "skipped": skipped,
         "origins": sum(map(len, plans.values())),
         "simulated": len(tasks),
         "recovered": len(recovered),

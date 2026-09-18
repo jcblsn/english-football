@@ -5,15 +5,20 @@ from test_publication import Store
 
 from epl_forecast import match_hindcast
 from epl_forecast.live import LONDON
+from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.match_hindcast import (
     INDEX_KEY,
+    boundaries,
     boundary,
+    content_id,
     derive_match_hindcast,
     document_key,
     index_entry,
     origin_at,
+    private_key,
     prospective_start,
     publish_index,
+    scope,
     season_of,
 )
 from epl_forecast.models.baselines import AttackDefensePoisson
@@ -22,6 +27,20 @@ from epl_forecast.record import update_record
 from epl_forecast.storage import json_bytes
 
 HANDOFF = {"prospective_from": "2026-09-17", "last_match_date": "2026-09-16"}
+
+
+def calendar(competition_id="eng-premier-league", statuses=("finished",), day="2026-08-15"):
+    return [
+        {
+            "match_id": f"{competition_id}:2026-2027:home-{index}:away-{index}",
+            "competition_id": competition_id,
+            "season_id": "2026-2027",
+            "stage": "regular",
+            "match_date": date.fromisoformat(day),
+            "status": status,
+        }
+        for index, status in enumerate(statuses)
+    ]
 
 
 def archive_store(generated, model_version="v0.3.0"):
@@ -83,7 +102,7 @@ def test_the_origin_is_midnight_in_london_on_the_day_of_the_match():
     assert summer.tzinfo is LONDON
 
 
-def test_the_handoff_is_the_first_london_day_of_live_coverage_of_the_version():
+def test_the_handoff_is_the_first_london_day_of_live_coverage_of_the_division():
     store = archive_store(
         {
             "eng-premier-league": "2026-09-17T14:56:47+00:00",
@@ -92,19 +111,72 @@ def test_the_handoff_is_the_first_london_day_of_live_coverage_of_the_version():
             "eng-league-two": "2026-09-17T15:24:43+00:00",
         }
     )
-    assert prospective_start(store, "v0.3.0") == date(2026, 9, 17)
-    assert boundary(store, "v0.3.0") == HANDOFF
-    assert prospective_start(store, "v0.2") is None
+    assert prospective_start(store, "v0.3.0", "eng-premier-league") == date(2026, 9, 17)
+    assert boundary(store, "v0.3.0", "eng-premier-league") == HANDOFF
+    assert prospective_start(store, "v0.2", "eng-premier-league") is None
 
 
 def test_the_handoff_day_is_a_london_day_not_a_utc_day():
     store = archive_store({"eng-premier-league": "2026-09-16T23:30:00+00:00"})
-    assert boundary(store, "v0.3.0") == HANDOFF
+    assert boundary(store, "v0.3.0", "eng-premier-league") == HANDOFF
+
+
+def test_a_partial_release_gives_each_division_its_own_handoff():
+    """Production publishes each division alone and lets one fail, so the versions can differ."""
+    store = archive_store(
+        {
+            "eng-premier-league": "2026-09-17T14:56:47+00:00",
+            "eng-championship": "2026-09-18T09:00:00+00:00",
+        }
+    )
+    handoffs = boundaries(store, "v0.3.0", COMPETITION_IDS)
+    assert handoffs == {
+        "eng-premier-league": HANDOFF,
+        "eng-championship": {
+            "prospective_from": "2026-09-18",
+            "last_match_date": "2026-09-17",
+        },
+    }
+    # The two divisions that did not reach the version get no bridge at all, rather than one that
+    # stops on a day their own live coverage never reached.
+    assert "eng-league-one" not in handoffs and "eng-league-two" not in handoffs
+    with pytest.raises(ValueError, match="No published eng-league-one forecast"):
+        boundary(store, "v0.3.0", "eng-league-one")
 
 
 def test_a_version_with_no_published_forecast_has_no_bridge():
-    with pytest.raises(ValueError, match="No published forecast"):
-        boundary(Store(), "v0.9.0")
+    with pytest.raises(ValueError, match="No published eng-premier-league forecast"):
+        boundary(Store(), "v0.9.0", "eng-premier-league")
+    assert boundaries(Store(), "v0.9.0", COMPETITION_IDS) == {}
+
+
+def test_the_calendar_before_the_handoff_must_be_accounted_for():
+    """A fixture the calendar places before the handoff is played, deferred, or a reason to stop."""
+    played, deferred = scope(calendar(statuses=("finished", "finished")), *SEASON, HANDOFF)
+    assert len(played) == 2 and deferred == []
+
+    fixtures = calendar(statuses=("finished", "postponed"))
+    played, deferred = scope(fixtures, *SEASON, HANDOFF)
+    assert [row["match_id"] for row in played] == [fixtures[0]["match_id"]]
+    assert [row["status"] for row in deferred] == ["postponed"]
+
+    with pytest.raises(ValueError, match="no result and no reason"):
+        scope(calendar(statuses=("finished", "scheduled")), *SEASON, HANDOFF)
+    with pytest.raises(ValueError, match="no result and no reason"):
+        scope(calendar(statuses=("awaiting_result",)), *SEASON, HANDOFF)
+    with pytest.raises(ValueError, match="No eng-premier-league 2026-2027 match was played"):
+        scope(calendar(statuses=("postponed",)), *SEASON, HANDOFF)
+
+
+def test_a_fixture_after_the_handoff_is_out_of_scope():
+    fixtures = calendar(statuses=("finished",), day="2026-08-15") + calendar(
+        statuses=("scheduled",), day="2026-09-19"
+    )
+    played, deferred = scope(fixtures, *SEASON, HANDOFF)
+    assert len(played) == 1 and deferred == []
+
+
+SEASON = ("eng-premier-league", "2026-2027")
 
 
 def test_a_match_hindcast_is_retrospective_and_publishable():
@@ -162,10 +234,13 @@ def test_the_index_points_at_one_document_for_each_version_division_and_season()
         "competition_name": "Premier League",
         "season_id": "2026-2027",
         "match_count": 2,
+        "deferred_count": 0,
         "first_match_date": "2026-08-15",
         "last_match_date": "2026-08-22",
         "prospective_from": "2026-09-17",
-        "href": "match-hindcasts/v0.3.0/eng-premier-league/2026-2027.json",
+        "href": (
+            f"match-hindcasts/v0.3.0/eng-premier-league/2026-2027/{content_id(document)}.json"
+        ),
     }
     index = publish_index(store, [entry], policy)
     check_publishable(index, policy)
@@ -175,11 +250,72 @@ def test_the_index_points_at_one_document_for_each_version_division_and_season()
     assert publish_index(store, [entry], policy)["updated_at"] == index["updated_at"]
 
 
+def test_a_changed_match_hindcast_cannot_hide_behind_an_unchanged_index():
+    """The stale-cache case: a warm session only re-reads when the index changes.
+
+    The document key holds the content identity, so new probabilities can never arrive at a href
+    the index already names. The index entry changes, and every reader of it sees the change.
+    """
+    policy = load_policy()
+    original = derive_match_hindcast("v0.3.0", "eng-premier-league", "2026-2027", [row()], HANDOFF)
+    changed = derive_match_hindcast(
+        "v0.3.0",
+        "eng-premier-league",
+        "2026-2027",
+        [{**row(), "p_home": 0.6, "p_draw": 0.2, "p_away": 0.2}],
+        HANDOFF,
+    )
+    assert original != changed
+    first, second = index_entry(original), index_entry(changed)
+    assert first["href"] != second["href"]
+    assert first != second
+
+    store = Store()
+    store.put_json(first["href"], original, immutable=True)
+    index = publish_index(store, [first], policy)
+    store.put_json(second["href"], changed, immutable=True)
+    assert publish_index(store, [second], policy)["seasons"] == [second]
+    assert publish_index(store, [second], policy) != index
+    # Both documents survive at their own key, so no reader of the old href is served new content.
+    assert store.objects[first["href"]] == original
+    assert store.objects[second["href"]] == changed
+
+
+def test_a_match_hindcast_key_is_immutable():
+    store = Store()
+    document = derive_match_hindcast("v0.3.0", "eng-premier-league", "2026-2027", [row()], HANDOFF)
+    key = document_key("v0.3.0", "eng-premier-league", "2026-2027", content_id(document))
+    store.put_json(key, document, immutable=True)
+    store.put_json(key, document, immutable=True)
+    with pytest.raises(ValueError):
+        store.put_json(key, {**document, "notice": "changed"}, immutable=True)
+
+
+def test_a_deferred_fixture_is_named_rather_than_dropped():
+    policy = load_policy()
+    deferred = calendar(statuses=("postponed",), day="2026-09-08")
+    document = derive_match_hindcast(
+        "v0.3.0", "eng-premier-league", "2026-2027", [row()], HANDOFF, deferred
+    )
+    check_publishable(document, policy, "match_hindcast")
+    assert document["deferred_fixtures"] == [
+        {
+            "match_id": deferred[0]["match_id"],
+            "match_date": "2026-09-08",
+            "status": "postponed",
+        }
+    ]
+    assert index_entry(document)["deferred_count"] == 1
+
+
 def test_the_season_of_the_bridge_follows_the_english_calendar():
     assert season_of(date(2026, 9, 16)) == "2026-2027"
     assert season_of(date(2027, 5, 20)) == "2026-2027"
-    assert document_key("v0.3.0", "eng-championship", "2026-2027") == (
-        "match-hindcasts/v0.3.0/eng-championship/2026-2027.json"
+    assert document_key("v0.3.0", "eng-championship", "2026-2027", "abc123") == (
+        "match-hindcasts/v0.3.0/eng-championship/2026-2027/abc123.json"
+    )
+    assert private_key("v0.3.0", "eng-championship", "2026-2027", "abc123") == (
+        "runs/match-hindcasts/v0.3.0/eng-championship/2026-2027/abc123.json"
     )
 
 
