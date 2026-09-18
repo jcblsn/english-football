@@ -1,11 +1,11 @@
 # Refactor state
 
-Status: M0 and the Championship M1 slice pass locally. M2 is in progress. This file records observed state only.
+Status: M0, M1, and the local M2 operation path pass. M3 consumer migration and capacity work are in progress. This file records observed state only.
 
 ## Assignment and authority
 
 Owner-approved scope: Local implementation, local tests, and read-only use of available repository evidence. The assignment does not authorize production writes, workflow cutover, bucket deletion, or a paid service.
-Local branch/worktree: `refactor-start`; the last pushed commit is `1e097ea3b8710fc766c8dfecc4440120b98c5105`. The checkout was clean before implementation started.
+Local branch/worktree: `refactor-start`; the last pushed commit before the current quote/display slice is `7c93908aa7f71e0bf6885641894a0a1e0082aa6c`. The checkout was clean before implementation started.
 Authorized remote reads/staging prefix: Read credentials for both private buckets are configured in the ignored `.env`. No staging prefix is designated, so no remote staging write is authorized.
 Production mutation/cutover/deletion authority: Not recorded.
 Verified backup and restore evidence: Not established.
@@ -22,7 +22,7 @@ Historical performance context: `reference/observed_runtimes.csv` is retained as
 
 ## Current milestone
 
-M2 — add reusable fit state and run all four divisions from one restored revision.
+M3 — make typed results the reusable publication and analysis boundary.
 
 Completed evidence:
 
@@ -53,6 +53,9 @@ Completed evidence:
 - Publication now writes an immutable release receipt after the public forecast object. Prospective scoring uses the receipt's `released_at` value and excludes a forecast that completed before kickoff but was released after kickoff.
 - Record-only changes set `public_changed`, and the production workflow deploys on that output instead of forecast count. A repeated idle wake with the same outcomes does not request another deployment.
 - A London-origin date is stored with each successful division release. A new local day makes the projection due even when the provider fingerprint is unchanged.
+- Effective inputs now have separate fit, projection, market, display, and model identities. A fit, projection, model, or London-day change selects the full operation path. A market-only or display-only change clones the prior typed result and changes only the applicable typed rows.
+- Direct tests prove that a display refresh preserves every tested structural and simulation table, and that a quote refresh preserves the complete simulation and score grids. Clone writes are transactional, content-idempotent, and reject an existing ID with different content.
+- An operation-level quote-only test restores and commits the cumulative typed result, publishes the new result, and fails if the forecast command is called.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -76,17 +79,17 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 - No R2 capacity or request budget is certified. The owner-supplied cumulative counts have an unknown window.
 - The measured source request count is a one-time migration cost. A recurring restored snapshot should need one object GET, but this has not been measured against a remote staging prefix because none is authorized.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
-- Changed entry evidence across a source competition still needs an explicit independent resume test. Quote-only, display-only, and clock-only stage decisions are not yet integrated into operation.
+- Changed entry evidence across a source competition still needs an explicit independent resume test.
 - The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
-- Quote-only and display-only stage decisions are still not integrated. They currently reuse an exact fit but still repeat simulation. Historical and hindcast consumers still use their existing archive readers.
+- Historical and hindcast consumers still use their existing archive readers.
 - Full live cutover and workflow changes remain external gates until the owner authorizes them and backup, restore, correctness, and capacity prerequisites pass.
 
 ## Restart point
 
-Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 400 tests in 41.86 seconds.
-Next action: Complete quote-only and display-only decisions, migrate selected analytical and retrospective consumers to cumulative typed results, and add the measured capacity and retention model.
-Next test/gate: I2, A1–A2, P3, growth scaling, capacity C1, and the local operation-path benchmark with cumulative result restore.
-Working files to inspect before editing: `src/epl_forecast/pipeline.py`, `src/epl_forecast/results.py`, `src/epl_forecast/analysis.py`, `src/epl_forecast/hindcast.py`, and their tests.
+Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 406 tests in 43.46 seconds.
+Next action: Commit and push the quote/display slice, migrate selected analytical and retrospective consumers to cumulative typed results, and add the measured capacity and retention model.
+Next test/gate: A1–A2, P3, growth scaling, capacity C1, and the local operation-path benchmark with cumulative result restore.
+Working files to inspect before editing: `src/epl_forecast/analysis.py`, `src/epl_forecast/hindcast.py`, the relevant tests, and `refactor-handoff/reference/`.
 Remote objects created or modified by this agent: None.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 

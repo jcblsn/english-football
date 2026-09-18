@@ -7,9 +7,24 @@ from pathlib import Path
 import duckdb
 
 from epl_forecast.datasets import SESSION_TIME_ZONE
+from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.storage import json_bytes, sha256_bytes
 
 RESULT_SCHEMA_VERSION = 2
+RESULT_TABLES = (
+    "forecast_matches",
+    "forecast_score_metadata",
+    "forecast_scores",
+    "forecast_team_seasons",
+    "forecast_team_events",
+    "forecast_team_points",
+    "forecast_team_positions",
+    "forecast_team_strengths",
+    "forecast_conditionals",
+    "forecast_impact_metadata",
+    "forecast_impact_fixtures",
+    "forecast_unsettled_fixtures",
+)
 
 
 def install_result_schema(connection) -> None:
@@ -864,6 +879,155 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         "unsettled_fixtures": unsettled,
         "impact_window": context.get("impact_window"),
     }
+
+
+def clone_forecast_result(
+    database: Path,
+    source_result_id: str,
+    result_id: str,
+    *,
+    generated_at: datetime,
+    input_revision: str,
+    replace_market: bool = False,
+    market_quotes: list[dict] | None = None,
+    market_pool: dict | None = None,
+    team_names: dict[str, str] | None = None,
+) -> dict:
+    """Create a result revision without repeating structural fit or season simulation."""
+    identity = sha256_bytes(
+        _json(
+            {
+                "source_result_id": source_result_id,
+                "result_id": result_id,
+                "generated_at": generated_at.isoformat(),
+                "input_revision": input_revision,
+                "replace_market": replace_market,
+                "market_quotes": market_quotes,
+                "market_pool": market_pool,
+                "team_names": team_names,
+            }
+        ).encode()
+    )
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(SESSION_TIME_ZONE)
+        existing = connection.execute(
+            "SELECT source_document_sha256 FROM forecast_result.forecast_runs WHERE result_id = ?",
+            [result_id],
+        ).fetchone()
+        if existing:
+            if existing != (identity,):
+                raise ValueError(f"Result ID already names different content: {result_id}")
+            return {"result_id": result_id, "status": "unchanged"}
+        if not connection.execute(
+            "SELECT 1 FROM forecast_result.forecast_runs WHERE result_id = ?",
+            [source_result_id],
+        ).fetchone():
+            raise KeyError(f"Unknown source forecast result: {source_result_id}")
+        connection.execute("BEGIN TRANSACTION")
+        try:
+            connection.execute(
+                """
+                INSERT INTO forecast_result.forecast_runs
+                SELECT ?, competition_id, season_id, state_observed_at, model_results_cutoff,
+                       ?, model_id, model_kind, ?, model_spec, simulation_settings,
+                       simulation_metadata, software_provenance, fit_diagnostics, ?,
+                       schema_version, ?
+                FROM forecast_result.forecast_runs WHERE result_id = ?
+                """,
+                [
+                    result_id,
+                    generated_at,
+                    input_revision,
+                    identity,
+                    datetime.now(UTC),
+                    source_result_id,
+                ],
+            )
+            for table in RESULT_TABLES:
+                connection.execute(
+                    f"INSERT INTO forecast_result.{table} "
+                    f"SELECT ? AS result_id, * EXCLUDE (result_id) "
+                    f"FROM forecast_result.{table} WHERE result_id = ?",
+                    [result_id, source_result_id],
+                )
+            probability_filter = " AND stage <> 'market_assisted'" if replace_market else ""
+            connection.execute(
+                "INSERT INTO forecast_result.forecast_match_probabilities "
+                "SELECT ? AS result_id, * EXCLUDE (result_id) "
+                "FROM forecast_result.forecast_match_probabilities WHERE result_id = ?"
+                + probability_filter,
+                [result_id, source_result_id],
+            )
+            if replace_market:
+                _insert_market_probabilities(
+                    connection,
+                    result_id,
+                    market_quotes or [],
+                    market_pool,
+                )
+            if team_names is None:
+                connection.execute(
+                    "INSERT INTO forecast_result.forecast_team_names "
+                    "SELECT ? AS result_id, * EXCLUDE (result_id) "
+                    "FROM forecast_result.forecast_team_names WHERE result_id = ?",
+                    [result_id, source_result_id],
+                )
+            else:
+                connection.executemany(
+                    "INSERT INTO forecast_result.forecast_team_names VALUES (?, ?, ?)",
+                    [(result_id, team_id, name) for team_id, name in sorted(team_names.items())],
+                )
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        connection.execute("CHECKPOINT")
+    return {"result_id": result_id, "status": "written", "source_result_id": source_result_id}
+
+
+def _insert_market_probabilities(
+    connection, result_id: str, market_quotes: list[dict], market_pool: dict | None
+) -> None:
+    if market_pool is None:
+        return
+    selected = {}
+    for quote in market_quotes:
+        if quote["family"] != market_pool["market_family"]:
+            continue
+        if quote["match_id"] in selected:
+            raise ValueError(f"Duplicate current market quote: {quote['match_id']}")
+        selected[quote["match_id"]] = quote
+    structural = connection.execute(
+        """
+        SELECT match_id, p_home, p_draw, p_away
+        FROM forecast_result.forecast_match_probabilities
+        WHERE result_id = ? AND stage = 'personnel_adjusted'
+        """,
+        [result_id],
+    ).fetchall()
+    rows = []
+    for match_id, p_home, p_draw, p_away in structural:
+        quote = selected.get(match_id)
+        if quote is None:
+            continue
+        values = market_assisted_probabilities((p_home, p_draw, p_away), quote, market_pool)
+        rows.append(
+            (
+                result_id,
+                match_id,
+                "market_assisted",
+                "personnel_adjusted",
+                False,
+                values["p_home"],
+                values["p_draw"],
+                values["p_away"],
+            )
+        )
+    if rows:
+        connection.executemany(
+            "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
 
 
 def _read_impacts(connection, result_id: str) -> dict | None:

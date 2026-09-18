@@ -5,12 +5,21 @@ from types import SimpleNamespace
 
 import pytest
 from test_publication import sample_forecast, sample_run
+from test_results import result_forecast
 
 from epl_forecast import pipeline
 from epl_forecast.pipeline import due, due_reasons, forecast_id, production_fingerprint
+from epl_forecast.results import write_forecast_result
 from epl_forecast.storage import ConditionalWriteFailed
 
 NOW = datetime(2026, 9, 10, 22, 43, 3, tzinfo=UTC)
+TEST_IDENTITIES = {
+    "fit": "fit-1",
+    "projection": "projection-1",
+    "market": "market-1",
+    "display": "display-1",
+    "model": "model-1",
+}
 
 
 def test_forecast_id_is_a_sortable_second():
@@ -83,6 +92,21 @@ def prepared_snapshot(workspace):
         database=workspace / "canonical.duckdb",
         manifest_path=workspace / "canonical.manifest.json",
         manifest={},
+    )
+
+
+def install_fake_identities(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "information_identities",
+        lambda dataset, competition: {
+            key: value for key, value in TEST_IDENTITIES.items() if key != "model"
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "production_identities",
+        lambda identities, model_version: TEST_IDENTITIES.copy(),
     )
 
 
@@ -160,9 +184,7 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
         "prepare_operation_snapshot",
         lambda cutoff, store, workspace: prepared_snapshot(workspace),
     )
-    monkeypatch.setattr(
-        pipeline, "information_fingerprint", lambda dataset, competition: "fingerprint"
-    )
+    install_fake_identities(monkeypatch)
     monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {})
     data_store, publish_store = Store(), Store()
     result = pipeline.operate(
@@ -217,22 +239,47 @@ def test_projection_clock_advance_is_due_without_new_data():
     ]
 
 
+def test_refresh_action_limits_quote_and_display_changes_to_typed_results():
+    previous = {
+        "identities": TEST_IDENTITIES,
+        "origin_date": pipeline.projection_day(NOW),
+    }
+    assert pipeline.refresh_action(previous, TEST_IDENTITIES, NOW) == "idle"
+    market = {**TEST_IDENTITIES, "market": "market-2"}
+    assert pipeline.refresh_action(previous, market, NOW) == "market"
+    display = {**TEST_IDENTITIES, "display": "display-2"}
+    assert pipeline.refresh_action(previous, display, NOW) == "display"
+    both = {**market, "display": "display-2"}
+    assert pipeline.refresh_action(previous, both, NOW) == "market_display"
+    structural = {**TEST_IDENTITIES, "projection": "projection-2"}
+    assert pipeline.refresh_action(previous, structural, NOW) == "full"
+
+
+def test_refresh_action_forces_a_daily_projection_and_migrates_old_state():
+    previous = {
+        "identities": TEST_IDENTITIES,
+        "origin_date": pipeline.projection_day(NOW),
+    }
+    next_day = datetime(2026, 9, 11, 0, tzinfo=UTC)
+    assert pipeline.refresh_action(previous, TEST_IDENTITIES, next_day) == "full"
+    assert pipeline.refresh_action({"fingerprint": "old"}, TEST_IDENTITIES, NOW) == "full"
+
+
 def test_record_only_change_requests_deploy_and_next_idle_wake_does_not(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "prepare_operation_snapshot",
         lambda cutoff, store, workspace: prepared_snapshot(workspace),
     )
-    monkeypatch.setattr(
-        pipeline, "information_fingerprint", lambda dataset, competition: "fingerprint"
-    )
+    install_fake_identities(monkeypatch)
     monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {"match-1": "H"})
-    fingerprint = production_fingerprint("fingerprint", "v0.3.0")
+    fingerprint = pipeline.identities_fingerprint(TEST_IDENTITIES)
     data_store = Store()
     data_store.objects["state/forecast.json"] = {
         "competitions": {
             league: {
                 "fingerprint": fingerprint,
+                "identities": TEST_IDENTITIES,
                 "origin_date": pipeline.projection_day(datetime.now(UTC)),
             }
             for league in pipeline.LEAGUES
@@ -319,6 +366,92 @@ def test_result_store_appends_without_enumerating_prior_objects(tmp_path):
     assert version == store.versions["state/results/eng-championship.json"]
 
 
+def test_quote_only_operation_reuses_the_typed_result_without_running_forecast(
+    tmp_path, monkeypatch
+):
+    data_store, publish_store = Store(), Store()
+    source = tmp_path / "source.duckdb"
+    forecast = result_forecast()
+    forecast["simulation"]["match_impacts"] = None
+    write_forecast_result(
+        source,
+        forecast,
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    pipeline.commit_result_store(data_store, "eng-championship", source, None)
+    current = {**TEST_IDENTITIES, "market": "market-2"}
+    today = pipeline.projection_day(datetime.now(UTC))
+    data_store.objects["state/forecast.json"] = {
+        "competitions": {
+            league: {
+                "fingerprint": pipeline.identities_fingerprint(
+                    TEST_IDENTITIES if league == "eng-championship" else current
+                ),
+                "identities": TEST_IDENTITIES if league == "eng-championship" else current,
+                "forecast_id": "forecast-1",
+                "result_id": "forecast-1",
+                "origin_date": today,
+            }
+            for league in pipeline.LEAGUES
+        }
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "prepare_operation_snapshot",
+        lambda cutoff, store, workspace: prepared_snapshot(workspace),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "information_identities",
+        lambda dataset, competition: {
+            key: value for key, value in current.items() if key != "model"
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "production_identities",
+        lambda identities, model_version: current,
+    )
+    monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {})
+    monkeypatch.setattr(
+        pipeline,
+        "refresh_inputs",
+        lambda data, competition: {
+            "market_quotes": [
+                {
+                    "match_id": forecast["matches"][0]["match_id"],
+                    "family": "market_average_preclosing",
+                    "home_odds": 1.6,
+                    "draw_odds": 4.0,
+                    "away_odds": 6.0,
+                    "retrieved_at": datetime.now(UTC),
+                }
+            ],
+            "team_names": forecast["team_names"],
+        },
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "run_forecast",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("A quote-only refresh must not run the forecast")
+        ),
+    )
+    result = pipeline.operate(
+        collect_first=False,
+        data_store=data_store,
+        publish_store=publish_store,
+    )
+    assert result["status"] == "ok"
+    assert result["published"][0].startswith("eng-championship/")
+    assert (
+        data_store.objects["state/forecast.json"]["competitions"]["eng-championship"]["identities"]
+        == current
+    )
+
+
 def test_snapshot_pointer_commits_after_immutable_objects_and_restores(tmp_path, monkeypatch):
     store = Store()
     store.versions["state/manifests.json"] = "source-1"
@@ -400,9 +533,7 @@ def test_r2_operation_writes_private_runs_before_public_index(tmp_path, monkeypa
         "prepare_operation_snapshot",
         lambda cutoff, store, workspace: prepared_snapshot(workspace),
     )
-    monkeypatch.setattr(
-        pipeline, "information_fingerprint", lambda dataset, competition: "fingerprint"
-    )
+    install_fake_identities(monkeypatch)
     monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {})
     writes = []
     data_store, publish_store = Store("private", writes), Store("public", writes)

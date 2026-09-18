@@ -25,7 +25,7 @@ from epl_forecast.publication import (
     update_impact_state,
 )
 from epl_forecast.record import realized_outcomes, update_record
-from epl_forecast.results import read_forecast_result
+from epl_forecast.results import clone_forecast_result, read_forecast_result
 from epl_forecast.schema import Fixture
 from epl_forecast.snapshot import SnapshotDataset, create_snapshot, snapshot_manifest_path
 from epl_forecast.storage import (
@@ -229,17 +229,23 @@ def training_competitions(competition_id: str) -> list[str]:
     return list(competitions.get(competition_id, [competition_id]))
 
 
-def information_fingerprint(data, competition_id: str):
-    """Digest only the canonical values that one competition forecast consumes."""
+def information_records(data, competition_id: str) -> dict[str, object]:
+    """Return the canonical values that one competition forecast consumes."""
     training = training_competitions(competition_id)
     placeholders = ", ".join("?" for _ in training)
     queries = {
-        "fixtures": (
+        "fit_fixtures": (
             "SELECT DISTINCT match_id, competition_id, season_id, stage, home_team_id, "
             "away_team_id, match_date, kickoff_time, status, home_goals, away_goals "
             f"FROM fixtures WHERE competition_id IN ({placeholders}) "
-            "AND (competition_id=? OR status='finished') ORDER BY ALL",
-            [*training, competition_id],
+            "AND status='finished' ORDER BY ALL",
+            training,
+        ),
+        "projection_fixtures": (
+            "SELECT DISTINCT match_id, competition_id, season_id, stage, home_team_id, "
+            "away_team_id, match_date, kickoff_time, status, home_goals, away_goals "
+            "FROM fixtures WHERE competition_id=? ORDER BY ALL",
+            [competition_id],
         ),
         "team_process": (
             "SELECT DISTINCT match_id, team_id, xg FROM team_process "
@@ -299,7 +305,44 @@ def information_fingerprint(data, competition_id: str):
         {row["match_id"]: row["kickoff_time"] for row in upcoming},
         data.cutoff or datetime.now(UTC),
     )
-    return sha256_bytes(json.dumps(records, default=str, sort_keys=True).encode())
+    return records
+
+
+def information_identities(data, competition_id: str) -> dict[str, str]:
+    records = information_records(data, competition_id)
+
+    def digest(*names: str) -> str:
+        values = {name: records[name] for name in names}
+        return sha256_bytes(json.dumps(values, default=str, sort_keys=True).encode())
+
+    return {
+        "fit": digest("fit_fixtures", "team_process", "team_statistics"),
+        "projection": digest("projection_fixtures", "standings", "personnel"),
+        "market": digest("odds"),
+        "display": digest("teams"),
+    }
+
+
+def information_fingerprint(data, competition_id: str):
+    """Digest all effective canonical values for compatibility with saved state."""
+    return sha256_bytes(json_bytes(information_identities(data, competition_id)))
+
+
+def refresh_inputs(data, competition_id: str) -> dict[str, object]:
+    quotes = data.rows(
+        "SELECT * FROM odds WHERE competition_id=? AND season_id=(SELECT max(season_id) "
+        "FROM fixtures WHERE competition_id=?) ORDER BY match_id, family",
+        [competition_id, competition_id],
+    )
+    names = data.rows(
+        "SELECT DISTINCT team_id, name FROM teams WHERE team_id IN ("
+        "SELECT home_team_id FROM fixtures WHERE competition_id=? AND "
+        "season_id=(SELECT max(season_id) FROM fixtures WHERE competition_id=?) UNION "
+        "SELECT away_team_id FROM fixtures WHERE competition_id=? AND "
+        "season_id=(SELECT max(season_id) FROM fixtures WHERE competition_id=?)) ORDER BY ALL",
+        [competition_id] * 4,
+    )
+    return {"market_quotes": quotes, "team_names": {row["team_id"]: row["name"] for row in names}}
 
 
 MODEL_CODE = (
@@ -339,6 +382,19 @@ def production_fingerprint(data_fingerprint: str, model_version: str) -> str:
             {"data": data_fingerprint, "forecast_code": code, "model_version": model_version}
         )
     )
+
+
+def production_identities(data_identities: dict[str, str], model_version: str) -> dict[str, str]:
+    return {
+        **data_identities,
+        "model": sha256_bytes(
+            json_bytes({"forecast_code": model_code_hashes(), "model_version": model_version})
+        ),
+    }
+
+
+def identities_fingerprint(identities: dict[str, str]) -> str:
+    return sha256_bytes(json_bytes(identities))
 
 
 def collect_and_sync(workspace: Path, data_store) -> tuple[dict, dict]:
@@ -502,6 +558,33 @@ def due(state: dict, fingerprint: str, competition: str, moment: datetime | None
     return bool(due_reasons(state, fingerprint, competition, moment))
 
 
+def refresh_action(
+    previous: dict | None,
+    identities: dict[str, str],
+    moment: datetime,
+    *,
+    force: bool = False,
+) -> str:
+    if force or previous is None or "identities" not in previous:
+        return "full"
+    if previous.get("origin_date") != projection_day(moment):
+        return "full"
+    changed = {
+        name
+        for name, identity in identities.items()
+        if previous["identities"].get(name) != identity
+    }
+    if changed & {"fit", "projection", "model"}:
+        return "full"
+    if changed == {"market", "display"}:
+        return "market_display"
+    if changed == {"market"}:
+        return "market"
+    if changed == {"display"}:
+        return "display"
+    return "idle"
+
+
 def operate(
     simulations: int = 10000,
     force: bool = False,
@@ -542,24 +625,41 @@ def operate(
     progress("fingerprint_started", model_version=model_version)
     with tempfile.TemporaryDirectory(prefix="page324-operation-") as workspace:
         prepared = prepare_operation_snapshot(now, data_store, Path(workspace))
+        state = data_store.get_json("state/forecast.json", {})
         try:
-            fingerprints = {
-                competition_id: production_fingerprint(
-                    information_fingerprint(prepared.data, competition_id), model_version
+            identities = {
+                competition_id: production_identities(
+                    information_identities(prepared.data, competition_id), model_version
                 )
                 for competition_id in LEAGUES
+            }
+            fingerprints = {
+                competition_id: identities_fingerprint(values)
+                for competition_id, values in identities.items()
+            }
+            actions = {
+                competition_id: refresh_action(
+                    state.get("competitions", {}).get(competition_id),
+                    identities[competition_id],
+                    now,
+                    force=force,
+                )
+                for competition_id in LEAGUES
+            }
+            partial_inputs = {
+                competition_id: refresh_inputs(prepared.data, competition_id)
+                for competition_id, action in actions.items()
+                if action in {"market", "display", "market_display"}
             }
             outcomes = realized_outcomes(prepared.data.fixtures())
         finally:
             prepared.data.close()
-        state = data_store.get_json("state/forecast.json", {})
-        pending = [
-            league for league in LEAGUES if force or due(state, fingerprints[league], league, now)
-        ]
+        pending = [league for league in LEAGUES if actions[league] != "idle"]
         progress(
             "fingerprint_finished",
             elapsed_seconds=round(time.monotonic() - fingerprint_started, 3),
             pending=pending,
+            actions=actions,
         )
         if not pending:
             result.update(
@@ -589,6 +689,9 @@ def operate(
             now,
             pending,
             fingerprints,
+            identities,
+            actions,
+            partial_inputs,
             outcomes,
             state,
             policy,
@@ -607,6 +710,9 @@ def _forecast_and_publish(
     now: datetime,
     pending: list[str],
     fingerprints: dict,
+    identities: dict,
+    actions: dict[str, str],
+    partial_inputs: dict[str, dict[str, object]],
     outcomes,
     state: dict,
     policy: dict,
@@ -619,23 +725,26 @@ def _forecast_and_publish(
     impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
     documents, failures = [], []
     attempt.mkdir(parents=True)
-    with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
-        attempts = {
-            row.league: row
-            for row in pool.map(
-                lambda league: forecast_and_verify(
-                    league,
-                    now,
-                    attempt,
-                    run_id,
-                    simulations,
-                    prepared,
-                    data_store,
-                ),
-                pending,
-            )
-        }
-    for league in pending:
+    full = [league for league in pending if actions[league] == "full"]
+    attempts = {}
+    if full:
+        with ThreadPoolExecutor(max_workers=min(4, len(full))) as pool:
+            attempts = {
+                row.league: row
+                for row in pool.map(
+                    lambda league: forecast_and_verify(
+                        league,
+                        now,
+                        attempt,
+                        run_id,
+                        simulations,
+                        prepared,
+                        data_store,
+                    ),
+                    full,
+                )
+            }
+    for league in full:
         row = attempts[league]
         if row.failure:
             failures.append(row.failure)
@@ -666,6 +775,61 @@ def _forecast_and_publish(
                 impact_state,
             )
         )
+    market_pool = json.loads((REPOSITORY / "configs/market_pool.json").read_text())
+    if market_pool.get("structural_model_id") != PRODUCT_MODEL:
+        market_pool = None
+    for league in pending:
+        action = actions[league]
+        if action == "full":
+            continue
+        result_store = attempt.parent / "results" / f"{league}.duckdb"
+        try:
+            result_version = prepare_result_store(data_store, league, result_store)
+            previous = state["competitions"][league]
+            source_result_id = previous.get("result_id", previous.get("forecast_id"))
+            if source_result_id is None:
+                raise ValueError("The prior forecast state does not name a typed result")
+            values = partial_inputs[league]
+            clone_forecast_result(
+                result_store,
+                source_result_id,
+                run_id,
+                generated_at=now,
+                input_revision=fingerprints[league],
+                replace_market=action in {"market", "market_display"},
+                market_quotes=values["market_quotes"],
+                market_pool=market_pool,
+                team_names=(
+                    values["team_names"] if action in {"display", "market_display"} else None
+                ),
+            )
+            commit_result_store(data_store, league, result_store, result_version)
+            refresh_log = attempt / league / "refresh.json"
+            refresh_log.parent.mkdir(parents=True)
+            write_immutable(
+                refresh_log,
+                json_bytes(
+                    {
+                        "action": action,
+                        "competition_id": league,
+                        "result_id": run_id,
+                        "source_result_id": source_result_id,
+                    }
+                ),
+            )
+            documents.append(
+                update_impact_state(
+                    derive_forecast(
+                        read_forecast_result(result_store, run_id),
+                        run_id,
+                        public_model_version=policy["product"]["model_version"],
+                    ),
+                    impact_state,
+                )
+            )
+        except (ConditionalWriteFailed, KeyError, ValueError) as error:
+            progress("result_refresh_failed", competition_id=league, detail=str(error))
+            failures.append({"league": league, "stage": "result_refresh", "detail": str(error)})
     if not documents:
         result.update(status="failed", failures=failures, attempt=str(attempt))
         write_immutable(attempt / "pipeline.json", json_bytes(result))
@@ -697,8 +861,10 @@ def _forecast_and_publish(
     for document in documents:
         competition_state[document["competition_id"]] = {
             "fingerprint": fingerprints[document["competition_id"]],
+            "identities": identities[document["competition_id"]],
             "published_at": now.isoformat(),
             "forecast_id": document["forecast_id"],
+            "result_id": document["forecast_id"],
             "origin_date": projection_day(now),
         }
     data_store.put_json("state/forecast.json", state)

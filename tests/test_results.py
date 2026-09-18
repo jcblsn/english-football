@@ -1,11 +1,16 @@
 from copy import deepcopy
+from datetime import UTC, datetime
 
 import duckdb
 import pytest
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast.publication import derive_forecast
-from epl_forecast.results import read_forecast_result, write_forecast_result
+from epl_forecast.results import (
+    clone_forecast_result,
+    read_forecast_result,
+    write_forecast_result,
+)
 
 
 def result_forecast():
@@ -157,3 +162,116 @@ def test_public_forecast_is_derived_from_typed_result(tmp_path):
     )
     restored = read_forecast_result(database, "forecast-1")
     assert derive_forecast(restored, "forecast-1") == derive_forecast(forecast, "forecast-1")
+
+
+def test_display_refresh_reuses_all_forecast_values(tmp_path):
+    database = tmp_path / "results.duckdb"
+    write_forecast_result(
+        database,
+        result_forecast(),
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    result = clone_forecast_result(
+        database,
+        "forecast-1",
+        "forecast-2",
+        generated_at=datetime(2026, 9, 10, 13, tzinfo=UTC),
+        input_revision="input-2",
+        team_names={"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
+    )
+    assert result["status"] == "written"
+    refreshed = read_forecast_result(database, "forecast-2")
+    assert refreshed["team_names"] == {
+        "arsenal": "Arsenal FC",
+        "chelsea": "Chelsea FC",
+    }
+    with duckdb.connect(str(database), read_only=True) as connection:
+        for table in (
+            "forecast_matches",
+            "forecast_scores",
+            "forecast_team_seasons",
+            "forecast_team_events",
+            "forecast_team_points",
+            "forecast_team_positions",
+            "forecast_team_strengths",
+            "forecast_conditionals",
+        ):
+            differences = connection.execute(
+                f"SELECT * EXCLUDE (result_id) FROM forecast_result.{table} WHERE result_id = 'forecast-1' "
+                f"EXCEPT SELECT * EXCLUDE (result_id) FROM forecast_result.{table} WHERE result_id = 'forecast-2'"
+            ).fetchall()
+            assert differences == []
+
+
+def test_quote_refresh_replaces_only_market_probabilities(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    match_id = forecast["matches"][0]["match_id"]
+    result = clone_forecast_result(
+        database,
+        "forecast-1",
+        "forecast-2",
+        generated_at=datetime(2026, 9, 10, 13, tzinfo=UTC),
+        input_revision="input-2",
+        replace_market=True,
+        market_quotes=[
+            {
+                "match_id": match_id,
+                "family": "closing",
+                "home_odds": 1.6,
+                "draw_odds": 4.0,
+                "away_odds": 6.0,
+                "retrieved_at": datetime(2026, 9, 10, 12, tzinfo=UTC),
+            }
+        ],
+        market_pool={"market_family": "closing", "market_weight": 0.5},
+    )
+    assert result["status"] == "written"
+    source = read_forecast_result(database, "forecast-1")
+    refreshed = read_forecast_result(database, "forecast-2")
+    source_match = next(row for row in source["matches"] if row["match_id"] == match_id)
+    refreshed_match = next(row for row in refreshed["matches"] if row["match_id"] == match_id)
+    assert (
+        refreshed_match["market_assisted_probabilities"]
+        != source_match["market_assisted_probabilities"]
+    )
+    assert refreshed_match["score_distribution"] == source_match["score_distribution"]
+    assert refreshed["simulation"] == source["simulation"]
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM forecast_result.forecast_match_probabilities "
+            "WHERE result_id = 'forecast-2' AND stage = 'market_assisted'"
+        ).fetchone() == (1,)
+
+
+def test_result_clone_is_idempotent_and_cannot_name_different_content(tmp_path):
+    database = tmp_path / "results.duckdb"
+    write_forecast_result(
+        database,
+        result_forecast(),
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    arguments = {
+        "generated_at": datetime(2026, 9, 10, 13, tzinfo=UTC),
+        "input_revision": "input-2",
+        "team_names": {"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
+    }
+    clone_forecast_result(database, "forecast-1", "forecast-2", **arguments)
+    assert (
+        clone_forecast_result(database, "forecast-1", "forecast-2", **arguments)["status"]
+        == "unchanged"
+    )
+    arguments["team_names"] = {"arsenal": "Arsenal", "chelsea": "Chelsea"}
+    with pytest.raises(ValueError, match="different content"):
+        clone_forecast_result(database, "forecast-1", "forecast-2", **arguments)
