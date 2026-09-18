@@ -205,9 +205,13 @@ class Dataset:
 
     A workspace file is read only for a batch that is not yet in the R2 catalog, so a local file
     never replaces R2 evidence.
+
+    Registering a table reads the schema of each of its Parquet files, which is one request each
+    against R2. `tables` limits the dataset to the named canonical tables, so a reader that needs
+    one table does not pay for the whole history. The other tables are then absent, not empty.
     """
 
-    def __init__(self, cutoff=None, *, store=None, workspace=None, manifests=None):
+    def __init__(self, cutoff=None, *, store=None, workspace=None, manifests=None, tables=None):
         self.store = store if store is not None else r2_store_if_configured("R2_DATA_BUCKET")
         self.workspace = Path(workspace) if workspace is not None else None
         if self.store is None and self.workspace is None:
@@ -244,7 +248,8 @@ class Dataset:
         self.con.execute(SESSION_TIME_ZONE)
         if self.store:
             self.store.configure_duckdb(self.con)
-        for table, schema in SCHEMAS.items():
+        for table in tables if tables is not None else SCHEMAS:
+            schema = SCHEMAS[table]
             paths = []
             for manifest in self.manifests:
                 for file in manifest["files"]:

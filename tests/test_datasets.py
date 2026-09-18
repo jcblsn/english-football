@@ -114,3 +114,38 @@ def test_unscoped_history_keeps_unknown_end_date(tmp_path):
     rows = data.rows("SELECT * FROM availability")
     assert len(rows) == 1 and rows[0]["end_date"] is None
     data.close()
+
+
+def test_a_narrowed_dataset_registers_only_the_tables_a_reader_asked_for(tmp_path):
+    """Registering a table costs one request for each of its Parquet files."""
+    publish(
+        tmp_path,
+        {
+            "provider": "api_football",
+            "retrieved_at": "2026-09-18T10:00:00+00:00",
+            "evidence_basis": "captured",
+            "source_sha256": "a" * 64,
+        },
+        {
+            "teams": [{"team_id": "arsenal", "name": "Arsenal"}],
+            "fixtures": [
+                {
+                    "match_id": "eng-premier-league:2026-2027:arsenal:chelsea",
+                    "competition_id": "eng-premier-league",
+                    "season_id": "2026-2027",
+                    "stage": "regular",
+                    "home_team_id": "arsenal",
+                    "away_team_id": "chelsea",
+                    "match_date": "2026-09-20",
+                    "status": "scheduled",
+                }
+            ],
+        },
+    )
+    data = Dataset(workspace=tmp_path, tables=("fixtures",))
+    try:
+        assert data.rows("SELECT count(*) AS n FROM fixtures") == [{"n": 1}]
+        with pytest.raises(duckdb.CatalogException):
+            data.rows("SELECT count(*) AS n FROM teams")
+    finally:
+        data.close()
