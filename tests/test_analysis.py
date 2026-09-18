@@ -775,7 +775,9 @@ def test_hindcasts_are_pointer_driven_and_explicitly_retrospective(tmp_path):
             href: public,
         }
     )
-    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    session = open_analysis_session(
+        data_store=data, publish_store=publish_store, hindcast_versions=ALL_MODEL_VERSIONS
+    )
     try:
         origin = session.rows(
             "SELECT retrospective, generated_at, origin_at FROM analysis.hindcast_origins"
@@ -1111,7 +1113,7 @@ def test_an_older_or_every_hindcast_version_stays_available():
 
 def test_a_version_selection_must_name_a_version():
     data, publish_store = hindcast_archive_stores()
-    with pytest.raises(ValueError, match="one or more model version names"):
+    with pytest.raises(ValueError, match="distinct, nonempty model version names"):
         open_analysis_session(data_store=data, publish_store=publish_store, hindcast_versions=())
 
 
@@ -1184,7 +1186,7 @@ def test_a_new_hindcast_origin_changes_the_index_and_the_session_identity(tmp_pa
     assert second.path != first.path
 
 
-MATCH_HINDCAST_HREF = "match-hindcasts/v0.3.0/eng-premier-league/2026-2027.json"
+MATCH_HINDCAST_HREF = "match-hindcasts/v0.3.0/eng-premier-league/2026-2027/aaaa1111.json"
 
 
 def match_hindcast_document(match_id, match_date="2026-08-15", model_version="v0.3.0"):
@@ -1198,6 +1200,7 @@ def match_hindcast_document(match_id, match_date="2026-08-15", model_version="v0
         "model": {"version": model_version},
         "prospective_from": "2026-09-17",
         "last_match_date": match_date,
+        "deferred_fixtures": [],
         "matches": [
             {
                 "match_id": match_id,
@@ -1220,7 +1223,9 @@ def match_hindcast_document(match_id, match_date="2026-08-15", model_version="v0
                     "home_rate": 1.6,
                     "away_rate": 1.2,
                     "omitted_probability": 0.2,
-                    "grid_home_rows_away_columns": [[0.5, 0.2], [0.1, 0.0]],
+                    # 0-0 and 1-1 draw, 0-1 away, 1-0 home. The retained cells give 0.4/0.2/0.2
+                    # against a published 0.5/0.25/0.25; the missing 0.2 is the omitted tail.
+                    "grid_home_rows_away_columns": [[0.2, 0.2], [0.4, 0.0]],
                 },
             }
         ],
@@ -1360,4 +1365,103 @@ def test_the_published_score_grid_may_round_but_not_drift():
                 open_analysis_session(data_store=data, publish_store=publish_store)
             continue
         session = open_analysis_session(data_store=data, publish_store=publish_store)
+        session.close()
+
+
+def test_a_partial_release_keeps_every_live_model_version():
+    """One division can fail while the others publish, so the current versions can differ."""
+    data, publish_store = hindcast_archive_stores()
+    pointers = publish_store.objects["forecasts/current.json"]["forecasts"]
+    pointers.append(
+        {
+            **pointers[0],
+            "competition_id": "eng-championship",
+            "competition_name": "Championship",
+            "forecast_id": "2026-09-15T181554Z",
+            "generated_at": "2026-09-15T18:20:38+00:00",
+            "model_version": "v0.2",
+            "href": "forecasts/eng-championship/2026-09-15T181554Z.json",
+        }
+    )
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows(
+            "SELECT DISTINCT model_version FROM analysis.hindcast_origins ORDER BY model_version"
+        ) == [{"model_version": "v0.2"}, {"model_version": "v0.3.0"}]
+        assert json.loads(
+            session.rows("SELECT hindcast_model_versions FROM analysis.session")[0][
+                "hindcast_model_versions"
+            ]
+        ) == ["v0.2", "v0.3.0"]
+    finally:
+        session.close()
+
+
+def test_no_live_forecast_means_no_current_hindcast_generation():
+    """`current` never quietly becomes `all`; the whole archive is an explicit request."""
+    data, publish_store = hindcast_archive_stores()
+    publish_store.objects["forecasts/current.json"] = {
+        "schema_version": 1,
+        "updated_at": "2026-09-17T15:00:00+00:00",
+        "forecasts": [],
+    }
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows("SELECT count(*) AS n FROM analysis.hindcast_origins") == [{"n": 0}]
+    finally:
+        session.close()
+    assert not any("/series.json" in key for key in publish_store.reads)
+
+
+def test_a_changed_match_hindcast_document_rebuilds_the_session(tmp_path):
+    """The index names the content, so a changed bridge selects a new file rather than the old."""
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id)
+    directory = tmp_path / "sessions"
+    first = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    try:
+        assert first.rows("SELECT p_home FROM analysis.match_hindcasts") == [{"p_home": 0.5}]
+    finally:
+        first.close()
+
+    changed_href = "match-hindcasts/v0.3.0/eng-premier-league/2026-2027/bbbb2222.json"
+    changed = match_hindcast_document(match_id)
+    changed["matches"][0].update(p_home=0.6, p_draw=0.2, p_away=0.2)
+    publish_store.objects[changed_href] = changed
+    publish_store.objects["match-hindcasts/index.json"]["seasons"] = [
+        {"model_version": "v0.3.0", "href": changed_href}
+    ]
+    second = open_analysis_session(
+        data_store=data, publish_store=publish_store, session_directory=directory
+    )
+    try:
+        assert second.path != first.path
+        assert second.rows("SELECT p_home FROM analysis.match_hindcasts") == [{"p_home": 0.6}]
+    finally:
+        second.close()
+
+
+def test_a_score_grid_with_the_right_mass_but_the_wrong_shape_fails():
+    """Total mass alone does not prove the grid; it must reproduce the published H/D/A split."""
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id)
+    grid = publish_store.objects[MATCH_HINDCAST_HREF]["matches"][0]["score_probabilities"]
+    # The same 0.8 of mass, moved from a home win into a draw.
+    grid["grid_home_rows_away_columns"] = [[0.7, 0.05], [0.05, 0.0]]
+    with pytest.raises(ValueError, match="does not reproduce its match-hindcast probabilities"):
+        open_analysis_session(data_store=data, publish_store=publish_store)
+
+
+def test_a_score_grid_that_matches_its_probabilities_passes():
+    match_id = "eng-premier-league:2026-2027:arsenal:chelsea"
+    data, publish_store = match_hindcast_stores(match_id)
+    session = open_analysis_session(data_store=data, publish_store=publish_store)
+    try:
+        assert session.rows(
+            "SELECT round(sum(probability) FILTER (home_goals > away_goals), 6) AS p_home "
+            "FROM analysis.match_hindcast_score_grid"
+        ) == [{"p_home": 0.4}]
+    finally:
         session.close()

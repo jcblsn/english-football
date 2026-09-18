@@ -209,6 +209,8 @@ HINDCAST_INDEX_KEYS = {
 # on which live coverage of the model version began, and every match here is earlier.
 MATCH_HINDCAST_KEYS = {
     "assumptions",
+    "deferred_fixtures",
+    "status",
     "away_discontinuity",
     "away_rate",
     "away_team_id",
@@ -245,6 +247,7 @@ MATCH_HINDCAST_KEYS = {
 }
 MATCH_HINDCAST_INDEX_KEYS = {
     "competition_id",
+    "deferred_count",
     "competition_name",
     "first_match_date",
     "href",

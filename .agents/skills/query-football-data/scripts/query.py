@@ -12,6 +12,7 @@ from epl_forecast.analysis import (
     ALL_MODEL_VERSIONS,
     CURRENT_MODEL_VERSION,
     SESSION_DIRECTORY,
+    normalize_hindcast_versions,
     open_analysis_session,
 )
 from epl_forecast.storage import load_environment
@@ -69,12 +70,12 @@ def parser() -> argparse.ArgumentParser:
 
 def hindcast_versions(value: str):
     """`current`, `all`, or explicit model versions, which a session file keeps in its own slot."""
-    if value in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS):
-        return value
-    names = [name.strip() for name in value.split(",") if name.strip()]
-    if not names:
-        raise argparse.ArgumentTypeError("hindcast versions must name at least one model version")
-    return tuple(names)
+    try:
+        return normalize_hindcast_versions(
+            value if value in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS) else value.split(",")
+        )
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 def positive_int(value: str) -> int:
