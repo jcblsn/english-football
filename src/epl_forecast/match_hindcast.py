@@ -131,6 +131,7 @@ def forecast_day(task: dict) -> list[dict]:
     for fixture in sorted(fixtures, key=lambda f: f.match_id):
         record = records.get(fixture.match_id)
         shift = None if record is None else record["home_log_rate_shift"]
+        kickoff = kickoffs.get(fixture.match_id)
         stages, _, probabilities, _ = forecast_probability_stages(
             model.predict_match(fixture), MAX_GOALS, shift
         )
@@ -139,7 +140,7 @@ def forecast_day(task: dict) -> list[dict]:
             {
                 "match_id": fixture.match_id,
                 "match_date": str(fixture.match_date),
-                "kickoff_time": kickoffs[fixture.match_id],
+                "kickoff_time": None if kickoff is None else kickoff.isoformat(),
                 "home_team_id": fixture.home_team_id,
                 "away_team_id": fixture.away_team_id,
                 "origin_at": origin.isoformat(),
@@ -149,7 +150,18 @@ def forecast_day(task: dict) -> list[dict]:
                 "p_draw": float(probabilities[1]),
                 "p_away": float(probabilities[2]),
                 "unadjusted": {key: unadjusted[key] for key in ("p_home", "p_draw", "p_away")},
-                "personnel": record,
+                # The scalar continuity of each club, not the player evidence behind it. The
+                # match forecast needs no more, and the private run stays small and printable.
+                "personnel": None
+                if record is None
+                else {
+                    side: {
+                        field: record[side][field]
+                        for field in ("discontinuity", "unresolved_weight")
+                    }
+                    for side in ("home", "away")
+                }
+                | {"home_log_rate_shift": shift},
                 "score_distribution": stages["personnel_adjusted"]["score_distribution"],
             }
         )

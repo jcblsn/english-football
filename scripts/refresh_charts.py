@@ -264,6 +264,32 @@ def extract_expected_position(forecast: Forecast, spec: dict) -> list[dict]:
     return rows
 
 
+def extract_event_trajectory(forecast: Forecast, spec: dict) -> list[dict]:
+    """Every retrospective and live value of one season event, for every club of the division.
+
+    The handoff between the two products is explicit in the analysis schema, so the extraction
+    reads one relation and keeps `retrospective` with each value.
+    """
+    rows = query(
+        trajectory=f"""
+        SELECT strftime(observed_at AT TIME ZONE 'Europe/London', '%Y-%m-%d %H:%M')
+                 AS observed_at,
+               retrospective, team_id, team_name, probability
+        FROM analysis.team_event_probabilities
+        WHERE competition_id = '{forecast.competition_id}'
+          AND season_id = '{forecast.season_id}'
+          AND model_version = '{forecast.model_version}'
+          AND event = '{spec["event"]}'
+        ORDER BY observed_at, team_id
+        """
+    )["trajectory"]
+    if not rows:
+        raise SystemExit(f"no trajectory for event {spec['event']}")
+    if not any(row["retrospective"] for row in rows):
+        raise SystemExit(f"no retrospective values for event {spec['event']}")
+    return rows
+
+
 MEASURES = {
     # The width of the conditional event probability of a club over the three results.
     "swing": "the difference between the largest and the smallest probability of the three results",
@@ -724,6 +750,140 @@ def recipe_match_leverage(forecast: Forecast, spec: dict, data: list[dict], shor
     }
 
 
+def recipe_event_trajectory(forecast: Forecast, spec: dict, data: list[dict], short: dict) -> dict:
+    """One dashed line for the retrospective values and one solid line for the live values.
+
+    Every club is drawn. The clubs that reach the highlight threshold are dark and labelled;
+    the rest stay light, so the reader sees the whole division without twenty labels.
+    """
+    label = spec["value_label"]
+    names = {}
+    for row in data:
+        names.setdefault(row["team_id"], label_of(row, short, bool(spec.get("short_club_labels"))))
+    latest = {}
+    peak = {}
+    for row in data:
+        latest[row["team_id"]] = row["probability"]
+        peak[row["team_id"]] = max(peak.get(row["team_id"], 0.0), row["probability"])
+    order = sorted(names, key=lambda team: (-latest[team], names[team]))
+    threshold = float(spec.get("highlight_above", 0.1))
+    highlighted = [team for team in order if peak[team] >= threshold]
+
+    moments = sorted({row["observed_at"] for row in data})
+    values = {(row["team_id"], row["observed_at"]): row for row in data}
+    columns = ["Date"]
+    for team in order:
+        columns += [names[team], f"{names[team]} (hindcast)"]
+    table = []
+    for moment in moments:
+        line = [moment]
+        for team in order:
+            row = values.get((team, moment))
+            cell = "" if row is None else plain(points(row["probability"], 1))
+            line += ["" if row is None or row["retrospective"] else cell]
+            line += [cell if row is not None and row["retrospective"] else ""]
+        table.append(line)
+
+    retrospective = [row["observed_at"] for row in data if row["retrospective"]]
+    live = [row["observed_at"] for row in data if not row["retrospective"]]
+    lines = {}
+    for team in order:
+        dark = team in highlighted
+        lines[names[team]] = {
+            "color": INK if dark else WASH,
+            "width": "style0" if dark else "style3",
+            "colorKey": False,
+            "directLabel": dark,
+            "symbols": {"enabled": True, "style": "circle", "on": "every"},
+        }
+        lines[f"{names[team]} (hindcast)"] = {
+            "color": INK if dark else WASH,
+            "width": "style0" if dark else "style3",
+            "dash": "style1",
+            "colorKey": False,
+            "directLabel": False,
+        }
+    return {
+        "csv": csv_text(columns, [[str(cell) for cell in line] for line in table]),
+        "checks": [
+            ("clubs", len(order), 20 if forecast.competition_id == "eng-premier-league" else 24),
+            ("observations", len(moments), len(moments)),
+            ("retrospective values", len(retrospective), len(retrospective)),
+            ("live values", len(live), len(live)),
+        ],
+        "metadata": {
+            "describe": {
+                "intro": spec["intro"].format(season=forecast.season),
+                "aria-description": (
+                    f"A line chart of {label.lower()} for every club across the season. "
+                    "A dashed line is a retrospective hindcast and a solid line is a live forecast."
+                ),
+            },
+            "visualize": {
+                "interpolation": "linear",
+                "connector-lines": False,
+                "custom-range-y": [0, 100],
+                "y-grid-format": "0%",
+                "y-grid": "on",
+                "x-grid": "off",
+                "x-grid-format": "MMM D",
+                "label-colors": True,
+                "label-margin": 110,
+                "show-tooltips": True,
+                "lines": lines,
+                "range-annotations": [
+                    {
+                        "type": "x",
+                        "display": "range",
+                        "color": RULE,
+                        "opacity": 45,
+                        "x0": min(retrospective),
+                        "x1": max(retrospective),
+                        "strokeWidth": 1,
+                    }
+                ],
+                "text-annotations": [
+                    {
+                        "text": "Hindcast",
+                        "x": min(retrospective),
+                        "dx": 4,
+                        "dy": -6,
+                        "y": 97,
+                        "bg": False,
+                        "bold": True,
+                        "size": 12,
+                        "color": SECONDARY,
+                        "align": "ml",
+                    },
+                    {
+                        "text": "Forecast",
+                        "x": max(live),
+                        "dx": -4,
+                        "dy": -6,
+                        "y": 97,
+                        "bg": False,
+                        "bold": True,
+                        "size": 12,
+                        "color": INK,
+                        "align": "mr",
+                    },
+                ],
+            },
+            "annotate": {
+                "notes": provenance(
+                    forecast,
+                    extra=(
+                        "A dashed line is a hindcast: the frozen model made it after the matches "
+                        "were played. A solid line is a published forecast. Live coverage of "
+                        f"model {forecast.model_version} began on {min(live)[:10]}. "
+                        "A hindcast is not in the prospective record."
+                    ),
+                )
+            },
+        },
+    }
+
+
 RECIPES = {
     "season_event_bars": (extract_season_event_bars, recipe_season_event_bars),
     "match_outcome_bars": (extract_match_outcome_bars, recipe_match_outcome_bars),
@@ -731,6 +891,7 @@ RECIPES = {
     "forecast_standings": (extract_forecast_standings, recipe_forecast_standings),
     "expected_position": (extract_expected_position, recipe_expected_position),
     "match_leverage": (extract_match_leverage, recipe_match_leverage),
+    "event_trajectory": (extract_event_trajectory, recipe_event_trajectory),
 }
 
 # The width a chart is designed for, and the width the review PNG uses. A Datawrapper
@@ -744,6 +905,7 @@ REVIEW_WIDTH = {
     "forecast_standings": 720,
     "expected_position": 640,
     "match_leverage": 640,
+    "event_trajectory": 760,
 }
 
 PUBLISH_BLOCKS = {
