@@ -1,0 +1,87 @@
+# Page 324 photo library
+#
+# A hand-maintained index of photographs that Page 324 can possibly use. It records
+# where a photograph came from and what its licence permits, so that a later decision
+# to publish it does not repeat the research.
+#
+# This file is a discovery and provenance index. It is not a publication contract, and
+# nothing here is approved for publication only because it appears in this file.
+#
+# The image files are not in the repository. An entry points at the source page.
+#
+# To add a photograph, append an entry. Keep the entries in the order they were added.
+# Read the licence on the source page yourself. Do not copy a licence from a similar
+# photograph.
+
+schema_version: 1
+
+# status tells the reader how far an entry has gone.
+#   saved     - the photograph is recorded, and nobody has checked the rights yet.
+#   cleared   - the rights are checked and the photograph can be used.
+#   used      - the photograph is published, and the credit is in place.
+#   rejected  - the photograph is not for use. The reason is in notes.
+statuses:
+  - saved
+  - cleared
+  - used
+  - rejected
+
+photos:
+  - id: arsenal-premier-league-trophy-2026
+    status: saved
+    teams:
+      - arsenal
+      - crystal-palace
+    subject: Arsenal lift the Premier League trophy after the match against Crystal Palace
+    date_taken: 2026-05-24
+    source:
+      provider: Wikimedia Commons
+      page: https://commons.wikimedia.org/wiki/File:1_arsenal_crystal_palace_epl_champions_2026.jpg
+      author: Chensiyuan
+    rights:
+      license: CC BY-SA 4.0
+      license_url: https://creativecommons.org/licenses/by-sa/4.0/
+      attribution_required: true
+      share_alike: true
+      personality_rights_warning: true
+    suggested_credit: "Photo: Chensiyuan, CC BY-SA 4.0, via Wikimedia Commons"
+    tags:
+      - premier-league
+      - trophy
+      - celebration
+      - season-2025-2026
+    notes: >-
+      The photographer gives the photograph as their own work. Share alike applies, so a
+      changed version must keep the same licence. Commons holds a personality rights
+      warning on the file, because the photograph shows identifiable players. Check the
+      use against that warning before publication.
+    accessed: 2026-09-17
+
+  - id: tottenham-cup-winners-cup-final-1963
+    status: saved
+    teams:
+      - tottenham-hotspur
+    subject: The Tottenham Hotspur team at the 1963 European Cup Winners' Cup final against Atletico Madrid
+    date_taken: 1963-05-15
+    source:
+      provider: Wikimedia Commons
+      page: https://commons.wikimedia.org/wiki/File:Tottenham_Hotspurs_tegen_Atletico_Madrid_5-1_Nr_14_en_15_Elftal_Tottenham_Hots,_Bestanddeelnr_915-1586.jpg
+      author: Harry Pot for Anefo, Nationaal Archief
+    rights:
+      license: CC0 1.0
+      license_url: https://creativecommons.org/publicdomain/zero/1.0/
+      attribution_required: false
+      share_alike: false
+      personality_rights_warning: false
+    suggested_credit: "Photo: Harry Pot / Anefo, Nationaal Archief, CC0"
+    tags:
+      - archive
+      - european-competition
+      - team-photograph
+      - black-and-white
+    notes: >-
+      From the Anefo collection of the Dutch Nationaal Archief. Tottenham Hotspur won the
+      final 5-1. The licence asks for no credit, but give one anyway. Atletico Madrid is
+      the opponent and has no entry in the team registry, because the registry holds only
+      English clubs.
+    accessed: 2026-09-17

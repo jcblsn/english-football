@@ -112,7 +112,9 @@ The supporting greys, in order of weight, are `#6C6A64`, `#9E9B93` and `#D8D5CC`
 
 A table cell scale runs white `#FFFFFF` to `#B9B5AA`. It stays light enough that the number is readable on every cell. One scale serves every colored column of a table, so color only columns that hold the same unit, and then equal ink means equal value across the whole table.
 
-Near-black means "this is the value in question". It does not mean good, promotion or relegation.
+Near-black is the heaviest step of the grey scale. It takes the focal series of a chart, or the first member of a fixed ordered set. It never means good, bad, promotion or relegation.
+
+The one approved categorical set is the match result: home win `#121210`, draw `#D8D5CC`, away win `#6C6A64`. The three are far enough apart that the key is readable and the value labels stay legible. Do not add another categorical set until charts have tested it.
 
 Never use the Page 324 accent as a data color.
 
@@ -130,7 +132,7 @@ In a dense table, use a short club label. The full name makes the first column t
 
 A table can carry a cell scale, in grey only. Use it where the shape of a distribution is part of the story, as in the final-position matrix, and where every colored column holds the same unit. Do not color a column that is not a probability.
 
-In a dense table, round to whole percentages and leave a cell blank when it falls below 0.5%. A blank says "too small to matter here". A zero says "this cannot happen", which is not true. Say in the notes what a blank means.
+In a dense table, round to whole percentages and leave a cell blank when it falls below 0.5%. A blank says "too small to matter here". A zero says "this cannot happen", which is not true. Do not explain the blank under the chart. The threshold is a house convention and it belongs on the method page.
 
 Keep the first column fixed so the club name stays in view when a wide table scrolls sideways.
 
@@ -144,7 +146,7 @@ Let readers download the full table when columns are hidden on small screens.
 
 The notes are short. Three sentences at the most. They record the forecast time, the public model version and the number of simulations, and then say only what the reader cannot get from the chart, such as the threshold behind a displayed zero or a blank cell.
 
-Write the forecast time as `YYYY-MM-DD HH:MM UTC`. The forecast ID is a machine key and it does not belong in front of a reader. The time comes from that ID, so one time still names one forecast document.
+Write the forecast time as `as of YYYY-MM-DD HH:MM UTC`. The forecast ID is a machine key and it does not belong in front of a reader. The time comes from that ID, so one time still names one forecast document. "As of" tells the reader that the forecast holds for a moment and that a later forecast replaces it.
 
 The notes are not a disclaimer. A limit that applies to every Page 324 forecast belongs in the method page, not under each chart.
 

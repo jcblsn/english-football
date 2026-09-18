@@ -39,7 +39,6 @@ WASH = "#B9B5AA"
 CANVAS = "#FFFFFF"
 
 ATTRIBUTION = "Page 324"
-MOST_LIKELY = "(most likely)"
 SOURCE_URL = "https://page324.substack.com/"
 
 
@@ -151,7 +150,7 @@ def window_phrase(first: str, last: str) -> str:
 
 
 def provenance(forecast: Forecast, *, with_simulations: bool = True, extra: str = "") -> str:
-    parts = [f"Page 324 forecast {forecast.stamp}.", f"Model {forecast.model_version}"]
+    parts = [f"Page 324 forecast as of {forecast.stamp}.", f"Model {forecast.model_version}"]
     parts[-1] += f", {forecast.simulations:,} simulations." if with_simulations else "."
     if extra:
         parts.append(extra)
@@ -222,7 +221,6 @@ def extract_position_matrix(forecast: Forecast, spec: dict) -> dict:
 
 
 def extract_forecast_standings(forecast: Forecast, spec: dict) -> dict:
-    level = int(spec["interval_level"])
     events = tuple(event for event, _ in spec["events"])
     listed = ", ".join(f"'{event}'" for event in events)
     return query(
@@ -232,13 +230,6 @@ def extract_forecast_standings(forecast: Forecast, spec: dict) -> dict:
         WHERE forecast_id = '{forecast.forecast_id}'
           AND competition_id = '{forecast.competition_id}'
         ORDER BY mean_position ASC
-        """,
-        intervals=f"""
-        SELECT team_id, lower, upper
-        FROM analysis.forecast_intervals
-        WHERE forecast_id = '{forecast.forecast_id}'
-          AND competition_id = '{forecast.competition_id}'
-          AND estimate = 'points' AND level = {level}
         """,
         events=f"""
         SELECT team_id, event, probability
@@ -333,54 +324,34 @@ def recipe_season_event_bars(forecast: Forecast, spec: dict, data: list[dict], s
 def recipe_match_outcome_bars(
     forecast: Forecast, spec: dict, data: list[dict], short: dict
 ) -> dict:
-    """Each result keeps its place in the bar. The most likely result of the match is black.
-
-    Datawrapper colours a stacked bar by column, not by cell, so each result has two
-    columns: one for when it is the most likely result, one for when it is not. A row
-    fills one column of each pair and leaves the other empty.
-    """
+    """One grey for the home win, one for the draw, one for the away win."""
     outcomes = [("Home win", "p_home"), ("Draw", "p_draw"), ("Away win", "p_away")]
-    header = ["Match"]
-    for label, _ in outcomes:
-        header += [f"{label} {MOST_LIKELY}", label]
-
-    rows = []
-    for match in data:
-        favoured = max(outcomes, key=lambda outcome: match[outcome[1]])[0]
-        row = [f"{match['home_team']} v {match['away_team']}"]
-        for label, field in outcomes:
-            value = plain(points(match[field], 0))
-            row += [value, ""] if label == favoured else ["", value]
-        rows.append(row)
-
-    colours = {f"{label} {MOST_LIKELY}": INK for label, _ in outcomes}
-    colours.update({"Home win": SECONDARY, "Draw": RULE, "Away win": QUIET})
+    rows = [
+        [f"{match['home_team']} v {match['away_team']}"]
+        + [plain(points(match[field], 0)) for _, field in outcomes]
+        for match in data
+    ]
     window = window_phrase(data[0]["match_date"], data[-1]["match_date"])
     return {
-        "csv": csv_text(header, rows),
+        "csv": csv_text(["Match"] + [label for label, _ in outcomes], rows),
         "checks": [("matches", len(rows), len(rows))],
         "metadata": {
             "describe": {
                 "intro": spec["intro"].format(season=forecast.season, window=window),
-                "aria-description": "A one hundred percent stacked bar chart of home win, draw and away win probabilities, in kick-off order. The most likely result of each match is black.",
+                "aria-description": "A one hundred percent stacked bar chart of home win, draw and away win probabilities, in kick-off order.",
             },
             "visualize": {
                 "block-labels": True,
                 "sort-bars": False,
                 "color-by-column": True,
-                # The key would name the favoured and unfavoured variant of each result.
-                # excludeFromKey is stored but a stacked bar ignores it, so the
-                # introduction carries the order of the results instead.
-                "show-color-key": False,
-                "color-category": {"map": colours},
+                "show-color-key": True,
+                "color-category": {"map": {"Home win": INK, "Draw": RULE, "Away win": SECONDARY}},
                 "value-label-format": "0%",
                 "thick": True,
             },
             "annotate": {
                 "notes": provenance(
-                    forecast,
-                    with_simulations=False,
-                    extra="The result is after 90 minutes. The most likely result is black.",
+                    forecast, with_simulations=False, extra="The result is after 90 minutes."
                 )
             },
         },
@@ -450,30 +421,24 @@ def recipe_position_matrix(forecast: Forecast, spec: dict, data: dict, short: di
                 "heatmap": grey_heatmap(0, 25),
                 **table_style(),
             },
-            "annotate": {
-                "notes": provenance(forecast, extra="A blank cell is below 0.5%, not impossible.")
-            },
+            "annotate": {"notes": provenance(forecast)},
         },
     }
 
 
 def recipe_forecast_standings(forecast: Forecast, spec: dict, data: dict, short: dict) -> dict:
-    level = int(spec["interval_level"])
-    interval = {row["team_id"]: row for row in data["intervals"]}
     events: dict[str, dict[str, float]] = {}
     for row in data["events"]:
         events.setdefault(row["team_id"], {})[row["event"]] = row["probability"]
 
     event_labels = [label for _, label in spec["events"]]
-    range_header = f"{level}% range"
-    header = ["Club", "Played", "Points", "Expected points", range_header] + event_labels
+    header = ["Club", "Played", "Points", "Expected points"] + event_labels
 
     rows = []
     for team in data["teams"]:
-        bounds = interval[team["team_id"]]
-        low = int(Decimal(str(bounds["lower"])).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-        high = int(Decimal(str(bounds["upper"])).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-        expected = Decimal(str(team["mean_points"])).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+        expected = Decimal(str(team["mean_points"])).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP
+        )
         values = events[team["team_id"]]
         rows.append(
             [
@@ -481,7 +446,6 @@ def recipe_forecast_standings(forecast: Forecast, spec: dict, data: dict, short:
                 str(int(team["played"])),
                 str(int(team["current_points"])),
                 plain(expected),
-                f"{low}⁠–⁠{high}",
             ]
             + [plain(points(values[event], 1)) for event, _ in spec["events"]]
         )
@@ -506,16 +470,8 @@ def recipe_forecast_standings(forecast: Forecast, spec: dict, data: dict, short:
         "Expected points": {
             "type": "number",
             "align": "right",
-            "format": "0",
+            "format": "0.0",
             "showOnMobile": "Expected points" in mobile,
-            "showOnDesktop": True,
-        },
-        range_header: {
-            "type": "text",
-            "align": "right",
-            "width": 0.1,
-            "fixedWidth": True,
-            "showOnMobile": range_header in mobile,
             "showOnDesktop": True,
         },
     }
@@ -541,19 +497,14 @@ def recipe_forecast_standings(forecast: Forecast, spec: dict, data: dict, short:
         "metadata": {
             "describe": {
                 "intro": spec["intro"].format(season=forecast.season),
-                "aria-description": "A table of clubs with matches played, current points, expected final points with a range, and season outcome probabilities.",
+                "aria-description": "A table of clubs with matches played, current points, expected final points, and season outcome probabilities.",
             },
             "visualize": {
                 "columns": columns,
                 "heatmap": grey_heatmap(0, 100),
                 **table_style(),
             },
-            "annotate": {
-                "notes": provenance(
-                    forecast,
-                    extra=f"The range holds the middle {level}% of the simulated seasons.",
-                )
-            },
+            "annotate": {"notes": provenance(forecast)},
         },
     }
 
@@ -611,7 +562,7 @@ def call(method: str, path: str, *, body=None, content_type="application/json", 
         headers={"Authorization": f"Bearer {token()}", "Content-Type": content_type},
     )
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=120) as response:
             payload = response.read()
     except urllib.error.HTTPError as error:
         raise SystemExit(
@@ -620,6 +571,10 @@ def call(method: str, path: str, *, body=None, content_type="application/json", 
     if raw:
         return payload
     return json.loads(payload) if payload else {}
+
+
+def note(line: str) -> None:
+    print(line, flush=True)
 
 
 def refresh(
@@ -642,13 +597,13 @@ def refresh(
     describe["source-url"] = SOURCE_URL
     metadata.setdefault("publish", {})["blocks"] = PUBLISH_BLOCKS
 
-    print(f"\n{spec['chart_id']}  {spec['title']}")
-    print(
+    note(f"\n{spec['chart_id']}  {spec['title']}")
+    note(
         f"  forecast {forecast.forecast_id}  {forecast.competition_id}  model {forecast.model_version}  {forecast.simulations:,} simulations"
     )
     for name, got, want in result["checks"]:
         flag = "ok " if abs(got - want) < 0.51 else "CHECK"
-        print(f"  {flag} {name}: {got} (expected {want})")
+        note(f"  {flag} {name}: {got} (expected {want})")
 
     if dry:
         print(result["csv"])
@@ -669,7 +624,7 @@ def refresh(
     uploaded = call("GET", f"/charts/{spec['chart_id']}/data", raw=True).decode()
     if uploaded.strip() != result["csv"].strip():
         raise SystemExit(f"{spec['chart_id']}: uploaded data does not match the extraction")
-    print("  ok  uploaded data matches the extraction")
+    note("  ok  uploaded data matches the extraction")
 
     if export:
         export.mkdir(parents=True, exist_ok=True)
@@ -681,14 +636,14 @@ def refresh(
             )
             target = export / f"{spec['chart_id']}-{width}.png"
             target.write_bytes(image)
-            print(f"  png {target}")
+            note(f"  png {target}")
 
     if publish:
         response = call("POST", f"/charts/{spec['chart_id']}/publish")
         chart = response.get("data", response)
         public = chart.get("publicUrl") or chart.get("publicUrl", "")
         version = chart.get("publicVersion", "")
-        print(f"  published v{version}  {public}")
+        note(f"  published v{version}  {public}")
 
 
 def main() -> None:

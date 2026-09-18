@@ -23,7 +23,7 @@ chart_id = "fIPRH"
 recipe = "match_outcome_bars"
 competition = "eng-premier-league"
 title = "Premier League match probabilities"
-intro = "The probability of each result for the Premier League matches {window}. The matches are in kick-off order. Each bar shows the home win, the draw and the away win from the left, and the most likely result is black."
+intro = "The probability of each result for the Premier League matches {window}. The matches are in kick-off order."
 
 [[charts]]
 chart_id = "0mkG0"
@@ -38,7 +38,6 @@ intro = "The probability that each club finishes the {season} Premier League in 
 chart_id = "htmjC"
 recipe = "forecast_standings"
 competition = "eng-premier-league"
-interval_level = 80
 events = [["title_probability", "Title"], ["top_four_probability", "Top four"], ["relegation_probability", "Relegation"]]
 mobile_columns = ["Club", "Title", "Relegation"]
 title = "Premier League forecast standings"

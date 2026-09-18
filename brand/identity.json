@@ -176,7 +176,15 @@
         "high": "#B9B5AA"
       },
       "grayscale_first": true,
-      "hue_needs_a_reason": true
+      "hue_needs_a_reason": true,
+      "match_outcome": {
+        "home_win": "#121210",
+        "draw": "#D8D5CC",
+        "away_win": "#6C6A64"
+      },
+      "approved_categorical_sets": [
+        "match_outcome"
+      ]
     },
     "labels": {
       "show_every_value": true,
@@ -197,7 +205,7 @@
       "cell_scale_shares_one_unit": true,
       "dense_matrix_decimal_places": 0,
       "blank_below_threshold": true,
-      "state_blank_meaning_in_notes": true,
+      "state_blank_meaning_in_notes": false,
       "sticky_first_column": true,
       "choose_mobile_columns_explicitly": true,
       "allow_data_download": true,
@@ -228,7 +236,7 @@
       ]
     },
     "definition_of_the_chart_set": "charts/definitions.toml",
-    "forecast_time_format": "YYYY-MM-DD HH:MM UTC"
+    "forecast_time_format": "as of YYYY-MM-DD HH:MM UTC"
   },
   "avoid": [
     "ceefax_pastiche",
