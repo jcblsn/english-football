@@ -10,7 +10,7 @@ from pathlib import Path
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.datasets import timestamp
 from epl_forecast.simulation import EVERY_TEAM, OUTCOME_NAMES
-from epl_forecast.storage import write_json
+from epl_forecast.storage import json_bytes, sha256_bytes, write_json
 
 POLICY_PATH = Path("configs/publication.toml")
 MINIMUM_SIMULATIONS = 1000
@@ -102,6 +102,8 @@ FORECAST_KEYS = {
     "position_intervals",
     "position_probabilities",
     "position_sd",
+    "release_href",
+    "released_at",
     "rms_movement",
     "schema_version",
     "score_probabilities",
@@ -126,6 +128,8 @@ FORECAST_KEYS = {
     "window_start",
 }
 POINTER_KEYS = {
+    "release_href",
+    "released_at",
     "competition_id",
     "competition_name",
     "forecast_id",
@@ -139,6 +143,7 @@ POINTER_KEYS = {
     "updated_at",
 }
 RECORD_KEYS = {
+    "released_at",
     "brier",
     "classwise_ece",
     "competition_id",
@@ -691,7 +696,7 @@ def empty_archive(competition_id: str, updated_at: str | None = None) -> dict:
 def forecast_pointer(document: dict) -> dict:
     competition_id = document["competition_id"]
     forecast_id = document["forecast_id"]
-    return {
+    pointer = {
         "competition_id": competition_id,
         "competition_name": document["competition_name"],
         "season_id": document["season_id"],
@@ -701,6 +706,10 @@ def forecast_pointer(document: dict) -> dict:
         "matches": len(document["matches"]),
         "href": f"forecasts/{competition_id}/{forecast_id}.json",
     }
+    if document.get("release_href"):
+        pointer["release_href"] = document["release_href"]
+        pointer["released_at"] = document["released_at"]
+    return pointer
 
 
 def publish_documents(store, documents: list[dict], policy: dict) -> dict:
@@ -710,9 +719,37 @@ def publish_documents(store, documents: list[dict], policy: dict) -> dict:
     for document in documents:
         if document.get("retrospective") or document.get("product") == "hindcast":
             raise ValueError("A hindcast cannot enter the live forecast pointers")
-        check_publishable(document, policy, "forecast")
+        issued = {
+            key: value
+            for key, value in document.items()
+            if key not in {"release_href", "released_at"}
+        }
+        check_publishable(issued, policy, "forecast")
+        document_key = f"forecasts/{document['competition_id']}/{document['forecast_id']}.json"
+        document_sha256 = sha256_bytes(json_bytes(issued))
+        store.put_json(document_key, issued, immutable=True)
+        receipt_key = f"receipts/{document['competition_id']}/{document['forecast_id']}.json"
+        receipt = store.get_json(receipt_key)
+        if receipt is None:
+            receipt = {
+                "schema_version": 1,
+                "competition_id": document["competition_id"],
+                "forecast_id": document["forecast_id"],
+                "document_href": document_key,
+                "document_sha256": document_sha256,
+                "released_at": document.get("released_at") or datetime.now(UTC).isoformat(),
+            }
+            try:
+                store.put_json(receipt_key, receipt, immutable=True)
+            except ValueError:
+                receipt = store.get_json(receipt_key)
+                if receipt is None:
+                    raise
+        if receipt["document_sha256"] != document_sha256:
+            raise ValueError("Availability receipt names different forecast content")
+        document["released_at"] = receipt["released_at"]
+        document["release_href"] = receipt_key
         pointer = forecast_pointer(document)
-        store.put_json(pointer["href"], document, immutable=True)
         competition_id = document["competition_id"]
         archive_key = f"forecasts/{competition_id}/archive.json"
         archive = store.get_json(archive_key, empty_archive(competition_id))
@@ -742,7 +779,12 @@ def archive_documents(store, competition_id: str):
         f"forecasts/{competition_id}/archive.json", empty_archive(competition_id)
     )
     for entry in reversed(archive["forecasts"]):
-        yield store.get_json(entry["href"])
+        document = store.get_json(entry["href"])
+        receipt_key = entry.get("release_href")
+        receipt = store.get_json(receipt_key) if receipt_key else None
+        if receipt:
+            document = {**document, "released_at": receipt["released_at"]}
+        yield document
 
 
 def materialize_publication(

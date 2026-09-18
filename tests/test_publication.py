@@ -298,6 +298,7 @@ def test_immutable_forecasts_and_archive_are_written_before_current_pointer():
 
     assert store.writes == [
         ("forecasts/eng-premier-league/2026-09-10T120000Z.json", True),
+        ("receipts/eng-premier-league/2026-09-10T120000Z.json", True),
         ("forecasts/eng-premier-league/archive.json", False),
         ("forecasts/current.json", False),
     ]

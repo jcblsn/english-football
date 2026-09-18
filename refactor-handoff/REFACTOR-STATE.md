@@ -46,6 +46,13 @@ Completed evidence:
 - Four bounded workers now forecast and verify divisions concurrently from the same read-only snapshot. Each worker writes one typed result and uses one division-specific fit store. A verified fit store is uploaded immutably before its conditional pointer changes.
 - Recovery tests prove that an interrupted snapshot pointer write leaves the prior pointer unchanged, a competing snapshot writer restores the complete winning revision, stale fit writers cannot overwrite a pointer, and restored fit bytes must match the recorded size and hash.
 - Fit identity now includes a hash of model, training, schema, and normalization code. Resume tests cover later-day batches, a season boundary, training-window removal, historical correction, changed xG, late xG, and an incomplete same-day batch. Every tested resumed fit agrees with a fresh fit at 1e-11 absolute tolerance.
+- Typed result schema version 2 now contains all public projection inputs at declared run, match, stage, score, team-season, event, distribution, conditional, and impact grains. The operation derives public forecasts from this database instead of reading private forecast JSON.
+- The real Championship typed result contains 469 matches, 113,498 score cells, 24 teams, 144 team events, 1,753 point rows, 572 position rows, and 5,184 conditional rows. Its derived public document is exactly equal to the existing 15-match, 24-team, 12-impact-fixture document.
+- Bulk score insertion reduced the measured real typed-result write and public round-trip from about 69 seconds to 9.45 seconds. The database is 11,546,624 bytes.
+- Each division now restores one cumulative result database and commits its new immutable generation through a conditional pointer before public release. The append path does not list retained result objects.
+- Publication now writes an immutable release receipt after the public forecast object. Prospective scoring uses the receipt's `released_at` value and excludes a forecast that completed before kickoff but was released after kickoff.
+- Record-only changes set `public_changed`, and the production workflow deploys on that output instead of forecast count. A repeated idle wake with the same outcomes does not request another deployment.
+- A London-origin date is stored with each successful division release. A new local day makes the projection due even when the provider fingerprint is unchanged.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -71,14 +78,15 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
 - Changed entry evidence across a source competition still needs an explicit independent resume test. Quote-only, display-only, and clock-only stage decisions are not yet integrated into operation.
 - The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
+- Quote-only and display-only stage decisions are still not integrated. They currently reuse an exact fit but still repeat simulation. Historical and hindcast consumers still use their existing archive readers.
 - Full live cutover and workflow changes remain external gates until the owner authorizes them and backup, restore, correctness, and capacity prerequisites pass.
 
 ## Restart point
 
-Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 395 tests in 44.06 seconds.
-Next action: Add explicit idle, quote-only, display-only, record-only, and clock-only stage decisions. Then make publication and analysis derive from the typed result instead of treating archive JSON as another authoritative numerical result.
-Next test/gate: I1–I3, A1–A2, P1–P3, and the local operation-path benchmark with the new worker entry point.
-Working files to inspect before editing: `src/epl_forecast/pipeline.py`, `src/epl_forecast/results.py`, `src/epl_forecast/publication.py`, `src/epl_forecast/analysis.py`, and their tests.
+Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 400 tests in 41.86 seconds.
+Next action: Complete quote-only and display-only decisions, migrate selected analytical and retrospective consumers to cumulative typed results, and add the measured capacity and retention model.
+Next test/gate: I2, A1–A2, P3, growth scaling, capacity C1, and the local operation-path benchmark with cumulative result restore.
+Working files to inspect before editing: `src/epl_forecast/pipeline.py`, `src/epl_forecast/results.py`, `src/epl_forecast/analysis.py`, `src/epl_forecast/hindcast.py`, and their tests.
 Remote objects created or modified by this agent: None.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 

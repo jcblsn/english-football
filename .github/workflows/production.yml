@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 180
     outputs:
       published: ${{ steps.operate.outputs.published }}
+      public_changed: ${{ steps.operate.outputs.public_changed }}
     env:
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
       R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
@@ -45,10 +46,10 @@ jobs:
           uv run epl-forecast operate
           ${{ inputs.force && '--force' || '' }}
 
-  # Deploy the site only after a run that published a new forecast.
+  # Deploy the site after any public forecast or record change.
   pages:
     needs: forecast
-    if: fromJSON(needs.forecast.outputs.published || '0') > 0
+    if: needs.forecast.outputs.public_changed == 'true'
     permissions:
       contents: read
       pages: write

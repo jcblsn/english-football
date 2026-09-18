@@ -58,8 +58,12 @@ def update_record(
         if document.get("retrospective") or document.get("product") == "hindcast":
             raise ValueError("A hindcast cannot enter the prospective record")
         generated = timestamp(document["generated_at"])
+        released_at = document.get("released_at")
+        if released_at is None:
+            continue
+        released = timestamp(released_at)
         for match in document["matches"]:
-            if not match["kickoff_time"] or generated >= timestamp(match["kickoff_time"]):
+            if not match["kickoff_time"] or released >= timestamp(match["kickoff_time"]):
                 continue
             candidate = {
                 "match_id": match["match_id"],
@@ -68,6 +72,7 @@ def update_record(
                 "kickoff_time": match["kickoff_time"],
                 "forecast_id": document["forecast_id"],
                 "generated_at": document["generated_at"],
+                "released_at": released_at,
                 "model_version": document["model"]["version"],
                 "p_home": match["p_home"],
                 "p_draw": match["p_draw"],

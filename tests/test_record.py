@@ -9,7 +9,7 @@ MATCH = "eng-premier-league:2026-2027:arsenal:chelsea"
 def document(generated, forecast_id, p_home=0.5):
     forecast = sample_forecast(generated=generated)
     forecast["matches"][0].update(p_home=p_home, p_draw=(1 - p_home) / 2, p_away=(1 - p_home) / 2)
-    return derive_forecast(forecast, forecast_id)
+    return {**derive_forecast(forecast, forecast_id), "released_at": generated}
 
 
 def test_realized_outcomes_reads_finished_fixtures():
@@ -35,6 +35,14 @@ def test_the_record_retains_only_the_last_pre_kickoff_forecast():
     assert record["pending"][0]["forecast_id"] == "2026-09-12T060000Z"
     assert record["pending"][0]["p_home"] == 0.6
     assert record["pending"][0]["model_version"] == "v0.0"
+
+
+def test_compute_before_kickoff_released_after_kickoff_is_not_eligible():
+    candidate = document("2026-09-12T13:00:00+00:00", "late-release", 0.9)
+    candidate["released_at"] = "2026-09-12T14:01:00+00:00"
+    record = update_record(None, [candidate], {}, load_policy(), "now")
+    assert record["pending"] == []
+    assert record["unsettled"] == 0
 
 
 def test_the_record_scores_a_result_without_reading_an_archive():

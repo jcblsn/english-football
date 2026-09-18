@@ -267,6 +267,7 @@ def operate_command(args) -> None:
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a") as stream:
             stream.write(f"published={len(result['published'])}\n")
+            stream.write(f"public_changed={str(result['public_changed']).lower()}\n")
     if result["status"] in ("failed", "skipped"):
         raise SystemExit(1)
 

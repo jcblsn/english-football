@@ -7,7 +7,7 @@ import pytest
 from test_publication import sample_forecast, sample_run
 
 from epl_forecast import pipeline
-from epl_forecast.pipeline import due, forecast_id, production_fingerprint
+from epl_forecast.pipeline import due, due_reasons, forecast_id, production_fingerprint
 from epl_forecast.storage import ConditionalWriteFailed
 
 NOW = datetime(2026, 9, 10, 22, 43, 3, tzinfo=UTC)
@@ -89,6 +89,15 @@ def prepared_snapshot(workspace):
 def disable_fit_store(monkeypatch):
     monkeypatch.setattr(pipeline, "prepare_fit_store", lambda *args: None)
     monkeypatch.setattr(pipeline, "commit_fit_store", lambda *args: {})
+    monkeypatch.setattr(pipeline, "prepare_result_store", lambda *args: None)
+    monkeypatch.setattr(pipeline, "commit_result_store", lambda *args: {})
+    monkeypatch.setattr(
+        pipeline,
+        "read_forecast_result",
+        lambda path, result_id: json.loads(
+            (path.parent.parent / result_id / path.stem / "forecast.json").read_text()
+        ),
+    )
 
 
 def install_fake_snapshot(monkeypatch, calls):
@@ -191,6 +200,79 @@ def test_only_an_effective_change_makes_a_division_due():
     assert due({}, "abc", "eng-premier-league")
 
 
+def test_projection_clock_advance_is_due_without_new_data():
+    state = {
+        "competitions": {
+            "eng-premier-league": {
+                "fingerprint": "abc",
+                "origin_date": "2026-09-10",
+            }
+        }
+    }
+    same_day = datetime(2026, 9, 10, 20, 0, tzinfo=UTC)
+    next_london_day = datetime(2026, 9, 11, 0, 0, tzinfo=UTC)
+    assert not due(state, "abc", "eng-premier-league", same_day)
+    assert due_reasons(state, "abc", "eng-premier-league", next_london_day) == [
+        "projection_clock_advanced"
+    ]
+
+
+def test_record_only_change_requests_deploy_and_next_idle_wake_does_not(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "prepare_operation_snapshot",
+        lambda cutoff, store, workspace: prepared_snapshot(workspace),
+    )
+    monkeypatch.setattr(
+        pipeline, "information_fingerprint", lambda dataset, competition: "fingerprint"
+    )
+    monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {"match-1": "H"})
+    fingerprint = production_fingerprint("fingerprint", "v0.3.0")
+    data_store = Store()
+    data_store.objects["state/forecast.json"] = {
+        "competitions": {
+            league: {
+                "fingerprint": fingerprint,
+                "origin_date": pipeline.projection_day(datetime.now(UTC)),
+            }
+            for league in pipeline.LEAGUES
+        }
+    }
+    publish_store = Store()
+    publish_store.objects["record.json"] = {
+        "schema_version": 2,
+        "updated_at": "before",
+        "unsettled": 1,
+        "summary": {},
+        "settled": [],
+        "pending": [
+            {
+                "match_id": "match-1",
+                "competition_id": "eng-premier-league",
+                "season_id": "2026-2027",
+                "kickoff_time": "2026-09-10T14:00:00+00:00",
+                "forecast_id": "forecast-1",
+                "generated_at": "2026-09-10T12:00:00+00:00",
+                "released_at": "2026-09-10T12:01:00+00:00",
+                "model_version": "v0.3.0",
+                "p_home": 0.5,
+                "p_draw": 0.25,
+                "p_away": 0.25,
+            }
+        ],
+    }
+    changed = pipeline.operate(
+        collect_first=False, data_store=data_store, publish_store=publish_store
+    )
+    assert changed["status"] == "unchanged"
+    assert changed["published"] == []
+    assert changed["public_changed"]
+    assert publish_store.objects["record.json"]["summary"]["overall"]["scored"] == 1
+
+    idle = pipeline.operate(collect_first=False, data_store=data_store, publish_store=publish_store)
+    assert not idle["public_changed"]
+
+
 def test_forecast_code_and_configuration_are_part_of_the_fingerprint(tmp_path, monkeypatch):
     source = tmp_path / "forecast.py"
     config = tmp_path / "product.toml"
@@ -219,6 +301,22 @@ def test_fit_store_uses_verified_immutable_object_and_conditional_pointer(tmp_pa
     assert pointer["database_key"].startswith("fits/eng-championship/")
     with pytest.raises(ConditionalWriteFailed):
         pipeline.commit_fit_store(store, "eng-championship", source, None)
+
+
+def test_result_store_appends_without_enumerating_prior_objects(tmp_path):
+    class NoListStore(Store):
+        def keys(self, prefix=""):
+            raise AssertionError("Result append must not list retained objects")
+
+    store = NoListStore()
+    source = tmp_path / "source.duckdb"
+    source.write_bytes(b"typed results")
+    pointer = pipeline.commit_result_store(store, "eng-championship", source, None)
+    destination = tmp_path / "restored.duckdb"
+    version = pipeline.prepare_result_store(store, "eng-championship", destination)
+    assert destination.read_bytes() == b"typed results"
+    assert pointer["database_key"].startswith("results/eng-championship/")
+    assert version == store.versions["state/results/eng-championship.json"]
 
 
 def test_snapshot_pointer_commits_after_immutable_objects_and_restores(tmp_path, monkeypatch):

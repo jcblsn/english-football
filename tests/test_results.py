@@ -4,7 +4,8 @@ import duckdb
 import pytest
 from test_publication import sample_forecast, sample_run
 
-from epl_forecast.results import write_forecast_result
+from epl_forecast.publication import derive_forecast
+from epl_forecast.results import read_forecast_result, write_forecast_result
 
 
 def result_forecast():
@@ -28,7 +29,13 @@ def result_forecast():
                 "p_away": match["p_away"],
                 "score_distribution": {**score, "uncertainty_components": {}},
             },
-            "market_assisted": None,
+            "market_assisted": None
+            if match["market_assisted_probabilities"] is None
+            else {
+                "parent_stage": "personnel_adjusted",
+                "score_generating": False,
+                **match["market_assisted_probabilities"],
+            },
         }
     forecast["team_strengths"] = [
         {
@@ -80,7 +87,7 @@ def test_forecast_result_is_written_at_declared_grains(tmp_path):
         "result_id": "forecast-1",
         "status": "written",
         "matches": 2,
-        "match_probabilities": 4,
+        "match_probabilities": 5,
         "scores": 16,
         "teams": 2,
         "events": 4,
@@ -135,3 +142,18 @@ def test_invalid_probability_rolls_back_the_whole_result(tmp_path):
         assert connection.execute(
             "SELECT count(*) FROM forecast_result.forecast_runs"
         ).fetchone() == (0,)
+
+
+def test_public_forecast_is_derived_from_typed_result(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    forecast["simulation"]["match_impacts"] = None
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    restored = read_forecast_result(database, "forecast-1")
+    assert derive_forecast(restored, "forecast-1") == derive_forecast(forecast, "forecast-1")

@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from epl_forecast.cloud import sync_data, sync_tree
 from epl_forecast.competitions import COMPETITION_IDS
@@ -24,6 +25,7 @@ from epl_forecast.publication import (
     update_impact_state,
 )
 from epl_forecast.record import realized_outcomes, update_record
+from epl_forecast.results import read_forecast_result
 from epl_forecast.schema import Fixture
 from epl_forecast.snapshot import SnapshotDataset, create_snapshot, snapshot_manifest_path
 from epl_forecast.storage import (
@@ -40,6 +42,7 @@ PRODUCT_CONFIG = Path("configs/product.toml")
 LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
 SNAPSHOT_POINTER = "state/canonical-snapshot.json"
+LONDON = ZoneInfo("Europe/London")
 
 
 @dataclass
@@ -54,6 +57,8 @@ class PreparedSnapshot:
 class ForecastAttempt:
     league: str
     archive: Path
+    result_store: Path
+    result_version: str | None
     fit_store: Path
     fit_version: str | None
     failure: dict | None
@@ -144,6 +149,8 @@ def forecast_and_verify(
     data_store,
 ) -> ForecastAttempt:
     archive = attempt / league
+    result_store = attempt.parent / "results" / f"{league}.duckdb"
+    result_version = prepare_result_store(data_store, league, result_store)
     fit_store = attempt.parent / "fits" / f"{league}.duckdb"
     fit_version = prepare_fit_store(data_store, league, fit_store)
     forecast_started = time.monotonic()
@@ -155,7 +162,7 @@ def forecast_and_verify(
         simulations,
         snapshot=prepared.database,
         snapshot_manifest=prepared.manifest_path,
-        results=attempt / f"{league}-results.duckdb",
+        results=result_store,
         fits=fit_store,
         result_id=run_id,
     )
@@ -171,6 +178,8 @@ def forecast_and_verify(
         return ForecastAttempt(
             league,
             archive,
+            result_store,
+            result_version,
             fit_store,
             fit_version,
             {"league": league, "stage": "forecast", "detail": forecast.stderr[-800:]},
@@ -196,6 +205,8 @@ def forecast_and_verify(
         return ForecastAttempt(
             league,
             archive,
+            result_store,
+            result_version,
             fit_store,
             fit_version,
             {"league": league, "stage": "verify", "detail": verification.stdout[-800:]},
@@ -205,7 +216,9 @@ def forecast_and_verify(
         competition_id=league,
         elapsed_seconds=round(time.monotonic() - verification_started, 3),
     )
-    return ForecastAttempt(league, archive, fit_store, fit_version, None)
+    return ForecastAttempt(
+        league, archive, result_store, result_version, fit_store, fit_version, None
+    )
 
 
 def training_competitions(competition_id: str) -> list[str]:
@@ -433,8 +446,60 @@ def commit_fit_store(
     return pointer
 
 
-def due(state: dict, fingerprint: str, competition: str) -> bool:
-    return state.get("competitions", {}).get(competition, {}).get("fingerprint") != fingerprint
+def prepare_result_store(data_store, competition_id: str, destination: Path) -> str | None:
+    pointer_key = f"state/results/{competition_id}.json"
+    pointer, version = data_store.get_json_versioned(pointer_key)
+    if pointer is None:
+        return version
+    data_store.download(pointer["database_key"], destination)
+    if destination.stat().st_size != pointer["database_bytes"]:
+        raise ValueError("Result database byte count does not match its pointer")
+    if file_hash(destination) != pointer["database_sha256"]:
+        raise ValueError("Result database hash does not match its pointer")
+    return version
+
+
+def commit_result_store(
+    data_store,
+    competition_id: str,
+    source: Path,
+    previous_version: str | None,
+) -> dict:
+    digest = file_hash(source)
+    database_key = f"results/{competition_id}/{digest}.duckdb"
+    data_store.upload(source, database_key, immutable=True)
+    pointer = {
+        "schema_version": 1,
+        "competition_id": competition_id,
+        "database_key": database_key,
+        "database_bytes": source.stat().st_size,
+        "database_sha256": digest,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    data_store.put_json_if(f"state/results/{competition_id}.json", pointer, previous_version)
+    return pointer
+
+
+def projection_day(moment: datetime) -> str:
+    return str(moment.astimezone(LONDON).date())
+
+
+def due_reasons(
+    state: dict, fingerprint: str, competition: str, moment: datetime | None = None
+) -> list[str]:
+    previous = state.get("competitions", {}).get(competition)
+    if previous is None:
+        return ["no_previous_projection"]
+    reasons = []
+    if previous.get("fingerprint") != fingerprint:
+        reasons.append("effective_input_changed")
+    if moment is not None and previous.get("origin_date") != projection_day(moment):
+        reasons.append("projection_clock_advanced")
+    return reasons
+
+
+def due(state: dict, fingerprint: str, competition: str, moment: datetime | None = None) -> bool:
+    return bool(due_reasons(state, fingerprint, competition, moment))
 
 
 def operate(
@@ -453,7 +518,7 @@ def operate(
     if data_store is None or publish_store is None:
         raise ValueError("Production needs both R2 buckets")
     policy = load_policy()
-    result = {"status": "ok", "published": [], "collection": None}
+    result = {"status": "ok", "published": [], "public_changed": False, "collection": None}
     if collect_first:
         collection_started = time.monotonic()
         progress("collection_started")
@@ -489,7 +554,7 @@ def operate(
             prepared.data.close()
         state = data_store.get_json("state/forecast.json", {})
         pending = [
-            league for league in LEAGUES if force or due(state, fingerprints[league], league)
+            league for league in LEAGUES if force or due(state, fingerprints[league], league, now)
         ]
         progress(
             "fingerprint_finished",
@@ -502,11 +567,13 @@ def operate(
             )
             previous = publish_store.get_json("record.json")
             record = update_record(previous, [], outcomes, policy)
-            if previous is None or {**previous, "updated_at": None} != {
+            record_changed = previous is None or {**previous, "updated_at": None} != {
                 **record,
                 "updated_at": None,
-            }:
+            }
+            if record_changed:
                 publish_store.put_json("record.json", record)
+            result["public_changed"] = record_changed
             result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
             progress(
                 "operation_finished",
@@ -574,13 +641,25 @@ def _forecast_and_publish(
             failures.append(row.failure)
             continue
         try:
+            commit_result_store(data_store, league, row.result_store, row.result_version)
+        except ConditionalWriteFailed:
+            progress("result_commit_conflict", competition_id=league)
+            failures.append(
+                {
+                    "league": league,
+                    "stage": "result_commit",
+                    "detail": "A newer result database won the conditional commit",
+                }
+            )
+            continue
+        try:
             commit_fit_store(data_store, league, row.fit_store, row.fit_version)
         except ConditionalWriteFailed:
             progress("fit_checkpoint_conflict", competition_id=league)
         documents.append(
             update_impact_state(
                 derive_forecast(
-                    json.loads((row.archive / "forecast.json").read_text()),
+                    read_forecast_result(row.result_store, run_id),
                     run_id,
                     public_model_version=policy["product"]["model_version"],
                 ),
@@ -602,6 +681,7 @@ def _forecast_and_publish(
     current = publish_documents(publish_store, documents, policy)
     record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
     publish_store.put_json("record.json", record)
+    result["public_changed"] = True
     for document in documents:
         result["published"].append(f"{document['competition_id']}/{document['forecast_id']}")
     result.update(
@@ -619,6 +699,7 @@ def _forecast_and_publish(
             "fingerprint": fingerprints[document["competition_id"]],
             "published_at": now.isoformat(),
             "forecast_id": document["forecast_id"],
+            "origin_date": projection_day(now),
         }
     data_store.put_json("state/forecast.json", state)
     data_store.put_json("state/impacts.json", impact_state)
