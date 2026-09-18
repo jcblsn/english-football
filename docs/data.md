@@ -39,6 +39,7 @@ R2 is the durable store and the only source of canonical evidence. There is no l
 | `state/impacts.json` | For each match of the week, the conditional-impact record of the last forecast made before its kickoff. The published forecast carries it after the result is known. |
 | `runs/forecasts/` | Private forecast archives, logs and verification reports. |
 | `runs/hindcasts/` | The private simulation output of each weekly hindcast and the frozen model of each public model version. See [operations](operations.md#hindcasts). |
+| `runs/match-hindcasts/` | The private run of each retrospective match-hindcast bridge. See [operations](operations.md#match-hindcasts). |
 
 DuckDB reads canonical Parquet directly from R2 with a temporary in-memory secret. There is no database server and no persistent DuckDB credential. GitHub Actions concurrency stops production jobs from overlapping.
 
@@ -139,9 +140,17 @@ The session reads the canonical manifest catalog from R2. Raw canonical and prov
 
 R2 is the only source of truth for an analysis session. `data query`, `data ui`, and the query skill helper keep the prepared `analysis` schema in one read-only DuckDB session file in the `page324-analysis` directory of the system temporary directory. The session file is a disposable copy. Nothing in the repository or in `runs/` holds analysis data.
 
-Before each command opens a session file, it reads the canonical manifest catalog and the publication indexes from R2 again. The session file name is a hash of these documents, the evidence cutoff, `ANALYSIS_SCHEMA_VERSION`, the DuckDB version, and the `epl_forecast` package source. A change to one of these inputs selects a new file, and the command then prepares it from R2. Preparation reads all of the indexed history, so it takes much longer than a query on an existing file. The command deletes the earlier file for the same cutoff. The session file keeps canonical and derived tables and the views that use them. Before the command uses a new file, it opens the file with external access disabled and binds each object, so a view that reads R2 or a local file stops the preparation. You can delete the directory at any time.
+Before each command opens a session file, it asks R2 for a compact change token for each mutable pointer: the canonical manifest catalog, the four competition forecast archives, the live forecast pointer, the two hindcast indexes and the prospective record. One HEAD request answers for each, and no body is read. The token is the `sha256` metadata that the writer stores, or the ETag when an object has none. The session file name is a hash of those tokens, the evidence cutoff, the hindcast version selection, `ANALYSIS_SCHEMA_VERSION`, the DuckDB version, and the `epl_forecast` package source. A change to one of these inputs selects a new file, and the command then prepares it from R2. Preparation reads all of the indexed history, so it takes much longer than a query on an existing file. The command deletes the earlier file for the same slot. The session file keeps canonical and derived tables and the views that use them. Before the command uses a new file, it opens the file with external access disabled and binds each object, so a view that reads R2 or a local file stops the preparation. You can delete the directory at any time.
 
-The identity uses the mutable indexes only. Forecast, run, and hindcast artifacts are immutable at their keys. Do not replace an artifact in place: publish a new key and update its index.
+The identity uses the mutable pointers only. Forecast, run, and hindcast artifacts are immutable at their keys, so a pointer that has not changed still selects the same documents. `hindcasts/index.json` records the origin count of each season series, so a series that gains an origin changes the index; the index is therefore the identity of every series it selects, and nothing reads a series to decide whether a session file is current. Do not replace an artifact in place: publish a new key and update its index.
+
+Interactive querying trusts an immutable object once an authoritative mutable pointer selects it. Byte-level verification of canonical Parquet remains an audit, replay and write concern, and `Dataset.verify()` is where it belongs.
+
+### Hindcast model versions
+
+The hindcast archive keeps every published model version, so an ordinary session would otherwise load generations that no longer describe the product. A session loads only the current public model version by default: the version of the newest live forecast in `forecasts/current.json`. The index entries are filtered before any season series or origin document is read.
+
+Use `--hindcast-versions` on the query skill helper, or `hindcast_versions=` on `open_analysis_session`, to select otherwise: `current` (the default), `all`, or one or more explicit model version names. Each selection keeps its own session file, so switching between them does not throw away the other. `analysis.session` records `hindcast_version_request` and the `hindcast_model_versions` the session actually contains.
 
 ### Analysis catalog
 
@@ -153,7 +162,7 @@ FROM analysis.catalog
 ORDER BY object_name;
 ```
 
-`analysis.session` records the analysis schema version, canonical evidence cutoff, manifest identity, loaded manifest batches, publication-index timestamps, and loaded public model versions. `analysis.column_catalog` describes every analysis column, including its DuckDB type, meaning, scale, null rule, and source field.
+`analysis.session` records the analysis schema version, canonical evidence cutoff, manifest identity, loaded manifest batches, publication-index timestamps, loaded public model versions, the hindcast version request, and the hindcast model versions the session holds. `analysis.column_catalog` describes every analysis column, including its DuckDB type, meaning, scale, null rule, and source field.
 
 The main canonical relations are:
 
@@ -254,6 +263,23 @@ ORDER BY coalesce(generated_at, origin_at);
 ```
 
 An evidence cutoff applies to canonical rows through `retrieved_at`. It does not remove derived artifacts by their generation time. A live forecast has an actual `generated_at`, a `state_observed_at`, and a `model_results_cutoff`. A hindcast has a retrospective `origin_at` and a model-results cutoff. These fields are not interchangeable.
+
+### Match hindcasts
+
+The weekly season hindcasts and the match hindcasts are separate products. Weekly season hindcasts are retrospective season-state trajectories of a completed season. Match hindcasts are retrospective match forecasts of the current season, and they bridge the first matchday to the day live prospective coverage of the model version begins.
+
+`analysis.match_hindcasts` has one row for each model version, competition, season and match. `origin_at` is midnight Europe/London on the day of the match, and `model_results_cutoff` is that day, so the model used no result of the day it forecasts. `p_home`, `p_draw` and `p_away` are the published probabilities after the matchday-squad continuity adjustment; `unadjusted_p_home` and its siblings are the probabilities before it, and `personnel_applied` says whether the adjustment applied. `analysis.match_hindcast_score_grid` holds the retained finite score grid, and `omitted_probability` holds the rest. `analysis.match_hindcast_outcomes` joins the forecast to the realized result.
+
+`prospective_from` is the first London day on which a live forecast of that model version was published. The forecast archives are the authority for it, so no release metadata can drift away from what the product published. A published forecast covers only kickoffs after it was generated, so no prospective row of a version can fall before that day, and every match hindcast is earlier than it. The analysis bootstrap fails if a match hindcast reaches `prospective_from` or shares a match and model version with `analysis.record_matches`.
+
+The two are separate products with explicit provenance and nothing unions them. Do not add a retrospective row to a prospective score.
+
+```sql
+SELECT model_version, competition_id, count(*) AS matches, min(match_date) AS first_day,
+       max(match_date) AS last_day, any_value(prospective_from) AS prospective_from
+FROM analysis.match_hindcasts
+GROUP BY 1, 2 ORDER BY 1, 2;
+```
 
 ### Prospective scoring
 

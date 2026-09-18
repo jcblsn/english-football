@@ -161,6 +161,43 @@ To get the weekly estimates of a club, read `hindcasts/index.json`, then the `se
 
 Hindcasts do not overwrite the mutable production objects. You do not have to stop production to make them.
 
+## Match hindcasts
+
+A season hindcast is a season-state trajectory of a completed season. A match hindcast is a retrospective forecast of one match of the current season. It fills the gap between the first matchday and the day the live product began to publish forecasts with the current model version, so that version has match-level coverage of the whole season.
+
+```sh
+uv run epl-forecast match-hindcast --workers 7
+```
+
+The command reads the canonical history from `page324-data` and the forecast archives from `page324-publish`. Use `--competition` to make a part of the bridge, and `--season` to name a season other than the one the boundary falls in.
+
+The rules for each match hindcast:
+
+- The origin is midnight Europe/London on the day of the match, so the model uses no result of the day it forecasts. One fit of the model serves every match of one division on one day.
+- Results and expected goals follow the same availability rules as the season hindcasts.
+- In the Premier League and the Championship the match carries the matchday-squad continuity adjustment, estimated from matchday squads of earlier matches and from dated transfers alone. History has no injury lists, squad captures or team sheets.
+- The model uses no betting market.
+- The bridge covers finished regular-season matches only, so it can never hold a forecast of a match the prospective record will later cover.
+- Each document lists these assumptions in `assumptions`, and has `"product": "match_hindcast"` and `"retrospective": true`.
+
+### The retrospective and prospective handoff
+
+`prospective_from` is the first London day on which a live forecast of the model version was published. It is derived from the competition forecast archives, which are the authority for what the product published, so no separate release metadata can drift away from it. A published forecast covers only kickoffs after it was generated, so no prospective row of a version can fall before that day. The bridge therefore ends on the day before, and the two products can never overlap. For `v0.3.0` the first live forecast was published on 2026-09-17, so the bridge ends on 2026-09-16.
+
+Each published document records `prospective_from`, so a reader does not recompute it. The analysis bootstrap fails if a match hindcast reaches that day or shares a match and model version with the prospective record.
+
+The command writes these objects:
+
+| Bucket | Key | Content |
+| --- | --- | --- |
+| `page324-data` | `runs/match-hindcasts/<version>/<competition>/<season>.json` | The private run: the model code hashes, the grid size, the handoff and the full personnel record of each match. |
+| `page324-publish` | `match-hindcasts/<version>/<competition>/<season>.json` | One retrospective forecast for each match: the probabilities before and after the personnel adjustment, the club discontinuities and the home log-rate shift, and the retained score grid. |
+| `page324-publish` | `match-hindcasts/index.json` | One row for each public model version, division and season, with the match count, the first and last match day, the handoff day and a link to the document. |
+
+A match hindcast never enters `forecasts/current.json`, a competition archive or `record.json`. The publication contracts refuse a retrospective link in a live pointer, and the prospective record refuses a retrospective document.
+
+Making the bridge again for a version that already has one rewrites the season document in place. The season hindcast archive is untouched: the two products keep separate prefixes and separate indexes.
+
 ## Prospective record
 
 `record.json` keeps one pending last pre-kickoff forecast for each match. As results arrive, the pipeline moves these small records to the settled list and recalculates the summaries. It does not read the forecast archive during a routine run. It reports H/D/A log loss, Brier score and classwise ECE, overall and for each division. The record can be rebuilt from the partitioned competition archives when necessary.
