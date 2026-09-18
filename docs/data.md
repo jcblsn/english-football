@@ -252,6 +252,18 @@ FROM analysis.hindcast_origins
 GROUP BY 1 ORDER BY 1;
 ```
 
+The archive holds two kinds of weekly series: completed seasons, and the season in play up to the day live coverage of the model version began. Both are retrospective and both use the same relations. A series of the season in play states in its assumptions that it projects the calendar the provider now schedules.
+
+`analysis.team_event_probabilities` is a convenience union of live and hindcast season event probabilities. Its `observed_at` is the live generation time or the retrospective origin, and `retrospective` keeps the two apart. It is how one season trajectory crosses the handoff from hindcast to forecast:
+
+```sql
+SELECT observed_at, retrospective, team_id, probability
+FROM analysis.team_event_probabilities
+WHERE competition_id = 'eng-premier-league' AND season_id = '2026-2027'
+  AND model_version = 'v0.3.0' AND event = 'top_four_probability'
+ORDER BY observed_at, team_id;
+```
+
 `analysis.team_projections` is a convenience union of live and hindcast team estimates. Its `model_version` is the public model version of each product. Do not replace its explicit time fields with one generic `as_of` value:
 
 ```sql

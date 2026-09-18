@@ -26,6 +26,7 @@ from epl_forecast.publication import (
     season_team_rows,
 )
 from epl_forecast.sanctions import load_registry
+from epl_forecast.schema import Fixture
 from epl_forecast.simulation import simulate_season
 
 PREFIX = "hindcasts"
@@ -62,6 +63,24 @@ ASSUMPTIONS = (
     "The division rules, promotion places and playoff format are those of the season.",
     "In the Premier League and the Championship, a match in the six days after the origin gets the matchday-squad continuity adjustment. The hindcast estimates it from the matchday squads of earlier matches and from dated transfers. It does not use injury lists, squad captures or team sheets, because the data does not show when they were first known.",
     "The model does not use betting markets.",
+)
+
+
+# The bridge covers a season that is still being played, so its notice cannot say that the
+# season was complete. It stops before live coverage of the model version began.
+BRIDGE_NOTICE = (
+    "This is a hindcast. The frozen public model made it after these matches were played. "
+    "It is not a forecast that existed at the origin time, and the prospective record does not include it."
+)
+BRIDGE_ASSUMPTIONS = (
+    ASSUMPTIONS[0],
+    ASSUMPTIONS[1],
+    "The simulation uses the dates on which the remaining matches are now scheduled. At the origin time, some of these dates were not known.",
+    ASSUMPTIONS[3],
+    ASSUMPTIONS[4],
+    ASSUMPTIONS[5],
+    ASSUMPTIONS[6],
+    "The series stops before the London day on which the live product began to publish this model version. A later origin would be a forecast, not a hindcast.",
 )
 
 
@@ -246,6 +265,111 @@ def simulate_origin(task: dict) -> dict:
     }
 
 
+def bridge_origins(first_match: date, prospective_from: date) -> list[datetime]:
+    """Every origin weekday from before the first match until live coverage of the version began."""
+    if first_match >= prospective_from:
+        raise ValueError(
+            f"The season starts on {first_match}, and live coverage began on {prospective_from}. "
+            "There is nothing for a retrospective bridge to cover."
+        )
+    day = first_match - timedelta(days=(first_match.weekday() - ORIGIN_WEEKDAY) % 7)
+    origins = []
+    while day < prospective_from:
+        origins.append(datetime.combine(day, ORIGIN_TIME, tzinfo=LONDON))
+        day += timedelta(days=7)
+    return origins
+
+
+def season_fixtures(rows, competition_id: str, season_id: str) -> list[dict]:
+    """Every regular-stage fixture of a season, played or not, in calendar order."""
+    selected = [
+        row
+        for row in rows
+        if (row["competition_id"], row["season_id"], row["stage"])
+        == (competition_id, season_id, "regular")
+    ]
+    expected = competition(competition_id).matches
+    if len(selected) != expected or len({row["match_id"] for row in selected}) != expected:
+        raise ValueError(
+            f"{competition_id} {season_id} has {len(selected)} of {expected} regular fixtures; "
+            "the bridge needs the whole calendar to project the season"
+        )
+    return sorted(selected, key=lambda row: (row["match_date"] or date.max, row["match_id"]))
+
+
+def simulate_bridge_origin(task: dict) -> dict:
+    """One retrospective origin of a season that is still being played."""
+    matches = _WORKER["matches"]
+    fixtures = _WORKER["fixtures"][task["competition_id"], task["season_id"]]
+    config = model_config(task["competition_id"], _WORKER["observations"])
+    as_of = date.fromisoformat(task["model_results_cutoff"])
+    model, _, training = fitted_model(matches, config, PRODUCT_MODEL, as_of)
+    results = {
+        m.fixture.match_id: m
+        for m in matches
+        if (m.fixture.competition_id, m.fixture.season_id)
+        == (task["competition_id"], task["season_id"])
+    }
+    played, remaining = [], []
+    for row in fixtures:
+        result = results.get(row["match_id"])
+        if result is not None and result.available_on <= as_of:
+            played.append(result)
+            continue
+        # A fixture with no usable date, or one whose result the origin cannot yet see, is
+        # simulated on the origin day until the calendar moves it.
+        day = row["match_date"] if row["match_date"] and row["match_date"] > as_of else as_of
+        remaining.append(
+            Fixture(
+                row["match_id"],
+                task["competition_id"],
+                task["season_id"],
+                day,
+                row["home_team_id"],
+                row["away_team_id"],
+            )
+        )
+    teams = sorted({t for row in fixtures for t in (row["home_team_id"], row["away_team_id"])})
+    shifts = {}
+    if task["competition_id"] in PERSONNEL_COMPETITIONS:
+        history = _WORKER["personnel"]
+        origin = datetime.fromisoformat(task["origin_at"])
+        records = fixture_adjustments(
+            Evidence(origin, **history["rows"]),
+            defaultdict(list, history["histories"]),
+            remaining,
+            history["kickoffs"],
+            origin,
+        )
+        shifts = {
+            match_id: record["home_log_rate_shift"]
+            for match_id, record in records.items()
+            if record["home_log_rate_shift"] is not None
+        }
+    simulation = simulate_season(
+        model,
+        played,
+        remaining,
+        teams,
+        as_of,
+        task["simulations"],
+        task["seed"],
+        task["adjustments"],
+        log_rate_shifts=shifts,
+    )
+    table = table_at(teams, played, task["adjustments"])
+    for row in simulation["teams"]:
+        row.pop("goal_difference_distribution")
+        row.update(table[row["team_id"]])
+    simulation.pop("match_frequencies")
+    return {
+        **task,
+        "training_matches": len(training),
+        "personnel_adjusted_fixtures": len(shifts),
+        "simulation": simulation,
+    }
+
+
 def derive_hindcast(record: dict, names: dict) -> dict:
     simulation = record["simulation"]
     if simulation["simulations"] < MINIMUM_SIMULATIONS:
@@ -256,7 +380,7 @@ def derive_hindcast(record: dict, names: dict) -> dict:
         "schema_version": 1,
         "product": "hindcast",
         "retrospective": True,
-        "notice": NOTICE,
+        "notice": record.get("notice", NOTICE),
         "hindcast_id": record["hindcast_id"],
         "competition_id": record["competition_id"],
         "competition_name": competition(record["competition_id"]).name,
@@ -268,7 +392,7 @@ def derive_hindcast(record: dict, names: dict) -> dict:
         "simulations": simulation["simulations"],
         "state_uncertainty": simulation["state_uncertainty"],
         "model": {"version": record["model_version"]},
-        "assumptions": list(ASSUMPTIONS),
+        "assumptions": list(record.get("assumptions", ASSUMPTIONS)),
         "teams": season_team_rows(simulation["teams"], names),
     }
 
@@ -306,7 +430,7 @@ def derive_series(documents: list[dict]) -> dict:
         "schema_version": 1,
         "product": "hindcast",
         "retrospective": True,
-        "notice": NOTICE,
+        "notice": first["notice"],
         "competition_id": first["competition_id"],
         "competition_name": first["competition_name"],
         "season_id": first["season_id"],
@@ -485,6 +609,109 @@ def run_hindcasts(
         raise RuntimeError(f"{len(failures)} hindcasts failed; run again to resume: {failures[:3]}")
     return {
         "model_version": model_version,
+        "origins": sum(map(len, plans.values())),
+        "simulated": len(tasks),
+        "recovered": len(recovered),
+        "seasons": len(entries),
+    }
+
+
+def _bridge_initialize(matches, observations, personnel, fixtures) -> None:
+    _initialize(matches, observations, personnel)
+    _WORKER["fixtures"] = fixtures
+
+
+def run_season_bridge(
+    data_store,
+    publish_store,
+    competitions=COMPETITION_IDS,
+    season_id: str | None = None,
+    simulations: int = 10000,
+    workers: int = 4,
+    log=print,
+) -> dict:
+    """Weekly retrospective season states of the season in play, up to live coverage of the model.
+
+    It is the season-state half of the retrospective bridge. `epl_forecast.match_hindcast` is the
+    match-level half, and the two use the same handoff day.
+    """
+    from epl_forecast.match_hindcast import boundary, season_of
+
+    if simulations < MINIMUM_SIMULATIONS:
+        raise ValueError(f"Hindcasts need at least {MINIMUM_SIMULATIONS} simulated paths")
+    policy = load_policy()
+    model_version = policy["product"]["model_version"]
+    claim_edition(data_store, edition(model_version, simulations))
+    handoff = boundary(publish_store, model_version)
+    prospective_from = date.fromisoformat(handoff["prospective_from"])
+    season_id = season_id or season_of(date.fromisoformat(handoff["last_match_date"]))
+    data = Dataset(store=data_store)
+    try:
+        matches = data.matches()
+        observations = data.xg_observations()
+        rows = data.fixtures()
+        sanctions = load_registry(data)
+        names = {r["team_id"]: r["name"] for r in data.rows("SELECT * FROM teams")}
+        personnel = load_personnel_history(data, (int(season_id[:4]),))
+    finally:
+        data.close()
+    fixtures, plans, tasks, recovered = {}, {}, [], []
+    for competition_id in competitions:
+        season = season_fixtures(rows, competition_id, season_id)
+        fixtures[competition_id, season_id] = season
+        first = min(row["match_date"] for row in season if row["match_date"])
+        prefix = season_prefix(model_version, competition_id, season_id)
+        published = set(publish_store.keys(f"{prefix}/"))
+        archived = set(data_store.keys(f"runs/{prefix}/"))
+        plan = []
+        for origin in bridge_origins(first, prospective_from):
+            as_of = origin.date()
+            task = {
+                "model_version": model_version,
+                "competition_id": competition_id,
+                "season_id": season_id,
+                "hindcast_id": hindcast_id(origin),
+                "origin_at": origin.isoformat(),
+                "model_results_cutoff": str(as_of),
+                "simulations": simulations,
+                "seed": SEED,
+                "adjustments": sanctions.known_adjustments(competition_id, season_id, as_of),
+                "notice": BRIDGE_NOTICE,
+                "assumptions": list(BRIDGE_ASSUMPTIONS),
+            }
+            plan.append(task)
+            if document_key(task) in published:
+                continue
+            (recovered if private_key(task) in archived else tasks).append(task)
+        plans[competition_id, season_id] = plan
+    log(
+        f"{sum(map(len, plans.values()))} bridge origins before {prospective_from}; {len(tasks)} to simulate"
+    )
+    for task in recovered:
+        publish_origin(
+            data_store.get_json(private_key(task)), names, policy, data_store, publish_store
+        )
+    entries = []
+    if tasks:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_bridge_initialize,
+            initargs=(matches, observations, personnel, fixtures),
+        ) as pool:
+            futures = {pool.submit(simulate_bridge_origin, task): task for task in tasks}
+            for done, future in enumerate(as_completed(futures), 1):
+                task = futures[future]
+                publish_origin(future.result(), names, policy, data_store, publish_store)
+                log(f"[{done}/{len(tasks)}] {document_key(task)}")
+    for plan in plans.values():
+        entry = publish_season(publish_store, plan, policy)
+        entries.append(entry)
+        log(f"Published {entry['href']} ({entry['origin_count']} origins)")
+    publish_index(publish_store, entries, policy)
+    return {
+        "model_version": model_version,
+        "season_id": season_id,
+        **handoff,
         "origins": sum(map(len, plans.values())),
         "simulated": len(tasks),
         "recovered": len(recovered),
