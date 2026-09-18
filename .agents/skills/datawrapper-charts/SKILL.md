@@ -48,10 +48,13 @@ Treat each Datawrapper chart as output derived from a published Page 324 forecas
 
 ## What the tools do
 
-These come from making the first four draft charts. Check them again if the server changes.
+These come from making the Page 324 draft charts. Check them again if the server changes.
 
 - The MCP server offers bar, line, area, arrow, column, multiple column, scatter and stacked bar. Its chart-type map has no table, and it rejects one at both `get_chart_schema` and `create_chart`. Datawrapper itself supports `tables`, so make a table through the HTTP API instead. Read the token from the ignored `.env` and never print it.
 - For a table, get the option names from `GET /v3/visualizations/tables`, field `defaultMetadata`. They are not the names the MCP server uses.
+- The chart-type map also has no dot plot. Make a `d3-dot-plot` through the HTTP API, and get its option names from `GET /v3/visualizations/d3-dot-plot`, field `defaultMetadata`.
+- A dot plot draws no value axis until `custom-grid-lines` holds the tick values, and the values must be separated by commas. A list separated by spaces is stored and does nothing. `show-value-labels` is too noisy with more than two dots in a row, so the axis is the only way a reader gets a number.
+- A dot plot draws its dots in column order, so the last column is on top. Put the marker that must stay visible last, or an interval bound at the same value hides it.
 - A table cell scale does work, but the column key is an object, not a boolean. Set `columns[<name>].heatmap` to `{"enabled": true}`; `true` on its own is stored and does nothing. The scale itself is `visualize.heatmap`, with `enabled`, `mode`, `rangeMin`, `rangeMax` and `colors` as `[{"color": ..., "position": 0}, {"color": ..., "position": 1}]`. `rangeMin` and `rangeMax` are strings. One scale serves every coloured column in the table, so all of those columns must hold the same unit.
 - `columns[<name>].minWidth` does shorten a table column; `width` and `fixedWidth` do not, and neither does a per-column `style.fontSize`. A numeric column holds about 45 px at `minWidth` 8 with `compactMode` true. A twenty-position matrix therefore needs about 1040 px, not the 1440 px that the default column width needs.
 - `mobileFallback` is on for every Page 324 table. At 320 px the table then stacks each row into its own block of `showOnMobile` columns, and the export does show it. With the fallback off, a table that is too wide clips its last columns rather than dropping them, and the count that fits is one less than it looks: a table showed five of the six columns that `showOnMobile` selected. Keep the mobile set small either way, because the stacked form repeats a label for every field of every row.

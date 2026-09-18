@@ -241,6 +241,83 @@ def extract_forecast_standings(forecast: Forecast, spec: dict) -> dict:
     )
 
 
+def extract_expected_position(forecast: Forecast, spec: dict) -> list[dict]:
+    rows = query(
+        teams=f"""
+        SELECT t.team_id, t.team_name, t.median_position, t.mean_position,
+               max(CASE WHEN i.level = 50 THEN i.lower END) AS lower_50,
+               max(CASE WHEN i.level = 50 THEN i.upper END) AS upper_50,
+               max(CASE WHEN i.level = 90 THEN i.lower END) AS lower_90,
+               max(CASE WHEN i.level = 90 THEN i.upper END) AS upper_90
+        FROM analysis.forecast_teams AS t
+        JOIN analysis.forecast_intervals AS i
+          USING (forecast_id, competition_id, team_id)
+        WHERE t.forecast_id = '{forecast.forecast_id}'
+          AND t.competition_id = '{forecast.competition_id}'
+          AND i.estimate = 'position'
+        GROUP BY t.team_id, t.team_name, t.median_position, t.mean_position
+        ORDER BY t.median_position ASC, t.mean_position ASC
+        """
+    )["teams"]
+    if not rows:
+        raise SystemExit(f"no position intervals for {forecast.forecast_id}")
+    return rows
+
+
+MEASURES = {
+    # The width of the conditional event probability of a club over the three results.
+    "swing": "the difference between the largest and the smallest probability of the three results",
+    # The movement that the model itself ranks a fixture by: the probability-weighted
+    # root mean square of the change from the baseline probability.
+    "rms_movement": "the root mean square of the change from the current probability, weighted by the probability of each result",
+}
+
+
+def extract_match_leverage(forecast: Forecast, spec: dict) -> list[dict]:
+    """The matches that can move one event probability the most, largest first."""
+    measure = spec.get("measure", "swing")
+    if measure not in MEASURES:
+        raise SystemExit(f"unknown measure {measure}")
+    rows = query(
+        matches=f"""
+        WITH club AS (
+            SELECT match_id, team_id,
+                   max(conditional_probability) - min(conditional_probability) AS swing,
+                   max(rms_movement) AS rms_movement
+            FROM analysis.forecast_impacts
+            WHERE forecast_id = '{forecast.forecast_id}'
+              AND competition_id = '{forecast.competition_id}'
+              AND event = '{spec["event"]}'
+            GROUP BY match_id, team_id
+        )
+        SELECT f.match_id, f.match_date, f.kickoff_time,
+               f.home_team_id, f.away_team_id,
+               h.team_name AS home_team, a.team_name AS away_team,
+               max(club.swing) AS swing,
+               max(club.rms_movement) AS rms_movement,
+               count(*) FILTER (WHERE f.carried_from_forecast_id IS NULL) AS own_rows
+        FROM analysis.forecast_impact_fixtures AS f
+        JOIN club ON club.match_id = f.match_id
+        JOIN analysis.forecast_teams AS h
+          ON h.forecast_id = f.forecast_id AND h.competition_id = f.competition_id
+         AND h.team_id = f.home_team_id
+        JOIN analysis.forecast_teams AS a
+          ON a.forecast_id = f.forecast_id AND a.competition_id = f.competition_id
+         AND a.team_id = f.away_team_id
+        WHERE f.forecast_id = '{forecast.forecast_id}'
+          AND f.competition_id = '{forecast.competition_id}'
+          AND f.status = 'scheduled'
+          AND f.sufficient_sample
+        GROUP BY f.match_id, f.match_date, f.kickoff_time,
+                 f.home_team_id, f.away_team_id, h.team_name, a.team_name
+        ORDER BY {measure} DESC, f.kickoff_time, f.match_id
+        """
+    )["matches"]
+    if not rows:
+        raise SystemExit(f"no scheduled impact fixtures for {forecast.competition_id}")
+    return rows
+
+
 # ------------------------------------------------------------------------ recipes
 
 
@@ -509,11 +586,151 @@ def recipe_forecast_standings(forecast: Forecast, spec: dict, data: dict, short:
     }
 
 
+def recipe_expected_position(forecast: Forecast, spec: dict, data: list[dict], short: dict) -> dict:
+    """A dot for the median finish, with the 50% and 90% position intervals around it."""
+    # The median finish is the last series so that its dot draws over an interval dot.
+    series = [
+        ("90% lower", "lower_90", WASH),
+        ("50% lower", "lower_50", SECONDARY),
+        ("50% upper", "upper_50", SECONDARY),
+        ("90% upper", "upper_90", WASH),
+        ("Median finish", "median_position", INK),
+    ]
+    rows = []
+    for team in data:
+        values = [
+            Decimal(str(team[field])).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            for _, field, _ in series
+        ]
+        rows.append([label_of(team, short, False)] + [plain(value) for value in values])
+
+    positions = 20 if forecast.competition_id == "eng-premier-league" else 24
+    # A median and an interval bound are whole positions, so a fraction must not be hidden.
+    fractional = sum(
+        1 for team in data for _, field, _ in series if Decimal(str(team[field])) % 1 != 0
+    )
+    nested = sum(
+        1
+        for team in data
+        if not (
+            team["lower_90"] <= team["lower_50"] <= team["upper_50"] <= team["upper_90"]
+            and team["lower_90"] <= team["median_position"] <= team["upper_90"]
+        )
+    )
+    return {
+        "csv": csv_text(["Club"] + [label for label, _, _ in series], rows),
+        "checks": [
+            ("clubs", len(rows), positions),
+            ("clubs with an unordered interval", nested, 0),
+            ("values that are not a whole position", fractional, 0),
+        ],
+        "metadata": {
+            "describe": {
+                "intro": spec["intro"].format(season=forecast.season),
+                "aria-description": "A dot plot of clubs by median final position, with the 50 percent and 90 percent intervals shown as lighter dots on each side.",
+            },
+            "visualize": {
+                "base-color": INK,
+                "color-by-column": True,
+                "color-category": {"map": {label: colour for label, _, colour in series}},
+                "highlight-range": True,
+                "range-extent": "custom",
+                "custom-range": [1, positions],
+                "custom-grid-lines": ", ".join(str(value) for value in (1, 5, 10, 15, positions)),
+                "tick-position": "top",
+                "label-alignment": "left",
+                "show-value-labels": False,
+                "show-color-key": False,
+                "axis-label-format": "0",
+            },
+            "annotate": {
+                "notes": provenance(
+                    forecast,
+                    extra="The dark dot is the median finish. The dark grey dots are the 50% interval and the light dots are the 90% interval.",
+                )
+            },
+        },
+    }
+
+
+def recipe_match_leverage(forecast: Forecast, spec: dict, data: list[dict], short: dict) -> dict:
+    """How much the result of one match can change the event probability of a club."""
+    label = spec["value_label"]
+    measure = spec.get("measure", "swing")
+    use_short = bool(spec.get("short_club_labels"))
+    # The rule is on the value the reader sees, so a match at the threshold is never
+    # shown with a value that the introduction excludes.
+    minimum = Decimal(str(spec.get("minimum", 0)))
+    displayed = [(match, points(match[measure], 1)) for match in data]
+    shown = [(match, value) for match, value in displayed if value > minimum]
+    if not shown:
+        raise SystemExit(
+            f"no match is above {plain(minimum)} percentage points for {spec['event']}"
+        )
+
+    def club(match: dict, side: str) -> str:
+        return label_of(
+            {"team_id": match[f"{side}_team_id"], "team_name": match[f"{side}_team"]},
+            short,
+            use_short,
+        )
+
+    rows = [
+        [f"{club(match, 'home')} v {club(match, 'away')}", plain(value)] for match, value in shown
+    ]
+    dates = [match["match_date"] for match in data]
+    own = sum(int(match["own_rows"] or 0) > 0 for match, _ in shown)
+    return {
+        "csv": csv_text(["Match", label], rows),
+        "checks": [
+            ("matches in the window", len(data), len(data)),
+            ("matches above the threshold", len(rows), len(rows)),
+            (
+                "matches out of order",
+                sum(
+                    1
+                    for earlier, later in zip(shown, shown[1:], strict=False)
+                    if earlier[1] < later[1]
+                ),
+                0,
+            ),
+            ("matches from this forecast", own, len(rows)),
+        ],
+        "metadata": {
+            "describe": {
+                "intro": spec["intro"].format(
+                    season=forecast.season,
+                    window=window_phrase(min(dates), max(dates)),
+                    matches=len(rows),
+                    minimum=plain(minimum),
+                ),
+                "aria-description": f"A ranked bar chart of matches by the largest change that the result can make to {label.lower()}.",
+            },
+            "visualize": {
+                "base-color": INK,
+                "background": False,
+                "sort-bars": False,
+                "reverse-order": False,
+                "force-grid": True,
+                "show-value-labels": True,
+                "value-label-format": "0.0%",
+                "axis-label-format": "0%",
+                "color-by-column": False,
+                "show-color-key": False,
+                "thick": False,
+            },
+            "annotate": {"notes": provenance(forecast, extra=f"The value is {MEASURES[measure]}.")},
+        },
+    }
+
+
 RECIPES = {
     "season_event_bars": (extract_season_event_bars, recipe_season_event_bars),
     "match_outcome_bars": (extract_match_outcome_bars, recipe_match_outcome_bars),
     "position_matrix": (extract_position_matrix, recipe_position_matrix),
     "forecast_standings": (extract_forecast_standings, recipe_forecast_standings),
+    "expected_position": (extract_expected_position, recipe_expected_position),
+    "match_leverage": (extract_match_leverage, recipe_match_leverage),
 }
 
 # The width a chart is designed for, and the width the review PNG uses. A Datawrapper
@@ -525,6 +742,8 @@ REVIEW_WIDTH = {
     "match_outcome_bars": 640,
     "position_matrix": 1040,
     "forecast_standings": 720,
+    "expected_position": 640,
+    "match_leverage": 640,
 }
 
 PUBLISH_BLOCKS = {
