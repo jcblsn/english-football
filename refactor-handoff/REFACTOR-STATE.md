@@ -5,7 +5,7 @@ Status: M0 and the Championship M1 slice pass locally. M2 is in progress. This f
 ## Assignment and authority
 
 Owner-approved scope: Local implementation, local tests, and read-only use of available repository evidence. The assignment does not authorize production writes, workflow cutover, bucket deletion, or a paid service.
-Local branch/worktree: `refactor-start` at `95f948a70e490e1ae7909661080bca5e1434fd68`; the checkout was clean before this file changed.
+Local branch/worktree: `refactor-start`; the last pushed commit is `1e097ea3b8710fc766c8dfecc4440120b98c5105`. The checkout was clean before implementation started.
 Authorized remote reads/staging prefix: Read credentials for both private buckets are configured in the ignored `.env`. No staging prefix is designated, so no remote staging write is authorized.
 Production mutation/cutover/deletion authority: Not recorded.
 Verified backup and restore evidence: Not established.
@@ -42,6 +42,10 @@ Completed evidence:
 - One concurrent four-division run used the same restored revision, invalid R2 credentials, and 10,000 simulations per division. It completed in 147.51 seconds wall time. Division process times were 110.53, 135.28, 147.51, and 143.58 seconds.
 - All four product verifiers passed: 4,581 of 4,581 Premier League checks, 6,289 of 6,289 Championship checks, 6,394 of 6,394 League One checks, and 6,399 of 6,399 League Two checks.
 - Comparisons with all four issued private forecasts used each issued cutoff and ignored only `generated_at`. Maximum numeric differences were 3.64e-11, 4.00e-11, 7.28e-12, and 4.73e-11. No numeric difference exceeded 1e-9. League One and League Two had no nonnumeric differences. Premier League and Championship differed only in three wall-clock-dependent `next_match_for_teams` list positions each.
+- The operation path now restores one immutable snapshot when its conditional pointer matches the canonical source revision. Otherwise, it builds one snapshot, uploads the database and manifest as immutable objects, and updates the pointer conditionally after both uploads.
+- Four bounded workers now forecast and verify divisions concurrently from the same read-only snapshot. Each worker writes one typed result and uses one division-specific fit store. A verified fit store is uploaded immutably before its conditional pointer changes.
+- Recovery tests prove that an interrupted snapshot pointer write leaves the prior pointer unchanged, a competing snapshot writer restores the complete winning revision, stale fit writers cannot overwrite a pointer, and restored fit bytes must match the recorded size and hash.
+- Fit identity now includes a hash of model, training, schema, and normalization code. Resume tests cover later-day batches, a season boundary, training-window removal, historical correction, changed xG, late xG, and an incomplete same-day batch. Every tested resumed fit agrees with a fresh fit at 1e-11 absolute tolerance.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -65,15 +69,16 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 - No R2 capacity or request budget is certified. The owner-supplied cumulative counts have an unknown window.
 - The measured source request count is a one-time migration cost. A recurring restored snapshot should need one object GET, but this has not been measured against a remote staging prefix because none is authorized.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
-- Prefix resume is not yet certified for every M2 case. Season-boundary, training-window, changed entry-evidence, and late-xG cases still need explicit tests. Quote-only, display-only, and clock-only stage decisions are not yet integrated into operation.
+- Changed entry evidence across a source competition still needs an explicit independent resume test. Quote-only, display-only, and clock-only stage decisions are not yet integrated into operation.
+- The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
 - Full live cutover and workflow changes remain external gates until the owner authorizes them and backup, restore, correctness, and capacity prerequisites pass.
 
 ## Restart point
 
-Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 389 tests in 43.15 seconds.
-Next action: Complete the M2 invalidation matrix and make `operate` create or restore one verified snapshot, use local data for all decisions, and pass the snapshot and fit stores to the four forecast workers.
-Next test/gate: Season, training-window, entry-evidence, and late-xG resume tests; idle, quote-only, display-only, and clock-only decisions; then one operation-path benchmark.
-Working files to inspect before editing: `src/epl_forecast/fit_state.py`, `src/epl_forecast/pipeline.py`, `src/epl_forecast/publication.py`, and their tests.
+Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 395 tests in 44.06 seconds.
+Next action: Add explicit idle, quote-only, display-only, record-only, and clock-only stage decisions. Then make publication and analysis derive from the typed result instead of treating archive JSON as another authoritative numerical result.
+Next test/gate: I1–I3, A1–A2, P1–P3, and the local operation-path benchmark with the new worker entry point.
+Working files to inspect before editing: `src/epl_forecast/pipeline.py`, `src/epl_forecast/results.py`, `src/epl_forecast/publication.py`, `src/epl_forecast/analysis.py`, and their tests.
 Remote objects created or modified by this agent: None.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 

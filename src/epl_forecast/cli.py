@@ -66,7 +66,7 @@ def fitted_model(
             input_revision,
             observations=observations,
         )
-        checkpoint_id, _, _, _ = checkpoint_identity(
+        checkpoint_id, _, _, _, _ = checkpoint_identity(
             specs[0], training, as_of, observations=observations
         )
         model.fit_checkpoint = {

@@ -6,6 +6,8 @@ import sys
 import tempfile
 import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,7 +25,9 @@ from epl_forecast.publication import (
 )
 from epl_forecast.record import realized_outcomes, update_record
 from epl_forecast.schema import Fixture
+from epl_forecast.snapshot import SnapshotDataset, create_snapshot, snapshot_manifest_path
 from epl_forecast.storage import (
+    ConditionalWriteFailed,
     file_hash,
     json_bytes,
     r2_store_if_configured,
@@ -35,6 +39,24 @@ PRODUCT_MODEL = "M10-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
 LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
+SNAPSHOT_POINTER = "state/canonical-snapshot.json"
+
+
+@dataclass
+class PreparedSnapshot:
+    data: SnapshotDataset
+    database: Path
+    manifest_path: Path
+    manifest: dict
+
+
+@dataclass
+class ForecastAttempt:
+    league: str
+    archive: Path
+    fit_store: Path
+    fit_version: str | None
+    failure: dict | None
 
 
 def progress(event: str, **details) -> None:
@@ -55,27 +77,46 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(command, text=True, capture_output=True, check=False, cwd=REPOSITORY)
 
 
-def run_forecast(league: str, cutoff: datetime, output: Path, simulations: int):
-    return _run(
-        [
-            sys.executable,
-            "-m",
-            "epl_forecast.cli",
-            "forecast",
-            "--competition",
-            league,
-            "--cutoff",
-            cutoff.isoformat(),
-            "--config",
-            str(PRODUCT_CONFIG),
-            "--model",
-            PRODUCT_MODEL,
-            "--output",
-            str(output),
-            "--simulations",
-            str(simulations),
-        ]
-    )
+def run_forecast(
+    league: str,
+    cutoff: datetime,
+    output: Path,
+    simulations: int,
+    *,
+    snapshot: Path | None = None,
+    snapshot_manifest: Path | None = None,
+    results: Path | None = None,
+    fits: Path | None = None,
+    result_id: str | None = None,
+):
+    command = [
+        sys.executable,
+        "-m",
+        "epl_forecast.cli",
+        "forecast",
+        "--competition",
+        league,
+        "--cutoff",
+        cutoff.isoformat(),
+        "--config",
+        str(PRODUCT_CONFIG),
+        "--model",
+        PRODUCT_MODEL,
+        "--output",
+        str(output),
+        "--simulations",
+        str(simulations),
+    ]
+    for option, value in (
+        ("--snapshot", snapshot),
+        ("--snapshot-manifest", snapshot_manifest),
+        ("--results", results),
+        ("--fits", fits),
+        ("--result-id", result_id),
+    ):
+        if value is not None:
+            command.extend([option, str(value)])
+    return _run(command)
 
 
 def verify_archive(archive: Path, output: Path):
@@ -91,6 +132,80 @@ def verify_archive(archive: Path, output: Path):
             str(output),
         ]
     )
+
+
+def forecast_and_verify(
+    league: str,
+    now: datetime,
+    attempt: Path,
+    run_id: str,
+    simulations: int,
+    prepared: PreparedSnapshot,
+    data_store,
+) -> ForecastAttempt:
+    archive = attempt / league
+    fit_store = attempt.parent / "fits" / f"{league}.duckdb"
+    fit_version = prepare_fit_store(data_store, league, fit_store)
+    forecast_started = time.monotonic()
+    progress("forecast_started", competition_id=league)
+    forecast = run_forecast(
+        league,
+        now,
+        archive,
+        simulations,
+        snapshot=prepared.database,
+        snapshot_manifest=prepared.manifest_path,
+        results=attempt / f"{league}-results.duckdb",
+        fits=fit_store,
+        result_id=run_id,
+    )
+    write_immutable(
+        attempt / f"{league}-forecast.log", (forecast.stdout + forecast.stderr).encode()
+    )
+    if forecast.returncode:
+        progress(
+            "forecast_failed",
+            competition_id=league,
+            elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+        )
+        return ForecastAttempt(
+            league,
+            archive,
+            fit_store,
+            fit_version,
+            {"league": league, "stage": "forecast", "detail": forecast.stderr[-800:]},
+        )
+    progress(
+        "forecast_finished",
+        competition_id=league,
+        elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+    )
+    reports = attempt / f"{league}-verification"
+    verification_started = time.monotonic()
+    progress("verification_started", competition_id=league)
+    verification = verify_archive(archive, reports)
+    write_immutable(
+        attempt / f"{league}-verify.log", (verification.stdout + verification.stderr).encode()
+    )
+    if verification.returncode:
+        progress(
+            "verification_failed",
+            competition_id=league,
+            elapsed_seconds=round(time.monotonic() - verification_started, 3),
+        )
+        return ForecastAttempt(
+            league,
+            archive,
+            fit_store,
+            fit_version,
+            {"league": league, "stage": "verify", "detail": verification.stdout[-800:]},
+        )
+    progress(
+        "verification_finished",
+        competition_id=league,
+        elapsed_seconds=round(time.monotonic() - verification_started, 3),
+    )
+    return ForecastAttempt(league, archive, fit_store, fit_version, None)
 
 
 def training_competitions(competition_id: str) -> list[str]:
@@ -225,6 +340,99 @@ def collect_and_sync(workspace: Path, data_store) -> tuple[dict, dict]:
     return collection, synced
 
 
+def prepare_operation_snapshot(cutoff: datetime, data_store, workspace: Path) -> PreparedSnapshot:
+    source_revision = data_store.identities(["state/manifests.json"])["state/manifests.json"]
+    if source_revision is None:
+        raise ValueError("The canonical manifest pointer does not exist")
+    pointer, pointer_version = data_store.get_json_versioned(SNAPSHOT_POINTER)
+    database = workspace / "canonical.duckdb"
+    manifest_path = snapshot_manifest_path(database)
+
+    def restore(value: dict) -> PreparedSnapshot:
+        data_store.download(value["database_key"], database)
+        data_store.download(value["manifest_key"], manifest_path)
+        data = SnapshotDataset(database, cutoff, manifest_path=manifest_path)
+        if data.source_revision != source_revision:
+            data.close()
+            raise ValueError("The restored snapshot does not match the canonical source revision")
+        return PreparedSnapshot(
+            data, database, manifest_path, json.loads(manifest_path.read_text())
+        )
+
+    if pointer is not None and pointer.get("source_revision") == source_revision:
+        return restore(pointer)
+
+    source = Dataset(cutoff, store=data_store, log_http=True)
+    try:
+        manifest = create_snapshot(source, database, source_revision=source_revision)
+    finally:
+        source.close()
+    data_revision = manifest["data_revision"]
+    database_key = f"snapshots/{data_revision}.duckdb"
+    manifest_key = f"snapshots/{data_revision}.manifest.json"
+    data_store.upload(database, database_key, immutable=True)
+    data_store.upload(manifest_path, manifest_key, immutable=True)
+    replacement = {
+        "schema_version": 1,
+        "source_revision": source_revision,
+        "data_revision": data_revision,
+        "database_key": database_key,
+        "manifest_key": manifest_key,
+        "database_bytes": manifest["database_bytes"],
+        "database_sha256": manifest["database_sha256"],
+        "created_at": manifest["created_at"],
+    }
+    try:
+        data_store.put_json_if(SNAPSHOT_POINTER, replacement, pointer_version)
+    except ConditionalWriteFailed:
+        winner = data_store.get_json(SNAPSHOT_POINTER)
+        if winner is None or winner.get("source_revision") != source_revision:
+            raise
+        database.unlink(missing_ok=True)
+        manifest_path.unlink(missing_ok=True)
+        return restore(winner)
+    return PreparedSnapshot(
+        SnapshotDataset(database, cutoff, manifest_path=manifest_path),
+        database,
+        manifest_path,
+        manifest,
+    )
+
+
+def prepare_fit_store(data_store, competition_id: str, destination: Path) -> str | None:
+    pointer_key = f"state/fits/{competition_id}.json"
+    pointer, version = data_store.get_json_versioned(pointer_key)
+    if pointer is None:
+        return version
+    data_store.download(pointer["database_key"], destination)
+    if destination.stat().st_size != pointer["database_bytes"]:
+        raise ValueError("Fit checkpoint byte count does not match its pointer")
+    if file_hash(destination) != pointer["database_sha256"]:
+        raise ValueError("Fit checkpoint hash does not match its pointer")
+    return version
+
+
+def commit_fit_store(
+    data_store,
+    competition_id: str,
+    source: Path,
+    previous_version: str | None,
+) -> dict:
+    digest = file_hash(source)
+    database_key = f"fits/{competition_id}/{digest}.duckdb"
+    data_store.upload(source, database_key, immutable=True)
+    pointer = {
+        "schema_version": 1,
+        "competition_id": competition_id,
+        "database_key": database_key,
+        "database_bytes": source.stat().st_size,
+        "database_sha256": digest,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    data_store.put_json_if(f"state/fits/{competition_id}.json", pointer, previous_version)
+    return pointer
+
+
 def due(state: dict, fingerprint: str, competition: str) -> bool:
     return state.get("competitions", {}).get(competition, {}).get("fingerprint") != fingerprint
 
@@ -267,42 +475,49 @@ def operate(
     model_version = policy["product"]["model_version"]
     fingerprint_started = time.monotonic()
     progress("fingerprint_started", model_version=model_version)
-    dataset = Dataset(now, store=data_store)
-    try:
-        fingerprints = {
-            competition_id: production_fingerprint(
-                information_fingerprint(dataset, competition_id), model_version
-            )
-            for competition_id in LEAGUES
-        }
-        outcomes = realized_outcomes(dataset.fixtures())
-    finally:
-        dataset.close()
-    state = data_store.get_json("state/forecast.json", {})
-    pending = [league for league in LEAGUES if force or due(state, fingerprints[league], league)]
-    progress(
-        "fingerprint_finished",
-        elapsed_seconds=round(time.monotonic() - fingerprint_started, 3),
-        pending=pending,
-    )
-    if not pending:
-        result.update(status="unchanged", reason="No new information since the last publication")
-        previous = publish_store.get_json("record.json")
-        record = update_record(previous, [], outcomes, policy)
-        if previous is None or {**previous, "updated_at": None} != {**record, "updated_at": None}:
-            publish_store.put_json("record.json", record)
-        result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
+    with tempfile.TemporaryDirectory(prefix="page324-operation-") as workspace:
+        prepared = prepare_operation_snapshot(now, data_store, Path(workspace))
+        try:
+            fingerprints = {
+                competition_id: production_fingerprint(
+                    information_fingerprint(prepared.data, competition_id), model_version
+                )
+                for competition_id in LEAGUES
+            }
+            outcomes = realized_outcomes(prepared.data.fixtures())
+        finally:
+            prepared.data.close()
+        state = data_store.get_json("state/forecast.json", {})
+        pending = [
+            league for league in LEAGUES if force or due(state, fingerprints[league], league)
+        ]
         progress(
-            "operation_finished",
-            elapsed_seconds=round(time.monotonic() - operation_started, 3),
-            status=result["status"],
+            "fingerprint_finished",
+            elapsed_seconds=round(time.monotonic() - fingerprint_started, 3),
+            pending=pending,
         )
-        return result
-    run_id = forecast_id(now)
-    with tempfile.TemporaryDirectory(prefix="page324-run-") as runs:
+        if not pending:
+            result.update(
+                status="unchanged", reason="No new information since the last publication"
+            )
+            previous = publish_store.get_json("record.json")
+            record = update_record(previous, [], outcomes, policy)
+            if previous is None or {**previous, "updated_at": None} != {
+                **record,
+                "updated_at": None,
+            }:
+                publish_store.put_json("record.json", record)
+            result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
+            progress(
+                "operation_finished",
+                elapsed_seconds=round(time.monotonic() - operation_started, 3),
+                status=result["status"],
+            )
+            return result
+        run_id = forecast_id(now)
         return _forecast_and_publish(
             result,
-            Path(runs) / run_id,
+            Path(workspace) / run_id,
             run_id,
             now,
             pending,
@@ -314,6 +529,7 @@ def operate(
             data_store,
             publish_store,
             operation_started,
+            prepared,
         )
 
 
@@ -331,58 +547,40 @@ def _forecast_and_publish(
     data_store,
     publish_store,
     operation_started: float,
+    prepared: PreparedSnapshot,
 ) -> dict:
     impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
     documents, failures = [], []
+    attempt.mkdir(parents=True)
+    with ThreadPoolExecutor(max_workers=min(4, len(pending))) as pool:
+        attempts = {
+            row.league: row
+            for row in pool.map(
+                lambda league: forecast_and_verify(
+                    league,
+                    now,
+                    attempt,
+                    run_id,
+                    simulations,
+                    prepared,
+                    data_store,
+                ),
+                pending,
+            )
+        }
     for league in pending:
-        archive = attempt / league
-        forecast_started = time.monotonic()
-        progress("forecast_started", competition_id=league)
-        forecast = run_forecast(league, now, archive, simulations)
-        write_immutable(
-            attempt / f"{league}-forecast.log", (forecast.stdout + forecast.stderr).encode()
-        )
-        if forecast.returncode:
-            progress(
-                "forecast_failed",
-                competition_id=league,
-                elapsed_seconds=round(time.monotonic() - forecast_started, 3),
-            )
-            failures.append(
-                {"league": league, "stage": "forecast", "detail": forecast.stderr[-800:]}
-            )
+        row = attempts[league]
+        if row.failure:
+            failures.append(row.failure)
             continue
-        progress(
-            "forecast_finished",
-            competition_id=league,
-            elapsed_seconds=round(time.monotonic() - forecast_started, 3),
-        )
-        reports = attempt / f"{league}-verification"
-        verification_started = time.monotonic()
-        progress("verification_started", competition_id=league)
-        verification = verify_archive(archive, reports)
-        write_immutable(
-            attempt / f"{league}-verify.log", (verification.stdout + verification.stderr).encode()
-        )
-        if verification.returncode:
-            progress(
-                "verification_failed",
-                competition_id=league,
-                elapsed_seconds=round(time.monotonic() - verification_started, 3),
-            )
-            failures.append(
-                {"league": league, "stage": "verify", "detail": verification.stdout[-800:]}
-            )
-            continue
-        progress(
-            "verification_finished",
-            competition_id=league,
-            elapsed_seconds=round(time.monotonic() - verification_started, 3),
-        )
+        try:
+            commit_fit_store(data_store, league, row.fit_store, row.fit_version)
+        except ConditionalWriteFailed:
+            progress("fit_checkpoint_conflict", competition_id=league)
         documents.append(
             update_impact_state(
                 derive_forecast(
-                    json.loads((archive / "forecast.json").read_text()),
+                    json.loads((row.archive / "forecast.json").read_text()),
                     run_id,
                     public_model_version=policy["product"]["model_version"],
                 ),

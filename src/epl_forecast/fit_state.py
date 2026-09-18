@@ -10,9 +10,32 @@ from epl_forecast.models import make_model
 from epl_forecast.models.promotion import TeamPrior, completed_seasons
 from epl_forecast.models.xg_observation import chance_rows
 from epl_forecast.schema import Fixture, Match
-from epl_forecast.storage import json_bytes, sha256_bytes
+from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
 SCHEMA_VERSION = 2
+SOURCE_ROOT = Path(__file__).resolve().parent
+FIT_PROTOCOL_PATHS = (
+    SOURCE_ROOT / "models",
+    SOURCE_ROOT / "competitions.py",
+    SOURCE_ROOT / "datasets.py",
+    SOURCE_ROOT / "schema.py",
+    SOURCE_ROOT / "training.py",
+    SOURCE_ROOT / "data" / "rules.py",
+)
+
+
+def fit_protocol_identity() -> str:
+    paths = []
+    for path in FIT_PROTOCOL_PATHS:
+        paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
+    return sha256_bytes(
+        json_bytes(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "files": {str(path.relative_to(SOURCE_ROOT)): file_hash(path) for path in paths},
+            }
+        )
+    )
 
 
 def _training_rows(matches: list[Match]) -> list[dict]:
@@ -61,9 +84,15 @@ def _observation_rows(matches: list[Match], observations) -> list[dict]:
 
 
 def checkpoint_identity(
-    spec: dict, training: list[Match], as_of: date, *, observations=None
-) -> tuple[str, str, str, str]:
+    spec: dict,
+    training: list[Match],
+    as_of: date,
+    *,
+    observations=None,
+    protocol_identity: str | None = None,
+) -> tuple[str, str, str, str, str]:
     training = _ordered_training(training)
+    protocol_identity = protocol_identity or fit_protocol_identity()
     spec_sha256 = sha256_bytes(json_bytes(spec))
     training_sha256 = sha256_bytes(json_bytes(_training_rows(training)))
     observation_sha256 = sha256_bytes(json_bytes(_observation_rows(training, observations)))
@@ -74,11 +103,18 @@ def checkpoint_identity(
                 "spec_sha256": spec_sha256,
                 "training_sha256": training_sha256,
                 "observation_sha256": observation_sha256,
+                "protocol_identity": protocol_identity,
                 "as_of": as_of.isoformat(),
             }
         )
     )
-    return checkpoint_id, spec_sha256, training_sha256, observation_sha256
+    return (
+        checkpoint_id,
+        spec_sha256,
+        training_sha256,
+        observation_sha256,
+        protocol_identity,
+    )
 
 
 def _install_schema(connection) -> None:
@@ -115,7 +151,8 @@ def _install_schema(connection) -> None:
         );
         CREATE TABLE IF NOT EXISTS fit_inputs (
             checkpoint_id VARCHAR PRIMARY KEY,
-            observation_sha256 VARCHAR NOT NULL
+            observation_sha256 VARCHAR NOT NULL,
+            protocol_identity VARCHAR NOT NULL
         );
         CREATE TABLE IF NOT EXISTS fit_teams (
             checkpoint_id VARCHAR NOT NULL,
@@ -178,9 +215,13 @@ def write_fit_checkpoint(
     observations=None,
 ) -> str:
     training = _ordered_training(training)
-    checkpoint_id, spec_sha256, training_sha256, observation_sha256 = checkpoint_identity(
-        spec, training, as_of, observations=observations
-    )
+    (
+        checkpoint_id,
+        spec_sha256,
+        training_sha256,
+        observation_sha256,
+        protocol_identity,
+    ) = checkpoint_identity(spec, training, as_of, observations=observations)
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(path))
     try:
@@ -215,7 +256,8 @@ def write_fit_checkpoint(
             ],
         )
         connection.execute(
-            "INSERT INTO fit_inputs VALUES (?, ?)", [checkpoint_id, observation_sha256]
+            "INSERT INTO fit_inputs VALUES (?, ?, ?)",
+            [checkpoint_id, observation_sha256, protocol_identity],
         )
         for member_index, member in enumerate(members):
             connection.execute(
@@ -315,9 +357,13 @@ def load_fit_checkpoint(
     if not path.exists():
         return None
     training = _ordered_training(training)
-    checkpoint_id, spec_sha256, training_sha256, observation_sha256 = checkpoint_identity(
-        spec, training, as_of, observations=observations
-    )
+    (
+        checkpoint_id,
+        spec_sha256,
+        training_sha256,
+        observation_sha256,
+        protocol_identity,
+    ) = checkpoint_identity(spec, training, as_of, observations=observations)
     connection = duckdb.connect(str(path), read_only=True)
     try:
         row = connection.execute(
@@ -330,13 +376,14 @@ def load_fit_checkpoint(
         ).fetchone()
         if row is None:
             return None
-        stored_observation = connection.execute(
-            "SELECT observation_sha256 FROM fit_inputs WHERE checkpoint_id = ?", [checkpoint_id]
+        stored_input = connection.execute(
+            "SELECT observation_sha256, protocol_identity FROM fit_inputs WHERE checkpoint_id = ?",
+            [checkpoint_id],
         ).fetchone()
         if row[:3] != (SCHEMA_VERSION, spec_sha256, training_sha256) or row[4] != as_of:
             raise ValueError("Fit checkpoint identity does not match its metadata")
-        if stored_observation != (observation_sha256,):
-            raise ValueError("Fit checkpoint observations do not match its identity")
+        if stored_input != (observation_sha256, protocol_identity):
+            raise ValueError("Fit checkpoint inputs do not match its identity")
         history = _history(connection, checkpoint_id)
         if history != training:
             raise ValueError("Fit checkpoint history does not match the requested training set")
@@ -423,7 +470,7 @@ def _resume_fit_checkpoint(
     if not path.exists():
         return None
     training = _ordered_training(training)
-    _, spec_sha256, _, _ = checkpoint_identity(spec, training, as_of, observations=observations)
+    _, spec_sha256, _, _, _ = checkpoint_identity(spec, training, as_of, observations=observations)
     competition_id = spec.get("parameters", {}).get("competition_id", "eng-premier-league")
     connection = duckdb.connect(str(path), read_only=True)
     try:

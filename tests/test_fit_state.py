@@ -1,14 +1,16 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 
 import duckdb
 import numpy as np
 import pytest
 
+from epl_forecast import fit_state
 from epl_forecast.fit_state import (
     fitted_model_from_checkpoint,
     load_fit_checkpoint,
 )
+from epl_forecast.schema import Fixture, Match, fixture_id
 
 
 def xg_rows(matches):
@@ -79,7 +81,9 @@ def test_checkpoint_restores_exact_m10_state(tmp_path, small_history):
         assert connection.execute("SELECT count(*) FROM fit_members").fetchone()[0] == 3
 
 
-def test_irrelevant_revision_reuses_and_model_inputs_invalidate(tmp_path, small_history):
+def test_irrelevant_revision_reuses_and_model_inputs_invalidate(
+    tmp_path, small_history, monkeypatch
+):
     path = tmp_path / "fits.duckdb"
     cutoff = small_history[-1].available_on
     spec = model_spec()
@@ -102,6 +106,18 @@ def test_irrelevant_revision_reuses_and_model_inputs_invalidate(tmp_path, small_
             cutoff,
             "revision-1",
             observations=changed_xg,
+        )
+        is None
+    )
+    monkeypatch.setattr(fit_state, "fit_protocol_identity", lambda: "changed-normalization")
+    assert (
+        load_fit_checkpoint(
+            path,
+            spec,
+            small_history,
+            cutoff,
+            "revision-1",
+            observations=rows,
         )
         is None
     )
@@ -189,3 +205,91 @@ def test_checkpoint_resumes_only_at_complete_day_boundary(tmp_path, small_histor
         observations=same_day_rows,
     )
     assert same_day_model.fit_state_status == "fresh"
+
+
+def test_season_boundary_resume_matches_fresh_fit(tmp_path, small_history):
+    path = tmp_path / "fits.duckdb"
+    spec = model_spec()
+    first_rows = xg_rows(small_history)
+    fitted_model_from_checkpoint(
+        path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-1",
+        observations=first_rows,
+    )
+    competition = "eng-premier-league"
+    fixture = Fixture(
+        fixture_id(competition, "2021-2022", "a", "b"),
+        competition,
+        "2021-2022",
+        date(2021, 8, 1),
+        "a",
+        "b",
+    )
+    history = [*small_history, Match(fixture, 2, 1)]
+    rows = xg_rows(history)
+    resumed, _ = fitted_model_from_checkpoint(
+        path,
+        spec,
+        history,
+        history[-1].available_on,
+        "revision-2",
+        observations=rows,
+    )
+    fresh, _ = fitted_model_from_checkpoint(
+        tmp_path / "fresh.duckdb",
+        spec,
+        history,
+        history[-1].available_on,
+        "revision-2",
+        observations=rows,
+    )
+    assert resumed.fit_state_status == "resumed"
+    for actual, expected in zip(resumed.members, fresh.members, strict=True):
+        np.testing.assert_allclose(actual.mean, expected.mean, atol=1e-11)
+        np.testing.assert_allclose(actual.covariance, expected.covariance, atol=1e-11)
+
+
+def test_training_window_and_late_xg_force_fresh_fit(tmp_path, small_history):
+    spec = model_spec()
+    rows = xg_rows(small_history)
+    window_path = tmp_path / "window.duckdb"
+    fitted_model_from_checkpoint(
+        window_path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-1",
+        observations=rows,
+    )
+    window = small_history[2:]
+    changed_window, _ = fitted_model_from_checkpoint(
+        window_path,
+        spec,
+        window,
+        window[-1].available_on,
+        "revision-2",
+        observations=rows,
+    )
+    assert changed_window.fit_state_status == "fresh"
+
+    xg_path = tmp_path / "late-xg.duckdb"
+    fitted_model_from_checkpoint(
+        xg_path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-1",
+        observations=rows[1:],
+    )
+    late_xg, _ = fitted_model_from_checkpoint(
+        xg_path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-2",
+        observations=rows,
+    )
+    assert late_xg.fit_state_status == "fresh"
