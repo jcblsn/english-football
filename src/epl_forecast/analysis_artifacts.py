@@ -1960,16 +1960,20 @@ def _install_event_probability_view(connection) -> None:
                NULL::VARCHAR AS hindcast_id, f.competition_id, f.season_id,
                f.public_model_version AS model_version, f.generated_at,
                NULL::TIMESTAMPTZ AS origin_at, f.model_results_cutoff,
-               f.generated_at AS observed_at, e.team_id, e.event, e.probability
-        FROM analysis.forecast_team_events e JOIN analysis.forecasts f
-        USING (forecast_id, competition_id, season_id)
+               f.generated_at AS observed_at, e.team_id, t.team_name, e.event, e.probability
+        FROM analysis.forecast_team_events e
+        JOIN analysis.forecasts f USING (forecast_id, competition_id, season_id)
+        JOIN analysis.forecast_teams t USING (forecast_id, competition_id, season_id, team_id)
         UNION ALL
         SELECT 'hindcast' AS product, true AS retrospective, NULL::VARCHAR AS forecast_id,
                h.hindcast_id, h.competition_id, h.season_id, h.model_version,
                h.generated_at, h.origin_at, h.model_results_cutoff,
-               h.origin_at AS observed_at, e.team_id, e.event, e.probability
-        FROM analysis.hindcast_team_events e JOIN analysis.hindcast_origins h
-        USING (hindcast_id, competition_id, season_id, model_version)
+               h.origin_at AS observed_at, e.team_id, t.team_name, e.event, e.probability
+        FROM analysis.hindcast_team_events e
+        JOIN analysis.hindcast_origins h
+          USING (hindcast_id, competition_id, season_id, model_version, origin_at)
+        JOIN analysis.hindcast_teams t
+          USING (hindcast_id, competition_id, season_id, model_version, origin_at, team_id)
         """
     )
 

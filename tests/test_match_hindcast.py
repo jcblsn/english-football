@@ -18,6 +18,7 @@ from epl_forecast.match_hindcast import (
 )
 from epl_forecast.models.baselines import AttackDefensePoisson
 from epl_forecast.publication import check_publishable, document_kind, load_policy
+from epl_forecast.storage import json_bytes
 from epl_forecast.record import update_record
 
 HANDOFF = {"prospective_from": "2026-09-17", "last_match_date": "2026-09-16"}
@@ -180,6 +181,12 @@ def test_the_season_of_the_bridge_follows_the_english_calendar():
     assert document_key("v0.3.0", "eng-championship", "2026-2027") == (
         "match-hindcasts/v0.3.0/eng-championship/2026-2027.json"
     )
+
+
+def test_the_private_run_and_the_public_document_are_json(tmp_path):
+    document = derive_match_hindcast("v0.3.0", "eng-premier-league", "2026-2027", [row()], HANDOFF)
+    json_bytes(document)
+    json_bytes({**HANDOFF, "matches": [{**row(), "kickoff_time": "2026-08-15T14:00:00+00:00"}]})
 
 
 def test_a_match_forecast_uses_only_results_available_before_its_london_day(full_season):
