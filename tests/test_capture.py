@@ -1,3 +1,4 @@
+import gzip
 import io
 import json
 from hashlib import sha256
@@ -143,3 +144,19 @@ def test_fetcher_reads_a_due_checkpoint_payload_from_remote_storage(tmp_path):
     assert returned_record == record
     assert returned_payload == payload
     assert json.loads((tmp_path / record["raw_path"]).read_text()) == {"response": []}
+
+
+def test_new_capture_is_stored_compressed_and_reuses_the_original_payload(tmp_path, monkeypatch):
+    payload = b'{"response":[' + b'{"value":"repeated"},' * 100 + b"]}"
+    monkeypatch.setattr(capture, "urlopen", lambda *args, **kwargs: Response(payload))
+    record, returned = capture.Fetcher(tmp_path).get("fpl", "https://example.test/fpl")
+    stored = (tmp_path / record["raw_path"]).read_bytes()
+    assert returned == payload
+    assert record["storage_encoding"] == "gzip"
+    assert record["raw_path"].endswith(".json.gz")
+    assert gzip.decompress(stored) == payload
+    assert len(stored) < len(payload)
+    assert capture.Fetcher(tmp_path).get("fpl", record["url"], historical=True) == (
+        record,
+        payload,
+    )

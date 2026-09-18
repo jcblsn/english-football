@@ -153,19 +153,24 @@ def extend_snapshot(
         raise FileExistsError(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.parent / f".{destination.name}.{uuid4().hex}.tmp"
-    alias = f"snapshot_{uuid4().hex}"
+    previous_alias = f"previous_{uuid4().hex}"
+    output_alias = f"snapshot_{uuid4().hex}"
     try:
-        shutil.copyfile(previous, temporary)
-        additions.con.execute(f"ATTACH {_literal(str(temporary))} AS {alias}")
+        additions.con.execute(f"ATTACH {_literal(str(previous))} AS {previous_alias} (READ_ONLY)")
+        additions.con.execute(f"ATTACH {_literal(str(temporary))} AS {output_alias}")
         try:
+            additions.con.execute(f"CREATE SCHEMA {output_alias}.canonical")
+            additions.con.execute(f"CREATE SCHEMA {output_alias}.metadata")
             for table in SCHEMAS:
                 additions.con.execute(
-                    f"INSERT INTO {alias}.canonical.{table}_observations "
-                    f"SELECT * FROM {table}_observations"
+                    f"CREATE TABLE {output_alias}.canonical.{table}_observations AS "
+                    f"SELECT * FROM {previous_alias}.canonical.{table}_observations "
+                    f"UNION ALL SELECT * FROM {table}_observations"
                 )
-            additions.con.execute(f"CHECKPOINT {alias}")
+            additions.con.execute(f"CHECKPOINT {output_alias}")
         finally:
-            additions.con.execute(f"DETACH {alias}")
+            additions.con.execute(f"DETACH {output_alias}")
+            additions.con.execute(f"DETACH {previous_alias}")
         manifests = [*prior["manifests"], *additions.manifests]
         manifest = _finalize_snapshot(temporary, additions, source_revision, manifests)
         temporary.replace(destination)

@@ -29,7 +29,7 @@ R2 is the durable store and the only source of canonical evidence. There is no l
 
 | R2 key | Content |
 | --- | --- |
-| `raw/<provider>/<hash>` | Raw responses. They are immutable and identified by content hash. |
+| `raw/<provider>/<hash>.<type>.gz` | Raw responses. New captures use deterministic gzip storage. The request record identifies the original response bytes by hash. Older uncompressed captures remain readable. |
 | `requests/` | One record for each successful request: URL, retrieval time, hash and context. |
 | `parquet/<table>/` | Canonical tables, partitioned by competition and season. |
 | `manifests/` | Canonical manifests. A Parquet file is visible only after its manifest enters the compact state. |

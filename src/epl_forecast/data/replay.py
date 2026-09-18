@@ -10,8 +10,9 @@ from pathlib import Path
 from epl_forecast.cloud import canonical_rows, publish_base_batch
 from epl_forecast.data import api_football as api
 from epl_forecast.data import football_data, fpl, kalshi, understat_ingest
+from epl_forecast.data.capture import decode_capture
 from epl_forecast.datasets import Dataset
-from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
+from epl_forecast.storage import R2Store, json_bytes, sha256_bytes
 
 INGESTORS = {"football_data": football_data, "understat": understat_ingest, "fpl": fpl}
 
@@ -90,8 +91,10 @@ def replay_canonical(store: R2Store, *, publish: bool = False, workers: int = 16
         def download(record):
             path = workspace / record["raw_path"]
             store.download(record["raw_path"], path)
-            if file_hash(path) != record["source_sha256"]:
-                raise ValueError(f"Raw capture hash mismatch: {record['raw_path']}")
+            try:
+                decode_capture(record, path.read_bytes())
+            except ValueError:
+                raise ValueError(f"Raw capture hash mismatch: {record['raw_path']}") from None
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(download, {record["raw_path"]: record for record in records}.values()))
@@ -99,7 +102,7 @@ def replay_canonical(store: R2Store, *, publish: bool = False, workers: int = 16
             understat_context = None
             kalshi_run = kalshi.SeriesRun()
             for record in records:
-                payload = (workspace / record["raw_path"]).read_bytes()
+                payload = decode_capture(record, (workspace / record["raw_path"]).read_bytes())
                 understat_context = normalize_capture(
                     workspace, record, payload, understat_context, kalshi_run
                 )

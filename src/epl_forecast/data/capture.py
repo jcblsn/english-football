@@ -1,5 +1,6 @@
 """Immutable HTTP captures and resumable local request checkpoints."""
 
+import gzip
 import json
 import os
 import time
@@ -8,7 +9,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from epl_forecast.storage import file_hash, json_bytes, sha256_bytes, write_immutable
+from epl_forecast.storage import json_bytes, sha256_bytes, write_immutable
 
 
 class SourceAccessError(RuntimeError):
@@ -30,12 +31,22 @@ def api_key():
     return value
 
 
+def decode_capture(record: dict, stored: bytes) -> bytes:
+    try:
+        payload = gzip.decompress(stored) if record.get("storage_encoding") == "gzip" else stored
+    except (gzip.BadGzipFile, EOFError, OSError):
+        raise ValueError(f"Raw checksum mismatch: {record['raw_path']}") from None
+    if sha256_bytes(payload) != record["source_sha256"]:
+        raise ValueError(f"Raw checksum mismatch: {record['raw_path']}")
+    return payload
+
+
 def retain(root, provider, url, payload, retrieved_at, evidence_basis, context=None):
     root = Path(root)
     digest = sha256_bytes(payload)
     extension = "csv" if provider == "football_data" else "json"
-    path = root / "raw" / provider / f"{digest}.{extension}"
-    write_immutable(path, payload)
+    path = root / "raw" / provider / f"{digest}.{extension}.gz"
+    write_immutable(path, gzip.compress(payload, compresslevel=6, mtime=0))
     record = {
         "provider": provider,
         "url": url,
@@ -43,6 +54,7 @@ def retain(root, provider, url, payload, retrieved_at, evidence_basis, context=N
         "evidence_basis": evidence_basis,
         "source_sha256": digest,
         "raw_path": str(path.relative_to(root)),
+        "storage_encoding": "gzip",
         "context": context or {},
     }
     request_id = sha256_bytes(json_bytes(record))
@@ -114,9 +126,7 @@ class Fetcher:
             path = self.root / old["raw_path"]
             if not path.exists() and self.store:
                 self.store.download(old["raw_path"], path)
-            if file_hash(path) != old["source_sha256"]:
-                raise ValueError(f"Raw checksum mismatch: {path}")
-            return old, path.read_bytes()
+            return old, decode_capture(old, path.read_bytes())
         api = provider == "api_football"
         headers = {"User-Agent": "epl-forecast/0.1 (local research)"}
         if api:
