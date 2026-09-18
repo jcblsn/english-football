@@ -76,6 +76,8 @@ See all [limitations](docs/limitations.md).
 | [Season simulation](docs/simulation.md) | Division rules, playoffs, sanctions and fixture dates |
 | [Data and provenance](docs/data.md) | Providers, storage, identity and data commands |
 | [Operations](docs/operations.md) | Running, scheduling, publishing and the forecast record |
+| [Capacity and retention](docs/capacity.md) | Measured storage, requests, retention and growth limits |
+| [Migration and rollback](docs/migration.md) | Cutover prerequisites, retention roots and rollback |
 | [Validation](docs/validation.md) | Evidence for M10 and how to reproduce it |
 | [Limitations](docs/limitations.md) | What the forecasts do not cover |
 | [Research history](docs/research.md) | Where the experiments and older models are kept |

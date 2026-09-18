@@ -293,3 +293,45 @@ def test_training_window_and_late_xg_force_fresh_fit(tmp_path, small_history):
         observations=rows,
     )
     assert late_xg.fit_state_status == "fresh"
+
+
+def test_changed_source_competition_entry_evidence_matches_a_fresh_fit(tmp_path, small_history):
+    source_fixture = replace(
+        small_history[0].fixture,
+        match_id=fixture_id("eng-national-league", "2020-2021", "a", "b"),
+        competition_id="eng-national-league",
+        season_id="2020-2021",
+    )
+    history = [replace(small_history[0], fixture=source_fixture), *small_history[1:]]
+    rows = xg_rows(history)
+    checkpoint = tmp_path / "entry-evidence.duckdb"
+    fitted_model_from_checkpoint(
+        checkpoint,
+        model_spec(),
+        history,
+        history[-1].available_on,
+        "revision-1",
+        observations=rows,
+    )
+    corrected = [replace(history[0], home_goals=4), *history[1:]]
+    corrected_rows = xg_rows(corrected)
+    replayed, _ = fitted_model_from_checkpoint(
+        checkpoint,
+        model_spec(),
+        corrected,
+        corrected[-1].available_on,
+        "revision-2",
+        observations=corrected_rows,
+    )
+    fresh, _ = fitted_model_from_checkpoint(
+        tmp_path / "fresh-entry-evidence.duckdb",
+        model_spec(),
+        corrected,
+        corrected[-1].available_on,
+        "revision-2",
+        observations=corrected_rows,
+    )
+    assert replayed.fit_state_status == "fresh"
+    for actual, expected in zip(replayed.members, fresh.members, strict=True):
+        np.testing.assert_allclose(actual.mean, expected.mean, atol=1e-11)
+        np.testing.assert_allclose(actual.covariance, expected.covariance, atol=1e-11)

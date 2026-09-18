@@ -21,6 +21,8 @@ uv run epl-forecast operate
 
 A failed or unverified division does not publish. Other verified divisions in the same run can publish and advance their own latest pointers. The next run retries only the divisions that do not have the current successful fingerprint.
 
+Private typed forecast detail has a 14-day rolling window. Every issued result also keeps a compact public projection and its run identity in the typed result database. Historical analysis uses that compact projection after private detail expires. See [capacity and retention](capacity.md). Production object cleanup follows the [migration and rollback](migration.md) runbook and requires a reviewed deletion manifest.
+
 | Option | Effect |
 | --- | --- |
 | `--force` | Run even if the effective inputs did not change. |

@@ -1,11 +1,11 @@
 # Refactor state
 
-Status: M0, M1, and the local M2 operation path pass. M3 consumer migration and capacity work are in progress. This file records observed state only.
+Status: M0 through M3 pass for the local code path. M4 production migration, live restore, cutover and deletion remain external gates. This file records observed state only.
 
 ## Assignment and authority
 
 Owner-approved scope: Local implementation, local tests, and read-only use of available repository evidence. The assignment does not authorize production writes, workflow cutover, bucket deletion, or a paid service.
-Local branch/worktree: `refactor-start`; the last pushed commit before the current analysis slice is `ed596549a7789d6be675ef48600147de43b13db1`. The checkout was clean before implementation started.
+Local branch/worktree: `refactor-start`; the last pushed implementation commit is `92da8e6`. The checkout was clean before implementation started.
 Authorized remote reads/staging prefix: Read credentials for both private buckets are configured in the ignored `.env`. No staging prefix is designated, so no remote staging write is authorized.
 Production mutation/cutover/deletion authority: Not recorded.
 Verified backup and restore evidence: Not established.
@@ -61,6 +61,14 @@ Completed evidence:
 - A selected analysis scope is available through `forecast_ids=`, repeated `--forecast-id` options in the data commands, and the query helper. A test with more than 250 unrelated retained archive pointers reads one result database and no unrelated forecast object.
 - Analysis session identity includes the four typed result pointers and the selected forecast IDs. Existing hindcast version selection continues to bound retrospective editions.
 - Pages materialization reuses an unchanged local hindcast tree by the hindcast index identity. The workflow restores that exact Actions cache, and a local repeat test reads no season series or weekly hindcast document.
+- A changed append-only canonical catalog now extends the verified prior snapshot. A 44-batch live delta used 332 `HEAD` and 83 `GET` requests, read 460,906 canonical bytes, and completed the compact local rewrite in 17.49 seconds. The compact snapshot grew by 786,432 bytes; the rejected physical append grew by 4,718,592 bytes.
+- New raw captures use deterministic gzip while their receipts retain the hash of the original provider bytes. The 33 raw objects in the measured delta fell from 6,032,248 bytes to 409,082 bytes. Existing uncompressed captures remain readable and replay verifies the decompressed original hash.
+- Market-only and display-only result revisions now point directly to one structural result and store only effective market and display rows. Five measured Championship revisions grew a detailed result database to about 14.17 MB instead of 46.41 MB under row copying.
+- Full private forecast detail has a tested 14-day window. Expiration requires a compact issued projection and protects the structural parent of a recent revision. Older result IDs remain available at public grain from the same cumulative typed database without a historical public-object read.
+- A separate source-competition correction test rejects checkpoint reuse and proves that the replayed fit agrees with an independent fresh fit at 1e-11 tolerance.
+- A read-only bucket inventory found 3,072,450,503 bytes. `runs/forecasts/` held 946,027,443 bytes, private hindcasts held 171,573,273 bytes, old run snapshots held 54,383,674 bytes, and `research/` held 738,048,127 bytes.
+- The measured capacity model is in `docs/capacity.md`. The projected post-cutover product start is 1.86 GB. The 12-month base and 60-busy-day cases are 5.50 GB and 5.98 GB. The 24-month sensitivities exceed 7 GB and require a review at 6 GB or nine months. Projected monthly requests are about 78,000 Class B and 26,000 Class A in the base case, and 112,000 Class B and 38,000 Class A in the busy case.
+- `docs/migration.md` defines the retention roots, deletion candidates, cutover prerequisites and bounded rollback. No production object was created, changed or deleted while collecting this evidence.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -81,20 +89,19 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 ## Known limits and decisions
 
 - No backup or restore claim exists. A local synthetic restore test is not evidence that the private buckets are backed up.
-- No R2 capacity or request budget is certified. The owner-supplied cumulative counts have an unknown window.
-- The measured source request count is a one-time migration cost. A recurring restored snapshot should need one object GET, but this has not been measured against a remote staging prefix because none is authorized.
+- The capacity model uses a measured recurring 44-batch delta and current bucket inventory. It is not live-certified because no staging prefix is authorized and no projected-size remote restore or upload has run.
+- The 12-month storage target depends on the reviewed cleanup and one steady physical generation per pointer. The current buckets still contain the superseded objects. The 24-month sensitivities exceed 7 GB.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
-- Changed entry evidence across a source competition still needs an explicit independent resume test.
 - The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
 - Historical hindcast generation remains an explicit maintenance workflow. Its analysis reader still uses the selected public hindcast edition because hindcast results have not moved into the live cumulative result database.
 - Full live cutover and workflow changes remain external gates until the owner authorizes them and backup, restore, correctness, and capacity prerequisites pass.
 
 ## Restart point
 
-Last successful command and result: `unset VIRTUAL_ENV; scripts/verify.sh` passed format, lint, and all 408 tests in 44.23 seconds.
-Next action: Commit and push the cumulative analysis slice, then build the measured capacity, retention, freshness, and recovery model.
-Next test/gate: P3, growth and restore scaling, capacity C1, changed entry evidence, and the local operation-path benchmark with cumulative result restore.
-Working files to inspect before editing: `refactor-handoff/reference/`, current workflow schedules, stored pointer sizes, and current operations/data/validation documentation.
+Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 414 tests in 46.10 seconds at pushed commit `92da8e6`. The later focused changed-entry test passed all 7 fit-state tests in 3.85 seconds.
+Next action: Run the final full verification and local operation-path benchmark, then prepare the reviewed migration artifacts without making a production write.
+Next test/gate: Authorized staging restore/upload, backup restore R4, final reconciliation, workflow cutover and deletion-manifest execution.
+Working files to inspect before cutover: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
 Remote objects created or modified by this agent: None.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 
