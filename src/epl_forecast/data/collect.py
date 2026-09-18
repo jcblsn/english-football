@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from epl_forecast.data import api_football as api
-from epl_forecast.data import football_data, fpl, understat_ingest
+from epl_forecast.data import football_data, fpl, kalshi, understat_ingest
 from epl_forecast.data.capture import (
     Fetcher,
     SourceAccessError,
@@ -18,10 +18,12 @@ from epl_forecast.data.sources import (
     source_url,
 )
 from epl_forecast.datasets import Dataset
+from epl_forecast.snapshots import KALSHI_SERIES, SnapshotIndex, snapshot_rows
 from epl_forecast.storage import R2Store, write_json
 
 FIXTURE_REFRESH_SECONDS = 3600
 FIXTURE_DETAIL_REFRESH_SECONDS = 15 * 60
+KALSHI_REFRESH_SECONDS = 86400
 # Clubs announce starting lineups about an hour before kickoff; capture them before kickoff.
 LINEUP_WINDOW = timedelta(minutes=75)
 LINEUP_REFRESH_SECONDS = 9 * 60
@@ -309,6 +311,19 @@ def collect(root, season=None, store=None):
         if response:
             attempt(ingest, root, *response)
 
+    def refresh_kalshi():
+        # The retry gate is the completed snapshot of each series, not the
+        # freshness of its first page: kalshi.collect reuses a series only
+        # when the whole capture completed inside the refresh interval.
+        return attempt(
+            kalshi.collect,
+            root,
+            season=year,
+            store=store,
+            fetcher=fetcher,
+            max_age=KALSHI_REFRESH_SECONDS,
+        )
+
     def refresh_api(endpoint, params, *, max_age, context=None):
         if fetcher.reusable(api.url(endpoint, params), max_age):
             return
@@ -377,6 +392,16 @@ def collect(root, season=None, store=None):
                 max_age=LINEUP_REFRESH_SECONDS,
             )
     refresh("fpl", fpl.URL, fpl.ingest, max_age=1800, context={"season_id": season_name(year)})
+    # A Kalshi run that raised left its error in `errors`, and the report
+    # keeps the same shape so the audit reads one block either way.
+    kalshi_report = refresh_kalshi() or {
+        "status": "partial",
+        "errors": errors[-1:],
+        "observed_markets": 0,
+        "series": [],
+        "season_id": season_name(year),
+        "reused": False,
+    }
     for division, comp in ENTRY_SOURCE_COMPETITIONS.items():
         context = {
             "season_start": year,
@@ -438,13 +463,15 @@ def collect(root, season=None, store=None):
             "error": str(error),
         }
     usage = fetcher.usage()
+    kalshi_errors = kalshi_report.get("errors") or []
     report = {
         "completed_at": readiness_at.isoformat(),
-        "status": "partial" if errors else "complete",
+        "status": "partial" if errors or kalshi_errors else "complete",
         "errors": errors,
         "api_football": usage,
         "readiness": readiness,
     }
+    report["kalshi"] = kalshi_report
     write_json(Path(root) / "audits" / "collection.json", report)
     if usage["calls"]:
         write_json(
@@ -457,6 +484,57 @@ def collect(root, season=None, store=None):
             },
         )
     return report
+
+
+def kalshi_audit(data, now=None):
+    """Whether Kalshi collection is due, and what the retained history holds.
+
+    A series is due on the rule collection itself uses: no completed
+    capture, or one older than the refresh interval. The unresolved counts
+    are failures of identity resolution only. A draw contract names no club
+    by design, and a market outside the mapped Premier League scope has no
+    repository fixture by design, so neither counts as unresolved.
+    """
+    rows = data.rows(
+        "SELECT series_ticker, count(*) AS markets, "
+        "count(DISTINCT team_id) FILTER (WHERE team_id IS NOT NULL) AS teams, "
+        "count(*) FILTER (WHERE team_id IS NULL AND coalesce(side,'')<>'draw') "
+        "AS unresolved_team, "
+        "count(*) FILTER (WHERE epl_family='epl_match_result' AND match_id IS NULL) "
+        "AS unresolved_fixture, "
+        "count(*) FILTER (WHERE family='match_result' AND epl_family IS NULL) "
+        "AS unmapped_fixture, "
+        "max(retrieved_at) AS last_retrieved_at "
+        "FROM kalshi_markets GROUP BY series_ticker ORDER BY series_ticker"
+    )
+    observed = {
+        row["series_ticker"]: {
+            key: (value.isoformat() if hasattr(value, "isoformat") else value)
+            for key, value in row.items()
+        }
+        for row in rows
+    }
+    index = SnapshotIndex(snapshot_rows(data))
+    latest = {
+        series: row["retrieved_at"]
+        for series in sorted(index.keys(KALSHI_SERIES))
+        if (row := index.snapshot(KALSHI_SERIES, series)) is not None
+    }
+    moment = now or datetime.now(UTC)
+    expected = set(kalshi.SERIES)
+    return {
+        "expected_series": sorted(expected),
+        "observed_series": sorted(observed),
+        "missing_series": sorted(expected - set(observed)),
+        "due_series": sorted(
+            series
+            for series in expected
+            if series not in latest
+            or (moment - latest[series]).total_seconds() >= KALSHI_REFRESH_SECONDS
+        ),
+        "last_retrieved_at": {series: at.isoformat() for series, at in latest.items()},
+        "observed_markets": observed,
+    }
 
 
 def audit(store):
@@ -483,8 +561,10 @@ def audit(store):
                     "team_process",
                     "player_process",
                     "odds",
+                    "kalshi_markets",
                 )
             },
+            "kalshi": kalshi_audit(data),
             "unresolved_process_players": data.rows(
                 "SELECT count(DISTINCT understat_id) AS n "
                 "FROM player_process WHERE player_id IS NULL"

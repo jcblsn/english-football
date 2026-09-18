@@ -21,6 +21,7 @@ FIXTURE_DETAIL = "fixture_detail"
 SIDELINED = "player_sidelined"
 TRANSFERS = "player_transfers"
 TEAM_TRANSFERS = "team_transfers"
+KALSHI_SERIES = "kalshi_series"
 
 COLUMNS = (
     "scope_kind",

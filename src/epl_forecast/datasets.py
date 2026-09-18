@@ -55,6 +55,19 @@ SCHEMAS = {
     "xa DOUBLE, shots INTEGER",
     "odds": "match_id VARCHAR, competition_id VARCHAR, season_id VARCHAR, family VARCHAR, "
     "home_odds DOUBLE, draw_odds DOUBLE, away_odds DOUBLE, observed_at TIMESTAMPTZ",
+    "kalshi_markets": "market_ticker VARCHAR, event_ticker VARCHAR, series_ticker VARCHAR, "
+    "competition_id VARCHAR, season_id VARCHAR, family VARCHAR, family_detail VARCHAR, "
+    "epl_family VARCHAR, title VARCHAR, market_type VARCHAR, "
+    "status VARCHAR, result VARCHAR, yes_label VARCHAR, no_label VARCHAR, team_id VARCHAR, "
+    "match_id VARCHAR, side VARCHAR, yes_bid DECIMAL(10,4), yes_ask DECIMAL(10,4), "
+    "no_bid DECIMAL(10,4), no_ask DECIMAL(10,4), last_price DECIMAL(10,4), "
+    "previous_yes_bid DECIMAL(10,4), previous_yes_ask DECIMAL(10,4), "
+    "previous_price DECIMAL(10,4), liquidity DECIMAL(18,4), yes_bid_size DECIMAL(18,2), "
+    "yes_ask_size DECIMAL(18,2), volume DECIMAL(18,2), "
+    "volume_24h DECIMAL(18,2), open_interest DECIMAL(18,2), can_close_early BOOLEAN, "
+    "price_ranges VARCHAR, open_time TIMESTAMPTZ, "
+    "close_time TIMESTAMPTZ, created_time TIMESTAMPTZ, updated_time TIMESTAMPTZ, "
+    "occurrence_datetime TIMESTAMPTZ, latest_expiration_time TIMESTAMPTZ",
     "team_statistics": "match_id VARCHAR, team_id VARCHAR, competition_id VARCHAR, "
     "season_id VARCHAR, expected_goals DOUBLE, goals_prevented DOUBLE, shots_total INTEGER, "
     "shots_on_goal INTEGER, shots_off_goal INTEGER, shots_blocked INTEGER, "
@@ -83,6 +96,7 @@ KEYS = {
     "team_process": ["match_id", "team_id"],
     "player_process": ["match_id", "understat_id"],
     "odds": ["match_id", "family"],
+    "kalshi_markets": ["market_ticker"],
     "team_statistics": ["match_id", "team_id"],
     "standings": ["competition_id", "season_id", "team_id"],
     "source_snapshots": ["scope_kind", "scope_key"],
@@ -144,6 +158,13 @@ def publish(root, request, tables):
                 "odds": "home_odds<=1 OR draw_odds<=1 OR away_odds<=1 "
                 "OR NOT isfinite(home_odds) OR NOT isfinite(draw_odds) "
                 "OR NOT isfinite(away_odds)",
+                "kalshi_markets": "market_ticker IS NULL "
+                "OR least(yes_bid, yes_ask, no_bid, no_ask, last_price, previous_yes_bid, "
+                "previous_yes_ask, previous_price)<0 "
+                "OR greatest(yes_bid, yes_ask, no_bid, no_ask, last_price, previous_yes_bid, "
+                "previous_yes_ask, previous_price)>1 "
+                "OR least(liquidity, yes_bid_size, yes_ask_size, volume, volume_24h, "
+                "open_interest)<0",
                 "team_statistics": "team_id IS NULL OR match_id IS NULL "
                 "OR expected_goals<0 OR shots_total<0 OR shots_on_goal<0 "
                 "OR possession<0 OR possession>100 "

@@ -11,6 +11,7 @@ The product uses provider data that stays in the private `page324-data` R2 bucke
 | API-Football xG | Team xG for each match, from the first match with xG in each division | All four |
 | Understat | Team xG for each match before API-Football xG starts | Premier League only |
 | FPL | Player status and club for the matchday-squad continuity adjustment | Premier League |
+| Kalshi | Exchange top-of-book prices, last price, liquidity, volume and open interest for the reviewed English football match-result and season markets | Research only; Premier League rows also carry repository season and fixture identity |
 
 The collector also captures squads, players, lineups, transfers, injuries and match statistics. The matchday-squad continuity adjustment uses lineups, squads, transfers and injuries. The persistent M10 state does not use these inputs. The collector keeps them because a pre-match observation cannot be recovered later. They also support research on the [research branch](research.md).
 
@@ -47,7 +48,7 @@ The catalogs `state/manifests.json` and `state/collection.json` are the only mut
 
 ## Canonical tables
 
-`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`. `source_snapshots` records which provider responses a reader has seen.
+`src/epl_forecast/datasets.py` defines the schema. The main tables are `competition_seasons`, `teams`, `fixtures`, `odds`, `team_statistics` (API-Football xG) and `team_process` (Understat xG). The player tables are `players`, `memberships`, `appearances`, `availability`, `transfers` and `player_process`. `kalshi_markets` holds one row for each collected Kalshi market and collection: Kalshi-native series, event and market tickers, provider family and threshold detail, title, binary YES/NO prices and sizes as exact fixed-point decimals, last price, liquidity, volume and open interest, price ranges, market timing, and the repository competition, season, team and fixture identity where the evidence supports it. A null `competition_id`, `season_id`, `team_id`, `match_id` or `side` is an unmapped market, not a missing market. `source_snapshots` records which provider responses a reader has seen.
 
 Each row keeps its provider, its actual retrieval time, its evidence basis and the hash of its raw response. `Dataset(root, cutoff)` shows only the evidence retrieved by the cutoff. `Dataset.fixtures()` joins the providers and refuses contradictory identities, dates and scores.
 
@@ -119,6 +120,21 @@ The replay reads every request record and its raw capture from R2 into a tempora
 
 Routine synchronization uploads only objects from the current collection. It does not list the full bucket. Canonical compaction is a maintenance task, not part of each collection. Run `uv run python scripts/compact_r2.py` after the incremental-batch threshold is reached. The default threshold is 250 batches.
 
+Kalshi collection is research only. `operate` collects the open markets of the reviewed English football series from the public Predictions API about once per day. Raw pages stay in `raw/kalshi/`, with queryable rows in `kalshi_markets`. Kalshi prices never enter the forecast fingerprint or the model, and they never appear on the public surface.
+
+A series is one query scope spread over cursor pages, so its `kalshi_series` snapshot records the whole capture and is written only after every page of that capture normalized. A snapshot inside the refresh interval means the series is already in the canonical history, and the run skips it. Without one, the run collects the series again from a new first page: a retained first page carries a cursor from its own retrieval, so reusing it would join pages of different observation times into one capture.
+
+Repository identity is a mapping, and Kalshi-native identity is authoritative. The rules the collector applies:
+
+| Field | What it needs |
+| --- | --- |
+| `team_id` | A club label in the reviewed registry. For the EPL game series, the reviewed market suffix code and the label must agree. |
+| `side` | The reviewed EPL event suffix codes, which name the home club first. No other series has reviewed ordering evidence, so its club contracts keep no side. A Tie contract is always the draw side. |
+| `season_id` | A season event ticker that names the season code, such as `KXPREMIERLEAGUE-27` for 2026/27, or, for a match market, a fixture in the captured schedule. |
+| `match_id` | An ordered fixture that is in the captured schedule. |
+
+Anything the evidence does not support stays null and enters `normalization_issues`, which the coverage audit reports. An absence that is expected, such as the club labels of a competition with no reviewed fixture ordering, is not an issue.
+
 Captured history is retrospective evidence. It does not show what was known before a historical match. Only prospective captures show that.
 
 ## Interactive analysis
@@ -174,6 +190,8 @@ The main canonical relations are:
 | `analysis.player_matches` | One row for each player, team, match, and provider capture | It keeps capture identity. Select one response explicitly when a query needs one capture. |
 | `analysis.personnel_snapshots` | One row for each latest successful query scope | It includes successful responses that returned no rows. |
 | `analysis.squad_memberships`, `analysis.injury_availability`, `analysis.fpl_availability` | Rows from the latest successful snapshot, or one row with a null player for an empty response | A null player with `row_count=0` is evidence that the provider returned an empty response. |
+| `analysis.kalshi_markets` | One row for each collected market and collection, with repository identity where the evidence supports it | Each row keeps its own `retrieved_at`. Filter `family` for match or season contracts, and `epl_family` for the repository families (epl_match_result, epl_champion, epl_top_4, epl_relegation). |
+| `analysis.kalshi_snapshots` | One row for each latest completed Kalshi series capture | `row_count` is the market count of that whole capture, over all of its cursor pages. |
 
 For example, this query gives team results with preferred xG when xG exists:
 

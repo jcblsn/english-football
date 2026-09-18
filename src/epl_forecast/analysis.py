@@ -133,6 +133,28 @@ CATALOG_ROWS = (
         "A null player_id with row_count=0 is a meaningful empty response.",
     ),
     (
+        "kalshi_snapshots",
+        "one row per Kalshi series and latest completed capture",
+        "Latest completed Kalshi series capture, over all of its cursor pages.",
+        "canonical source_snapshots",
+        "Latest (retrieved_at, source_sha256) at the session cutoff.",
+        True,
+        None,
+    ),
+    (
+        "kalshi_markets",
+        "one row per Kalshi market and collection",
+        "Exchange top-of-book prices, last price, liquidity, provider identity, "
+        "and repository identity where the evidence supports it.",
+        "canonical kalshi_markets and analysis.kalshi_snapshots",
+        "Each row keeps its own retrieved_at. The snapshots select the latest capture per series.",
+        True,
+        "A null competition_id, season_id, team_id, match_id, or side is an unmapped market, "
+        "not a missing market. Repeated collections remain visible; use retrieved_at and "
+        "source_sha256 for history. Filter family for match or season contracts, and "
+        "epl_family for the repository families.",
+    ),
+    (
         "forecasts",
         "one row per successful forecast and competition",
         "Successful live forecast identity, timing, model, simulation, and storage provenance.",
@@ -689,6 +711,25 @@ def _install_canonical_views(connection) -> None:
     )
     connection.execute(
         """
+        CREATE VIEW analysis.kalshi_snapshots AS
+        SELECT * FROM source_snapshots_observations
+        WHERE scope_kind = 'kalshi_series'
+        QUALIFY row_number() OVER (
+            PARTITION BY scope_kind, scope_key
+            ORDER BY retrieved_at DESC, source_sha256 DESC
+        ) = 1
+        """
+    )
+    connection.execute(
+        """
+        CREATE VIEW analysis.kalshi_markets AS
+        SELECT k.*, t.name AS team_name
+        FROM kalshi_markets_observations k
+        LEFT JOIN teams t ON t.team_id = k.team_id
+        """
+    )
+    connection.execute(
+        """
         CREATE VIEW analysis.fpl_availability AS
         SELECT s.scope_key AS season_id, s.row_count, s.retrieved_at, s.source_sha256,
                a.player_id, p.name AS player_name, a.team_id, a.status, a.reason,
@@ -784,6 +825,109 @@ def _install_metadata(
 
 
 COLUMN_MEANINGS = {
+    # Kalshi market columns. A price is a dollar amount for one binary
+    # contract, so it reads as an implied probability; a size is a contract
+    # count, not money. The names do not say which, so the catalog must.
+    "market_ticker": ("Kalshi ticker of one binary contract.", None, "ticker"),
+    "event_ticker": (
+        "Kalshi ticker of the event that groups the contracts of one outcome set.",
+        None,
+        "event_ticker",
+    ),
+    "series_ticker": ("Kalshi ticker of the reviewed series.", None, "series_ticker"),
+    "family_detail": (
+        "Provider threshold or event identity behind the market family.",
+        None,
+        "event_ticker",
+    ),
+    "epl_family": (
+        "Repository family of a mapped Premier League market, or null when unmapped.",
+        None,
+        "reviewed series and family mapping",
+    ),
+    "side": (
+        "Fixture outcome the contract pays on, in repository home-away order.",
+        "home, draw, or away",
+        "reviewed event suffix codes",
+    ),
+    "market_type": ("Kalshi market type.", None, "market_type"),
+    "title": ("Provider question the contract asks.", None, "title"),
+    "yes_label": ("Provider label of the YES side.", None, "yes_sub_title"),
+    "no_label": ("Provider label of the NO side.", None, "no_sub_title"),
+    "yes_bid": (
+        "Best bid for one YES contract at the collection.",
+        "dollars from 0 to 1, which is the implied probability",
+        "yes_bid_dollars",
+    ),
+    "yes_ask": (
+        "Best offer for one YES contract at the collection.",
+        "dollars from 0 to 1, which is the implied probability",
+        "yes_ask_dollars",
+    ),
+    "no_bid": (
+        "Best bid for one NO contract at the collection.",
+        "dollars from 0 to 1, which is the implied probability",
+        "no_bid_dollars",
+    ),
+    "no_ask": (
+        "Best offer for one NO contract at the collection.",
+        "dollars from 0 to 1, which is the implied probability",
+        "no_ask_dollars",
+    ),
+    "last_price": (
+        "Price of the last trade before the collection.",
+        "dollars from 0 to 1",
+        "last_price_dollars",
+    ),
+    "previous_yes_bid": (
+        "Earlier best YES bid the provider reported. It does not say how much earlier.",
+        "dollars from 0 to 1",
+        "previous_yes_bid_dollars",
+    ),
+    "previous_yes_ask": (
+        "Earlier best YES offer the provider reported. It does not say how much earlier.",
+        "dollars from 0 to 1",
+        "previous_yes_ask_dollars",
+    ),
+    "previous_price": (
+        "Earlier trade price the provider reported. It does not say how much earlier.",
+        "dollars from 0 to 1",
+        "previous_price_dollars",
+    ),
+    "liquidity": (
+        "Value of the resting orders in the book at the collection.",
+        "dollars",
+        "liquidity_dollars",
+    ),
+    "yes_bid_size": ("Contracts resting at the best YES bid.", "contracts", "yes_bid_size_fp"),
+    "yes_ask_size": ("Contracts resting at the best YES offer.", "contracts", "yes_ask_size_fp"),
+    "volume": ("Contracts traded over the life of the market.", "contracts", "volume_fp"),
+    "volume_24h": (
+        "Contracts traded in the day before the collection.",
+        "contracts",
+        "volume_24h_fp",
+    ),
+    "open_interest": ("Contracts open at the collection.", "contracts", "open_interest_fp"),
+    "can_close_early": (
+        "Whether the provider can settle the market before its close time.",
+        None,
+        "can_close_early",
+    ),
+    "price_ranges": ("Provider price ranges, retained as JSON text.", None, "price_ranges"),
+    "open_time": ("Time the provider opened the market for trade.", None, "open_time"),
+    "close_time": ("Time the provider closes the market for trade.", None, "close_time"),
+    "created_time": ("Time the provider created the market.", None, "created_time"),
+    "updated_time": ("Time the provider last updated the market.", None, "updated_time"),
+    "occurrence_datetime": (
+        "Time of the event the contract is about.",
+        None,
+        "occurrence_datetime",
+    ),
+    "latest_expiration_time": (
+        "Latest time the provider can settle the market.",
+        None,
+        "latest_expiration_time",
+    ),
     "stage": ("Probability stage name.", None, "stages object or historical mapping"),
     "stage_order": (
         "Order of the probability stage in the forecast pipeline.",

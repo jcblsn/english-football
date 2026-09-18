@@ -408,6 +408,9 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
     monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)
+    monkeypatch.setattr(
+        collection.kalshi, "collect", lambda *args, **kwargs: {"reused": True, "errors": []}
+    )
     monkeypatch.setattr(capture, "urlopen", lambda *args, **kwargs: Response(b"{}"))
     store = Store(tmp_path / "remote")
 
@@ -426,6 +429,56 @@ def test_unchanged_collection_after_compaction_keeps_the_catalog_compact(tmp_pat
     assert store.objects["state/manifests.json"] == catalog
     assert store.objects["state/collection.json"] == requests
     assert not compaction_due(store, 1)
+
+
+def test_kalshi_error_blocks_the_unchanged_shortcut_until_a_retry(tmp_path, monkeypatch):
+    """A failed daily Kalshi attempt stays due: a later run must send requests again."""
+    from epl_forecast.data import capture
+    from epl_forecast.data import collect as collection
+    from epl_forecast.pipeline import collect_and_sync
+
+    class Response(io.BytesIO):
+        headers = {}
+
+    def ingest(root, record, payload):
+        request = {
+            key: record[key]
+            for key in ("provider", "retrieved_at", "evidence_basis", "source_sha256", "context")
+        }
+        publish(root, request, {"teams": [{"team_id": record["provider"], "name": record["url"]}]})
+
+    monkeypatch.setattr(collection.api, "LEAGUES", {})
+    monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
+    for module in (collection.fpl, collection.football_data, collection.understat_ingest):
+        monkeypatch.setattr(module, "ingest", ingest)
+    monkeypatch.setattr(
+        collection.kalshi,
+        "collect",
+        lambda *args, **kwargs: {
+            "reused": False,
+            "errors": ["Cannot retrieve https://example.test/kalshi: simulated outage"],
+            "observed_markets": 0,
+            "series": [],
+            "season_id": "2026-2027",
+        },
+    )
+    monkeypatch.setattr(capture, "urlopen", lambda *args, **kwargs: Response(b"{}"))
+    store = Store(tmp_path / "remote")
+
+    report, synced = collect_and_sync(tmp_path / "kalshi-failed", store)
+    assert report["status"] == "partial"
+    assert report["kalshi"]["reused"] is False
+
+    monkeypatch.setattr(
+        collection.kalshi, "collect", lambda *args, **kwargs: {"reused": True, "errors": []}
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("A reused Kalshi day must not send a request")
+
+    monkeypatch.setattr(capture, "urlopen", forbidden)
+    report, synced = collect_and_sync(tmp_path / "kalshi-reused", store)
+    assert report["kalshi"] == {"reused": True, "errors": []}
 
 
 def test_api_football_usage_records_only_runs_that_call_the_provider(tmp_path, monkeypatch):
@@ -454,6 +507,9 @@ def test_api_football_usage_records_only_runs_that_call_the_provider(tmp_path, m
     monkeypatch.setattr(collection, "ENTRY_SOURCE_COMPETITIONS", {})
     for module in (collection.fpl, collection.football_data, collection.understat_ingest):
         monkeypatch.setattr(module, "ingest", ingest)
+    monkeypatch.setattr(
+        collection.kalshi, "collect", lambda *args, **kwargs: {"reused": True, "errors": []}
+    )
     monkeypatch.setattr(capture, "urlopen", fetch)
     store = Store(tmp_path / "remote")
 

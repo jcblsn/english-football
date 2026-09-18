@@ -194,3 +194,93 @@ def test_ingestion_during_a_replay_cannot_read_the_r2_catalog(tmp_path, monkeypa
 
     assert seen == [None]
     assert os.environ["R2_DATA_BUCKET"] == "bucket"
+
+
+def kalshi_market(ticker, label):
+    return {
+        "ticker": ticker,
+        "event_ticker": "KXPREMIERLEAGUE-27",
+        "series_ticker": "KXPREMIERLEAGUE",
+        "market_type": "binary",
+        "status": "active",
+        "yes_sub_title": label,
+        "no_sub_title": label,
+        "title": f"Will {label} win the English Premier League?",
+        "yes_bid_dollars": "0.2400",
+        "yes_ask_dollars": "0.2500",
+    }
+
+
+def bucket_with_a_completed_kalshi_capture(tmp_path):
+    """A two-page Kalshi series capture in R2, as one completed production run retains it."""
+    from epl_forecast.data import kalshi
+
+    remote = tmp_path / "remote"
+    context = {
+        "endpoint": "markets",
+        "series_ticker": "KXPREMIERLEAGUE",
+        "season_id": "2026-2027",
+    }
+    pages = (
+        (None, {"markets": [kalshi_market("KXPREMIERLEAGUE-27-ARS", "Arsenal")], "cursor": "two"}),
+        ("two", {"markets": [kalshi_market("KXPREMIERLEAGUE-27-CHE", "Chelsea")], "cursor": ""}),
+    )
+    for index, (cursor, body) in enumerate(pages):
+        retain(
+            remote,
+            "kalshi",
+            kalshi.markets_url("KXPREMIERLEAGUE", cursor=cursor),
+            json.dumps(body).encode(),
+            f"2026-09-08T12:0{index}:00+00:00",
+            "captured",
+            context,
+        )
+    bucket = Bucket(remote)
+    bucket.put_json("state/manifests.json", manifest_state([]))
+    return bucket
+
+
+def test_a_replay_rebuilds_the_kalshi_series_snapshot_of_a_completed_capture(tmp_path):
+    """Production records a completed series, so a replayed history must record it too."""
+    bucket = bucket_with_a_completed_kalshi_capture(tmp_path)
+
+    result = replay.replay_canonical(bucket, publish=True)
+
+    assert result["rows"]["kalshi_markets"] == 2
+    assert result["rows"]["source_snapshots"] == 1
+    data = Dataset(store=bucket)
+    try:
+        assert data.rows(
+            "SELECT scope_kind, scope_key, row_count, competition_id, season_id "
+            "FROM source_snapshots"
+        ) == [
+            {
+                "scope_kind": "kalshi_series",
+                "scope_key": "KXPREMIERLEAGUE",
+                "row_count": 2,
+                "competition_id": "eng-premier-league",
+                "season_id": "2026-2027",
+            }
+        ]
+        assert [
+            row["market_ticker"]
+            for row in data.rows("SELECT market_ticker FROM kalshi_markets ORDER BY 1")
+        ] == ["KXPREMIERLEAGUE-27-ARS", "KXPREMIERLEAGUE-27-CHE"]
+    finally:
+        data.close()
+
+
+def test_a_replay_of_an_unfinished_kalshi_capture_records_no_snapshot(tmp_path):
+    """An incomplete capture has no completion snapshot, so the series stays due."""
+    from epl_forecast.data import kalshi
+
+    bucket = bucket_with_a_completed_kalshi_capture(tmp_path)
+    for key in bucket.keys("requests/"):
+        record = bucket.get_json(key)
+        if record["url"] == kalshi.markets_url("KXPREMIERLEAGUE", cursor="two"):
+            (bucket.directory / key).unlink()
+
+    result = replay.replay_canonical(bucket)
+
+    assert result["rows"]["kalshi_markets"] == 1
+    assert result["rows"]["source_snapshots"] == 0

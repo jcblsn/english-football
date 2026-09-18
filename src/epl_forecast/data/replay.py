@@ -9,7 +9,7 @@ from pathlib import Path
 
 from epl_forecast.cloud import canonical_rows, publish_base_batch
 from epl_forecast.data import api_football as api
-from epl_forecast.data import football_data, fpl, understat_ingest
+from epl_forecast.data import football_data, fpl, kalshi, understat_ingest
 from epl_forecast.datasets import Dataset
 from epl_forecast.storage import R2Store, file_hash, json_bytes, sha256_bytes
 
@@ -32,6 +32,8 @@ def replay_order(record: dict) -> tuple:
         phase = 2 if context.get("kind") == "league" else 3
     elif provider == "fpl":
         phase = 4
+    elif provider == "kalshi":
+        phase = 5
     return phase, record["retrieved_at"], record["url"], record["source_sha256"]
 
 
@@ -45,7 +47,7 @@ def without_r2_environment():
         os.environ.update(saved)
 
 
-def normalize_capture(workspace: Path, record: dict, payload: bytes, understat_context):
+def normalize_capture(workspace: Path, record: dict, payload: bytes, understat_context, kalshi_run):
     """Normalize one raw capture into the workspace. Returns the shared Understat context."""
     provider = record["provider"]
     if provider == "efl_rules":
@@ -53,6 +55,10 @@ def normalize_capture(workspace: Path, record: dict, payload: bytes, understat_c
     if provider == "api_football":
         if record["context"].get("endpoint") != "status":
             api.normalize(record, json.loads(payload), workspace)
+    elif provider == "kalshi":
+        # The run publishes the series completion snapshot that production
+        # wrote, so a replayed history is not missing the Kalshi scopes.
+        kalshi.ingest(workspace, record, payload, run=kalshi_run)
     elif provider == "understat" and record["context"].get("kind") == "players":
         if understat_context is None:
             understat_context = understat_ingest.IngestContext(workspace)
@@ -91,9 +97,12 @@ def replay_canonical(store: R2Store, *, publish: bool = False, workers: int = 16
             list(pool.map(download, {record["raw_path"]: record for record in records}.values()))
         with without_r2_environment():
             understat_context = None
+            kalshi_run = kalshi.SeriesRun()
             for record in records:
                 payload = (workspace / record["raw_path"]).read_bytes()
-                understat_context = normalize_capture(workspace, record, payload, understat_context)
+                understat_context = normalize_capture(
+                    workspace, record, payload, understat_context, kalshi_run
+                )
             data = Dataset(workspace=workspace)
         try:
             data.verify()
