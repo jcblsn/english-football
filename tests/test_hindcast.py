@@ -12,6 +12,7 @@ from epl_forecast.hindcast import (
     SEED,
     claim_edition,
     derive_hindcast,
+    derive_series,
     document_key,
     hindcast_id,
     private_key,
@@ -299,3 +300,21 @@ def test_a_bridge_origin_projects_the_unplayed_calendar(full_season, monkeypatch
     assert simulation["remaining_matches"] == len(full_season) - 160
     assert result["training_matches"] == 160
     assert sum(row["played"] for row in simulation["teams"]) == 320
+
+
+def test_a_series_refuses_origins_that_describe_themselves_differently():
+    """The series states one notice and one set of assumptions for every origin it carries."""
+    records = season_records()
+    documents = [derive_hindcast(record, NAMES) for record in records]
+    assert derive_series(documents)["assumptions"] == documents[0]["assumptions"]
+
+    reworded = [
+        {**documents[0], "assumptions": [*documents[0]["assumptions"][:1], "Something else."]},
+        *documents[1:],
+    ]
+    with pytest.raises(ValueError, match="one notice and one set of assumptions"):
+        derive_series(reworded)
+
+    renoticed = [{**documents[0], "notice": "A different notice."}, *documents[1:]]
+    with pytest.raises(ValueError, match="one notice and one set of assumptions"):
+        derive_series(renoticed)
