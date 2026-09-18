@@ -182,11 +182,14 @@ def test_display_refresh_reuses_all_forecast_values(tmp_path):
         team_names={"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
     )
     assert result["status"] == "written"
+    source = read_forecast_result(database, "forecast-1")
     refreshed = read_forecast_result(database, "forecast-2")
     assert refreshed["team_names"] == {
         "arsenal": "Arsenal FC",
         "chelsea": "Chelsea FC",
     }
+    assert refreshed["matches"] == source["matches"]
+    assert refreshed["simulation"] == source["simulation"]
     with duckdb.connect(str(database), read_only=True) as connection:
         for table in (
             "forecast_matches",
@@ -198,11 +201,24 @@ def test_display_refresh_reuses_all_forecast_values(tmp_path):
             "forecast_team_strengths",
             "forecast_conditionals",
         ):
-            differences = connection.execute(
-                f"SELECT * EXCLUDE (result_id) FROM forecast_result.{table} WHERE result_id = 'forecast-1' "
-                f"EXCEPT SELECT * EXCLUDE (result_id) FROM forecast_result.{table} WHERE result_id = 'forecast-2'"
-            ).fetchall()
-            assert differences == []
+            assert connection.execute(
+                f"SELECT count(*) FROM forecast_result.{table} WHERE result_id = 'forecast-2'"
+            ).fetchone() == (0,)
+    clone_forecast_result(
+        database,
+        "forecast-2",
+        "forecast-3",
+        generated_at=datetime(2026, 9, 10, 14, tzinfo=UTC),
+        input_revision="input-3",
+    )
+    chained = read_forecast_result(database, "forecast-3")
+    assert chained["team_names"] == refreshed["team_names"]
+    assert chained["simulation"] == source["simulation"]
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT source_result_id FROM forecast_result.forecast_runs "
+            "WHERE result_id = 'forecast-3'"
+        ).fetchone() == ("forecast-1",)
 
 
 def test_quote_refresh_replaces_only_market_probabilities(tmp_path):
