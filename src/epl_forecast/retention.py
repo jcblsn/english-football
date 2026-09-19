@@ -36,7 +36,7 @@ def build_retention_plan(store) -> dict:
         "snapshots/": "not named by the canonical snapshot pointer",
         "fits/": "not named by a current fit pointer",
         "results/": "not named by a current result pointer",
-        "runs/forecasts/": "replaced by typed results and compact issued projections",
+        "runs/forecasts/": "replaced by complete typed results",
         "runs/snapshots/": "replaced by the verified canonical snapshot",
     }
     candidates = []

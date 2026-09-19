@@ -9,7 +9,7 @@ This page records the completed cutover and the active recovery procedure. The o
 3. Restore the selected canonical snapshot on a clean runner. Run all four 10,000-path forecasts and all product verifiers from that snapshot.
 4. Reconcile canonical table keys, logical hashes, null categories, provider coverage, capture intervals and reviewed identity/rules evidence.
 5. Reconcile every retained prospective forecast ID, model version and release receipt. Reconcile every retained hindcast edition and origin.
-6. Run the capacity checks in [capacity and retention](capacity.md) with the final inventory. The 12-month base and busy cases must remain below 7 GB.
+6. Run the capacity checks in [capacity and retention](capacity.md) with the final inventory. Do not approve a capacity gate that depends on deleting issued forecast facts.
 7. Record explicit authority for workflow changes, production writes and the reviewed deletion manifest.
 
 ## Cutover
@@ -45,7 +45,7 @@ uv run python scripts/plan_r2_retention.py runs/migration/retention-plan.json
 | Candidate | Required proof before deletion |
 | --- | --- |
 | Unreferenced `parquet/` and `manifests/` objects | The selected catalog does not reference the object; snapshot restore and replay reconciliation pass. |
-| `runs/forecasts/` | Every issued ID resolves through the typed result store or its compact projection; release receipts and record cohorts agree. |
+| `runs/forecasts/` | Every issued ID resolves with full detail through the typed result store; release receipts and record cohorts agree. |
 | `runs/snapshots/` | The selected snapshot pointer restores, verifies and reproduces the reference. |
 | Superseded `snapshots/`, `fits/` and `results/` generations | No current pointer names the object; the pointer commit and smoke check completed. |
 | `research/` in a product bucket | The reviewed research backup resolves and the owner approves its disposition. |
@@ -80,7 +80,8 @@ For each completed simplification, this section answers: “What mechanism becam
 - Verified local inputs: low-level model and verification code no longer needs R2 discovery. The obsolete rule that `Dataset` reads R2 as the normal calculation path was removed. Storage adapters now select an R2 pointer and revision, then pass a verified local snapshot to computation.
 - Live forecasting: process-isolated CLI workers, archive-shaped JSON, CSV and HTML renderings, local verification reports and subprocess logs became unnecessary. Production now calls the forecast calculation in process, writes the cumulative typed result and verifies that result directly.
 - Scientific verification: the private archive became unnecessary as the verification authority. The checks now read the authoritative typed result, including exact impact-window timestamps, team states, simulation detail and retained run provenance.
-- Live analysis: `_legacy_live_rows`, fake archive stores and the fallback that read `runs/forecasts/<ID>/forecast.json` and `run.json` became unnecessary after all issued IDs moved to cumulative typed stores. Analysis now requires typed result pointers and reads compact issued projections from those stores. The separate hindcast and match-hindcast readers remain.
+- Live analysis: `_legacy_live_rows`, fake archive stores and the fallback that read `runs/forecasts/<ID>/forecast.json` and `run.json` became unnecessary after all issued IDs moved to cumulative typed stores. Analysis now requires typed result pointers. The separate hindcast and match-hindcast readers remain.
+- Forecast-detail expiration: the age-based deleter and the synthetic expired-private-result branch became unnecessary when indefinite retention of issued analytical facts was restored. Production no longer deletes typed detail by age. A read-only inventory found full detail for all 59 issued IDs and no exception.
 - Migration diary: the tracked `refactor-handoff/` packet became unnecessary after its durable authority boundary, retention rules, recovery status and operational decisions moved into `AGENTS.md` and current documentation. Git history retains the diary.
 
 The first ordinary scheduled post-cutover run with new effective evidence has not yet been observed. Workflow dispatch `35412237119` was an idle cutover smoke run, so it is not the production benchmark. The operation now emits the required wake duration, stage timings, Class A and Class B operations, transferred bytes, fit-state status and recomputed stages. Record the first qualifying scheduled production run and its dependent Pages duration here without substituting a forced or idle run.
