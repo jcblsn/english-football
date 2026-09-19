@@ -60,3 +60,9 @@ Rollback triggers include a snapshot receipt failure, a canonical reconciliation
 Disable the writer first. Preserve every post-cutover raw capture and request receipt. Restore the recorded backup and its matching code commit, then restore the last compatible mutable state documents. Do not point old code at new-only state. Re-enable publication only after the restored four-division smoke test passes. If post-cutover captures exist, replay them into the restored line in retrieval order instead of discarding them.
 
 The rollback window ends only after the owner accepts the observed release and the reviewed deletion manifest. The long-term recovery path is the verified backup plus retained raw captures, not a permanent second production writer.
+
+## Completion record
+
+The cutover completed on 19 September 2026 at commit `cbfb9ca1d1006e12230165e7bcae4561c318508a`. Clean workflow runs `35412117186`, `35412237119` and `35413349957` passed checks, production restore and Pages deployment.
+
+The final exact plan protected 2,747 current objects and deleted 50,646 superseded objects totaling 1,680,125,353 bytes. Post-delete verification found zero planned survivors, restored the authoritative analysis session with all 59 issued forecasts, retained all private hindcasts and completed an idle operation from the current snapshot. The production workflow is active.

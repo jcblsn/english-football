@@ -8,7 +8,7 @@ This page records the measured storage unit, the recurring workload model and th
 
 The repository is public and the production workflow uses `ubuntu-latest`. [GitHub states that standard hosted runners are free and unlimited for public repositories](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). The current public Linux runner has 4 CPU cores, 16 GB of memory and 14 GB of SSD storage. This classification does not remove the freshness and runtime requirements.
 
-## Measured current state
+## Measured pre-cutover state
 
 A read-only inventory of both buckets found 3,072,450,503 bytes on 18 September 2026. The private data bucket held 2,872,719,039 bytes and the publication bucket held 199,731,464 bytes.
 
@@ -24,7 +24,9 @@ A read-only inventory of both buckets found 3,072,450,503 bytes on 18 September 
 | `research/` | 1,624 | 738,048,127 | Not part of the product occupancy plan. Protect it in the approved backup before an authorized move or deletion. |
 | Published forecasts, hindcasts and record | 2,621 | 199,731,464 | Retain. |
 
-The compact post-cutover product starting point is projected at 1.86 GB. It includes the existing raw and request history, the selected canonical catalog, one 55.59 MB snapshot, 31.77 MB of four-division fit state, a mature 14-day private-result window, compact issued projections, the existing private hindcasts and the current public bucket. It excludes `research/`, superseded live run archives, superseded canonical batches and obsolete snapshot generations. These objects have not been deleted.
+The final post-retention inventory on 19 September 2026 is 2,316,739,847 bytes: 2,114,434,326 bytes in the private data bucket and 202,305,521 bytes in the publication bucket. The private bucket has 26,310 objects, and the publication bucket has 2,633 objects. After exclusion of the separately protected 738,048,127-byte `research/` archive, current product occupancy is 1.579 GB.
+
+The capacity model keeps a conservative 1.86 GB starting point. It includes the existing raw and request history, the selected canonical catalog, one verified snapshot, four fit stores, a mature 14-day private-result window, compact issued projections, the existing private hindcasts and the current public bucket. The exact cleanup removed the superseded live run archives, canonical batches, snapshot generations and result generations. Current occupancy is below the modeled start because the private-result window is not yet mature and the measured fit stores total 20,758,528 bytes.
 
 ## Recurring measurement
 
@@ -34,7 +36,7 @@ The same 44 batches referenced 33 new raw objects with 6,032,248 original bytes.
 
 The four measured detailed result databases were 8.66 to 11.55 MB for one forecast. The retention model uses the conservative 11.55 MB value for every division. A display-only Championship clone copied all detail in the old design and grew five revisions to 46.41 MB. The lineage design grew the same five revisions to about 14.17 MB, including a one-time schema migration. A lightweight revision points directly to one structural result and stores only effective market and display rows.
 
-The measured four-division 10,000-path calculation finished in 147.51 seconds after prepared inputs were available. The measured 44-batch local extension excludes the download of the prior snapshot and any remote upload. A live staging-prefix transfer remains unverified because no staging write is authorized.
+The measured four-division 10,000-path calculation finished in 147.51 seconds after prepared inputs were available. The measured 44-batch local extension excludes the download of the prior snapshot and any remote upload. The live cutover verified snapshot, fit and result uploads and restores at current production size.
 
 ## Retention contract
 
@@ -52,7 +54,7 @@ The measured four-division 10,000-path calculation finished in 147.51 seconds af
 
 The result writer refuses to expire private detail when the compact issued projection is absent. Recent result lineage is protected. Analysis of an expired result uses the compact typed projection and does not fetch the historical public object. It exposes the retained public grain and labels the synthetic private schema as version 1. Full score, simulation, personnel and provenance detail remains available only inside the 14-day window.
 
-Physical generation deletion is not automatic. The migration run must produce and review the exact object manifest. This is necessary because the current assignment does not authorize bucket deletion.
+Physical generation deletion is not automatic. The migration run produced and applied one exact object manifest after a fresh inventory match. Routine operation still needs an explicit retention task for superseded generations.
 
 ## Workload assumptions
 
@@ -86,10 +88,10 @@ At the end of the base year, a changed wake can download and upload a snapshot o
 
 ## Peaks and exclusions
 
-The current two-bucket backup would contain about 3.07 GB before compression or versioning. The projection assumes that the protected backup is outside the two steady product buckets. A backup copied into the same R2 product account must be added in full and would consume most of the headroom.
+The final two-bucket live inventory is 2.32 GB before backup compression or versioning. The projection assumes that the protected backup is outside the two steady product buckets. A backup copied into the same R2 product account must be added in full and would consume part of the headroom.
 
-The read-only retention planner resolved 2,721 protected objects and listed 50,591 deletion candidates with 1,221,840,776 bytes. The candidate total contains 201,719,150 bytes of unreferenced canonical Parquet, 19,710,509 bytes of unselected manifests and 1,000,411,117 bytes of superseded run objects. It listed all 1,624 `research/` objects and 738,048,127 bytes separately for owner review. The plan is ignored local evidence at `runs/refactor/m4/retention-plan.json`; no candidate was deleted.
+The final retention planner resolved 2,747 protected objects and listed 50,646 deletion candidates with 1,680,125,353 bytes. The candidate total contained 201,719,150 bytes of unreferenced canonical Parquet, 19,710,509 bytes of unselected manifests, 998,912,988 bytes of legacy forecast runs, 54,383,674 bytes of old run snapshots, 56,436,216 bytes of superseded canonical snapshots and 348,962,816 bytes of the four staged result generations. It listed all 1,624 `research/` objects and 738,048,127 bytes separately for review. The exact executor deleted all candidates in 51 requests and found zero survivors. The ignored evidence is at `runs/refactor/m4/final-retention-plan.json` and `runs/refactor/m4/final-retention-report.json`.
 
 Each immutable pointer commit temporarily holds the old and new database. The projection reports only one steady generation. Migration can also hold the 3.07 GB old layout, the new 1.86 GB layout and the backup at the same time. That migration and recovery peak is separate from the steady target.
 
-The capacity gate is locally supported but not live-certified. Certification still needs an authorized staging transfer at representative projected size, a clean-machine restore, an observed complete input-to-public operation, and the reviewed deletion manifest after both bucket backups are verified.
+The capacity gate is live-certified at current production size. The clean `main` runner collected evidence, extended and restored the snapshot, checked all four divisions and completed unchanged. A clean Pages run materialized and validated the complete public surface before deployment. A projected-size restore remains part of the review at 6 GB or nine months after cutover.

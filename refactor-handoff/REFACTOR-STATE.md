@@ -1,11 +1,11 @@
 # Refactor state
 
-Status: M0 through M3 pass for the local code path. M4 production migration and cutover are in progress. This file records observed state only.
+Status: M0 through M4 are complete. The new production path is active on `main`, and the reviewed retention plan is applied. This file records observed state only.
 
 ## Assignment and authority
 
 Owner-approved scope: On 2026-09-18, the owner granted blanket approval for breaking changes, production writes, workflow cutover and deletion. The owner stated that version control protects the code, the complete local directory is backed up, and both buckets are backed up.
-Local branch/worktree: `refactor-start`; implementation checkpoints are pushed to the branch after each verified slice. The checkout was clean before implementation started.
+Local branch/worktree: The implementation was built and checkpointed on `refactor-start`, then fast-forwarded to `main` at `cbfb9ca1d1006e12230165e7bcae4561c318508a` after verification.
 Authorized remote access: Credentials for both private buckets are configured in the ignored `.env`. Production writes and exact-manifest deletion are authorized.
 Production mutation/cutover/deletion authority: Recorded in the owner instruction on 2026-09-18. The production workflow was disabled before the first mutation and no run was active.
 Verified backup and restore evidence: The owner confirmed backups for the complete local directory and both buckets. Backup identifiers and an independent restore test are not available in this workspace.
@@ -78,6 +78,14 @@ Completed evidence:
 - The live public surface contains 59 prospective forecast IDs after cutover. All four current pointers name the cutover run and its release receipts. The prospective record has five scored matches.
 - A fresh materialization validated every prospective document and archive. The retained hindcast path materialized 2,494 documents, and an unchanged repeat completed in three seconds through the local cache.
 - The exact-manifest deletion executor requires the saved plan to match a fresh inventory and deletes only listed keys in bounded batches. Its tests cover stale-plan rejection, batching and remote deletion errors.
+- The clean `main` checks workflow run `35412117186` passed format, lint, all 420 tests and the static publication check.
+- Production workflow run `35412237119` collected and uploaded six evidence objects, restored or extended the live snapshot, found all four divisions idle and completed successfully. Collection took 1,213.71 seconds; snapshot preparation and fingerprints took 41.61 seconds.
+- Pages workflow run `35413349957` materialized the complete prospective and 2,494-document hindcast surface, passed the publication check and deployed successfully in 6 minutes 32 seconds.
+- The final retention plan protected 2,747 objects and named 50,646 exact candidates totaling 1,680,125,353 bytes. The executor deleted them in 51 requests and found zero remaining candidates. It did not include the 1,624 `research/` objects.
+- The final live inventory is 2,114,434,326 private bytes plus 202,305,521 publication bytes. Product occupancy after exclusion of the separately protected research archive is 1.579 GB.
+- After deletion, `runs/forecasts/` and `runs/snapshots/` are empty. The current roots contain one two-object snapshot generation, four fit stores, four result stores and 2,497 private hindcast objects.
+- The authoritative analysis session restored after deletion and resolved all 59 issued prospective runs: 18 Premier League, 15 Championship, 15 League One and 11 League Two. A post-delete operation restored the current snapshot in 9.10 seconds and found all divisions idle.
+- The production workflow is active on `main` after the post-delete checks.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -98,20 +106,19 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 ## Known limits and decisions
 
 - The owner confirms that the private buckets and complete local directory are backed up. This workspace does not contain backup identifiers or evidence of an independent restore test.
-- The capacity model uses a measured recurring 44-batch delta and the pre-cutover bucket inventory. Update it with the final post-retention inventory before M4 closes.
-- The 12-month storage target depends on the reviewed cleanup and one steady physical generation per pointer. The current buckets still contain the superseded objects. The 24-month sensitivities exceed 7 GB.
+- The capacity model uses a measured recurring 44-batch delta and the final post-retention bucket inventory. The 24-month sensitivities exceed 7 GB.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
 - The snapshot, fit and result pointer protocols now have a successful live cutover. Recovery tests still use isolated mock stores; the owner-confirmed bucket backups are the external rollback path.
 - Historical hindcast generation remains an explicit maintenance workflow. Its analysis reader still uses the selected public hindcast edition because hindcast results have not moved into the live cumulative result database.
-- Full live cutover and exact-manifest deletion are authorized. Correctness, reconciliation and capacity gates still apply before deletion.
+- The live cutover and exact-manifest deletion are complete. Future superseded-generation cleanup remains an explicit maintenance action.
 
 ## Restart point
 
 Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 420 tests in 49.08 seconds.
-Next action: Fast-forward `main`, run the clean-runner workflow smoke check, generate the final retention plan and apply it.
-Next test/gate: Final workflow, Pages deployment, post-deletion inventory and retained-history checks.
-Working files to inspect before cutover: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
-Remote objects created or modified by this agent: Four result-store generations and pointers for the legacy migration; one canonical snapshot database, manifest and pointer; four fit-store generations and pointers; four post-cutover result generations and pointers; public run `2026-09-19T010319Z`, its receipts, archives, current pointer and prospective record; operational forecast and impact state.
+Next action: No M4 work remains. Monitor the active production schedule and run the capacity review at 6 GB or nine months after cutover.
+Next test/gate: The next ordinary scheduled production wake is operational monitoring, not a migration gate.
+Working files for later review: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
+Remote objects created or modified by this agent: Four result-store generations and pointers for the legacy migration; verified canonical snapshot generations and pointer; four fit-store generations and pointers; four post-cutover result generations and pointers; public run `2026-09-19T010319Z`, its receipts, archives, current pointer and prospective record; operational forecast and impact state. The final exact plan deleted 50,646 superseded objects. Deleted objects are recoverable only through the owner-confirmed backups.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 
 Update this file in place. Link to evidence without embedding raw data, logs, credentials, or the whole conversation.
