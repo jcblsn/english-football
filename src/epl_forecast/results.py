@@ -1,6 +1,7 @@
 """Store forecast results at declared analytical grains."""
 
 import json
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,10 +11,18 @@ from epl_forecast.datasets import SESSION_TIME_ZONE
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.storage import json_bytes, sha256_bytes
 
-RESULT_SCHEMA_VERSION = 6
+RESULT_SCHEMA_VERSION = 7
+PROVENANCE_DOCUMENT_PATHS = (
+    ("data_manifest",),
+    ("live_snapshot",),
+    ("dependencies",),
+    ("execution", "dependencies"),
+)
 
 
 def install_result_schema(connection) -> None:
+    if _has_result_table(connection, "forecast_scores"):
+        raise ValueError("Migrate the legacy result database before writing compact results")
     connection.execute("CREATE SCHEMA IF NOT EXISTS forecast_result")
     connection.execute(
         """
@@ -47,6 +56,25 @@ def install_result_schema(connection) -> None:
             result_id VARCHAR PRIMARY KEY,
             document JSON NOT NULL,
             stored_at TIMESTAMPTZ NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_result.forecast_documents (
+            document_sha256 VARCHAR PRIMARY KEY,
+            document JSON NOT NULL,
+            document_bytes UBIGINT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS forecast_result.forecast_run_documents (
+            result_id VARCHAR NOT NULL,
+            document_path VARCHAR NOT NULL,
+            document_sha256 VARCHAR NOT NULL,
+            PRIMARY KEY (result_id, document_path)
         )
         """
     )
@@ -114,28 +142,18 @@ def install_result_schema(connection) -> None:
     )
     connection.execute(
         """
-        CREATE TABLE IF NOT EXISTS forecast_result.forecast_score_metadata (
+        CREATE TABLE IF NOT EXISTS forecast_result.forecast_score_grids (
             result_id VARCHAR NOT NULL,
             match_id VARCHAR NOT NULL,
             stage VARCHAR NOT NULL,
+            home_dimension USMALLINT NOT NULL,
+            away_dimension USMALLINT NOT NULL,
+            probabilities DOUBLE[] NOT NULL,
             home_rate DOUBLE,
             away_rate DOUBLE,
             omitted_probability DOUBLE NOT NULL,
             uncertainty_components JSON NOT NULL,
             PRIMARY KEY (result_id, match_id, stage)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS forecast_result.forecast_scores (
-            result_id VARCHAR NOT NULL,
-            match_id VARCHAR NOT NULL,
-            stage VARCHAR NOT NULL,
-            home_goals INTEGER NOT NULL,
-            away_goals INTEGER NOT NULL,
-            probability DOUBLE NOT NULL,
-            PRIMARY KEY (result_id, match_id, stage, home_goals, away_goals)
         )
         """
     )
@@ -313,6 +331,66 @@ def _json(value) -> str:
     return json.dumps(value, default=str, separators=(",", ":"), allow_nan=False)
 
 
+def _pop_document(value: dict, path: tuple[str, ...]):
+    parent = value
+    for key in path[:-1]:
+        parent = parent.get(key)
+        if not isinstance(parent, dict):
+            return None, False
+    key = path[-1]
+    if key not in parent:
+        return None, False
+    return parent.pop(key), True
+
+
+def _set_document(value: dict, path: tuple[str, ...], document) -> None:
+    parent = value
+    for key in path[:-1]:
+        parent = parent.setdefault(key, {})
+    parent[path[-1]] = document
+
+
+def _store_run_provenance(connection, result_id: str, provenance: dict) -> str:
+    compact = deepcopy(provenance)
+    for path in PROVENANCE_DOCUMENT_PATHS:
+        document, present = _pop_document(compact, path)
+        if not present:
+            continue
+        payload = json_bytes(document)
+        digest = sha256_bytes(payload)
+        existing = connection.execute(
+            "SELECT document FROM forecast_result.forecast_documents WHERE document_sha256 = ?",
+            [digest],
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                "INSERT INTO forecast_result.forecast_documents VALUES (?, ?, ?)",
+                [digest, _json(document), len(payload)],
+            )
+        elif _decoded(existing[0]) != document:
+            raise ValueError(f"Provenance document hash names different content: {digest}")
+        connection.execute(
+            "INSERT INTO forecast_result.forecast_run_documents VALUES (?, ?, ?)",
+            [result_id, ".".join(path), digest],
+        )
+    return _json(compact)
+
+
+def _read_run_provenance(connection, result_id: str, compact) -> dict:
+    provenance = _decoded(compact) or {}
+    for document_path, document in connection.execute(
+        """
+        SELECT reference.document_path, document.document
+        FROM forecast_result.forecast_run_documents AS reference
+        JOIN forecast_result.forecast_documents AS document USING (document_sha256)
+        WHERE reference.result_id = ? ORDER BY reference.document_path
+        """,
+        [result_id],
+    ).fetchall():
+        _set_document(provenance, tuple(document_path.split(".")), _decoded(document))
+    return provenance
+
+
 def _validate_probability_set(row: dict, label: str) -> None:
     values = [float(row[key]) for key in ("p_home", "p_draw", "p_away")]
     if any(value < 0 or value > 1 for value in values) or abs(sum(values) - 1) > 1e-8:
@@ -352,7 +430,8 @@ def _probability_stages(match: dict) -> dict:
 
 
 def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[str, int]:
-    match_rows, probability_rows, metadata_rows, score_rows = [], [], [], []
+    match_rows, probability_rows, grid_rows = [], [], []
+    score_cells = 0
     for match in matches:
         personnel = match.get("personnel") or {}
         home = personnel.get("home") or {}
@@ -398,29 +477,31 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
             scores = values.get("score_distribution")
             if scores is None:
                 continue
-            metadata_rows.append(
+            grid = scores["grid_home_rows_away_columns"]
+            home_dimension = len(grid)
+            away_dimension = len(grid[0]) if grid else 0
+            if (
+                not home_dimension
+                or not away_dimension
+                or any(len(row) != away_dimension for row in grid)
+            ):
+                raise ValueError(f"Invalid score-grid dimensions: {match['match_id']}:{stage}")
+            probabilities = [probability for row in grid for probability in row]
+            score_cells += len(probabilities)
+            grid_rows.append(
                 (
                     result_id,
                     match["match_id"],
                     stage,
+                    home_dimension,
+                    away_dimension,
+                    probabilities,
                     scores.get("home_rate"),
                     scores.get("away_rate"),
                     scores["omitted_probability"],
                     _json(scores.get("uncertainty_components", {})),
                 )
             )
-            for home_goals, row in enumerate(scores["grid_home_rows_away_columns"]):
-                for away_goals, probability in enumerate(row):
-                    score_rows.append(
-                        (
-                            result_id,
-                            match["match_id"],
-                            stage,
-                            home_goals,
-                            away_goals,
-                            probability,
-                        )
-                    )
     statements = (
         (
             "INSERT INTO forecast_result.forecast_matches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -431,31 +512,17 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
             probability_rows,
         ),
         (
-            "INSERT INTO forecast_result.forecast_score_metadata VALUES (?, ?, ?, ?, ?, ?, ?)",
-            metadata_rows,
+            "INSERT INTO forecast_result.forecast_score_grids VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            grid_rows,
         ),
     )
     for statement, rows in statements:
         if rows:
             connection.executemany(statement, rows)
-    if score_rows:
-        connection.execute(
-            """
-            INSERT INTO forecast_result.forecast_scores
-            SELECT json_extract_string(value, '$[0]'),
-                   json_extract_string(value, '$[1]'),
-                   json_extract_string(value, '$[2]'),
-                   CAST(json_extract(value, '$[3]') AS INTEGER),
-                   CAST(json_extract(value, '$[4]') AS INTEGER),
-                   CAST(json_extract(value, '$[5]') AS DOUBLE)
-            FROM json_each(?)
-            """,
-            [_json(score_rows)],
-        )
     return {
         "matches": len(match_rows),
         "match_probabilities": len(probability_rows),
-        "scores": len(score_rows),
+        "scores": score_cells,
     }
 
 
@@ -666,6 +733,7 @@ def write_forecast_result(
         }
         connection.execute("BEGIN TRANSACTION")
         try:
+            stored_provenance = _store_run_provenance(connection, result_id, run)
             connection.execute(
                 "INSERT INTO forecast_result.forecast_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
@@ -681,7 +749,7 @@ def write_forecast_result(
                     _json(model),
                     _json(settings),
                     _json(simulation_metadata),
-                    _json(run),
+                    stored_provenance,
                     _json(forecast.get("fit_diagnostics", {})),
                     source_sha256,
                     RESULT_SCHEMA_VERSION,
@@ -732,6 +800,17 @@ def _decoded(value):
 
 def _iso(value):
     return None if value is None else value.isoformat()
+
+
+def _has_result_table(connection, table: str) -> bool:
+    return (
+        connection.execute(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema = 'forecast_result' AND table_name = ?",
+            [table],
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def store_public_projection(database: Path, result_id: str, document: dict) -> None:
@@ -871,33 +950,54 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                     ).fetchall()
                 }
             )
-        score_metadata = {
-            (match_id, stage): (home_rate, away_rate, omitted, _decoded(uncertainty))
-            for match_id, stage, home_rate, away_rate, omitted, uncertainty in connection.execute(
+        score_metadata = {}
+        score_grids = {}
+        if _has_result_table(connection, "forecast_score_grids"):
+            for row in connection.execute(
                 """
-                SELECT match_id, stage, home_rate, away_rate, omitted_probability,
-                       uncertainty_components
-                FROM forecast_result.forecast_score_metadata WHERE result_id = ?
+                SELECT match_id, stage, home_dimension, away_dimension, probabilities,
+                       home_rate, away_rate, omitted_probability, uncertainty_components
+                FROM forecast_result.forecast_score_grids WHERE result_id = ?
+                ORDER BY match_id, stage
+                """,
+                [structural_result_id],
+            ).fetchall():
+                match_id, stage, home_dimension, away_dimension, probabilities = row[:5]
+                if len(probabilities) != home_dimension * away_dimension:
+                    raise ValueError(f"Invalid compact score grid: {match_id}:{stage}")
+                key = match_id, stage
+                score_grids[key] = [
+                    probabilities[index : index + away_dimension]
+                    for index in range(0, len(probabilities), away_dimension)
+                ]
+                score_metadata[key] = (row[5], row[6], row[7], _decoded(row[8]))
+        else:
+            score_metadata = {
+                (match_id, stage): (home_rate, away_rate, omitted, _decoded(uncertainty))
+                for match_id, stage, home_rate, away_rate, omitted, uncertainty in connection.execute(
+                    """
+                    SELECT match_id, stage, home_rate, away_rate, omitted_probability,
+                           uncertainty_components
+                    FROM forecast_result.forecast_score_metadata WHERE result_id = ?
+                    """,
+                    [structural_result_id],
+                ).fetchall()
+            }
+            score_rows = connection.execute(
+                """
+                SELECT match_id, stage, home_goals, away_goals, probability
+                FROM forecast_result.forecast_scores WHERE result_id = ?
+                ORDER BY match_id, stage, home_goals, away_goals
                 """,
                 [structural_result_id],
             ).fetchall()
-        }
-        score_rows = connection.execute(
-            """
-            SELECT match_id, stage, home_goals, away_goals, probability
-            FROM forecast_result.forecast_scores WHERE result_id = ?
-            ORDER BY match_id, stage, home_goals, away_goals
-            """,
-            [structural_result_id],
-        ).fetchall()
-        score_grids = {}
-        for match_id, stage, home_goals, away_goals, probability in score_rows:
-            grid = score_grids.setdefault((match_id, stage), [])
-            while len(grid) <= home_goals:
-                grid.append([])
-            while len(grid[home_goals]) <= away_goals:
-                grid[home_goals].append(0.0)
-            grid[home_goals][away_goals] = probability
+            for match_id, stage, home_goals, away_goals, probability in score_rows:
+                grid = score_grids.setdefault((match_id, stage), [])
+                while len(grid) <= home_goals:
+                    grid.append([])
+                while len(grid[home_goals]) <= away_goals:
+                    grid[home_goals].append(0.0)
+                grid[home_goals][away_goals] = probability
         matches = []
         match_rows = connection.execute(
             """
@@ -1114,9 +1214,13 @@ def read_forecast_run(database: Path, result_id: str) -> dict:
             "WHERE result_id = ?",
             [result_id],
         ).fetchone()
+        if row is not None and _has_result_table(connection, "forecast_run_documents"):
+            provenance = _read_run_provenance(connection, result_id, row[0])
+        else:
+            provenance = _decoded(row[0]) if row is not None else None
     if row is None:
         raise KeyError(f"Unknown forecast result: {result_id}")
-    return {**(_decoded(row[0]) or {}), "result_schema_version": row[1]}
+    return {**(provenance or {}), "result_schema_version": row[1]}
 
 
 def clone_forecast_result(
@@ -1176,6 +1280,7 @@ def clone_forecast_result(
         )
         connection.execute("BEGIN TRANSACTION")
         try:
+            stored_provenance = _store_run_provenance(connection, result_id, software_provenance)
             connection.execute(
                 """
                 INSERT INTO forecast_result.forecast_runs (
@@ -1196,7 +1301,7 @@ def clone_forecast_result(
                     observed_at,
                     generated_at,
                     input_revision,
-                    _json(software_provenance),
+                    stored_provenance,
                     identity,
                     RESULT_SCHEMA_VERSION,
                     datetime.now(UTC),

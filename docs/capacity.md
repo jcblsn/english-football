@@ -81,6 +81,12 @@ The measured four-division 10,000-path calculation finished in 147.51 seconds af
 
 ## Retention contract
 
+The compact schema implementation remains a pre-cutover candidate. A read-only migration of all 59 retained results compared complete reconstructed private results and provenance values, passed all 59 scientific verifiers and matched all stored public projections. Candidate files measured approximately 167.8 MB against 383.8 MB of source files, a 56.3% reduction. This production-shaped measurement supersedes the smaller prototype as evidence for the implemented layout. The reason for the size difference has not yet been measured.
+
+The existing analysis adapter produced identical complete-row hashes for 14 of 16 tested relations, including score cells, personnel, strengths, season distributions and conditionals. A subsequent field comparison of the remaining two relations across all 59 results found only the changed physical database location in `forecasts.private_prefix` and the schema version in `forecast_runs.provenance`. The provenance values otherwise match. Full-history preparation took 67.403 seconds for the source and 60.918 seconds for the candidate; the warm match-stage query took 0.005 seconds for each. The comparison process reached 4,440,375,296 bytes of resident memory. These are local current-size measurements.
+
+Measured marginal growth, projected-size append and transfer tests, and the annual capacity model with generation grace and old/new overlap remain incomplete. No compact production pointer has been committed. Legacy reads remain only for the migration proof; writes to a legacy store fail explicitly until it is migrated. Do not deploy this candidate as the completed compact-result phase or treat its current-size savings as forward capacity acceptance.
+
 | Data | Steady retention |
 | --- | --- |
 | Original provider evidence and request receipts | Indefinite. New original responses use lossless gzip and retain the hash of the original bytes. |
