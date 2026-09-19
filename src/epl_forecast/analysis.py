@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1480,16 +1481,34 @@ def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+@contextmanager
+def _ui_host(session: AnalysisSession):
+    if session.path is None:
+        raise ValueError("The DuckDB UI requires a persisted analysis session")
+    with tempfile.TemporaryDirectory(prefix="page324-ui-") as directory:
+        connection = duckdb.connect(str(Path(directory) / "ui_host.duckdb"))
+        try:
+            connection.execute(SESSION_TIME_ZONE)
+            connection.execute(
+                f"ATTACH {_literal(str(session.path.resolve()))} AS page324 (READ_ONLY)"
+            )
+            connection.execute("USE page324")
+            yield connection
+        finally:
+            connection.close()
+
+
 def start_ui(session: AnalysisSession, *, open_browser: bool = True) -> str:
-    """Start the DuckDB UI for a prepared connection and wait until interruption."""
-    procedure = "start_ui" if open_browser else "start_ui_server"
-    row = session.connection.execute(f"CALL {procedure}()").fetchone()
-    url = str(row[0]) if row and isinstance(row[0], str) else "http://localhost:4213"
-    print(f"DuckDB UI: {url}")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        return url
-    finally:
-        session.connection.execute("CALL stop_ui_server()")
+    """Host the UI in a writable catalog with read-only prepared analysis attached."""
+    with _ui_host(session) as connection:
+        procedure = "start_ui" if open_browser else "start_ui_server"
+        row = connection.execute(f"CALL {procedure}()").fetchone()
+        url = str(row[0]) if row and isinstance(row[0], str) else "http://localhost:4213"
+        print(f"DuckDB UI: {url}")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            return url
+        finally:
+            connection.execute("CALL stop_ui_server()")
