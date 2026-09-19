@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
+
 import pytest
 
-from epl_forecast.retention import build_retention_plan, validate_retention_plan
+from epl_forecast.retention import build_retention_plan, retention_status, validate_retention_plan
 
 
 class Store:
@@ -83,3 +85,54 @@ def test_retention_plan_must_match_a_fresh_inventory_exactly():
     changed = {**plan, "delete_candidates": plan["delete_candidates"][:-1]}
     with pytest.raises(ValueError, match="delete_candidates changed"):
         validate_retention_plan(changed, plan)
+
+
+def test_retention_status_separates_billable_and_product_occupancy():
+    plan = build_retention_plan(Store())
+    data = [
+        {"key": "research/archive", "bytes": 700},
+        {"key": "results/current", "bytes": 200},
+    ]
+    publish = [{"key": "forecasts/current", "bytes": 100}]
+    policy = {
+        "baseline": {
+            "recorded_at": "2026-09-01T00:00:00+00:00",
+            "data_objects": 2,
+            "data_bytes": 900,
+            "publish_objects": 1,
+            "publish_bytes": 100,
+            "research_objects": 1,
+            "research_bytes": 700,
+        },
+        "review": {
+            "candidate_objects": 100,
+            "candidate_bytes": 10_000,
+            "superseded_generations": 100,
+            "total_object_growth": 100,
+            "product_bytes": 10_000,
+            "research_growth_bytes": 0,
+            "days_since_review": 90,
+        },
+    }
+    status = retention_status(
+        plan,
+        data,
+        publish,
+        policy,
+        now=datetime(2026, 9, 18, tzinfo=UTC),
+    )
+    assert status["measures"]["billable_bytes"] == 1000
+    assert status["measures"]["product_bytes"] == 300
+    assert status["measures"]["research_byte_growth"] == 0
+    assert status["cleanup_review_required"] is False
+
+    data[0]["bytes"] += 1
+    alert = retention_status(
+        plan,
+        data,
+        publish,
+        policy,
+        now=datetime(2026, 9, 18, tzinfo=UTC),
+    )
+    assert alert["cleanup_review_required"] is True
+    assert "research_byte_growth" in alert["review_reasons"][0]

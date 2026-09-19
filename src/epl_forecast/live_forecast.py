@@ -1,9 +1,6 @@
 import math
 from datetime import UTC, datetime, time, timedelta
-from html import escape
-from pathlib import Path
 
-from epl_forecast.artifacts import new_run_directory, write_csv
 from epl_forecast.competitions import competition
 from epl_forecast.live import LONDON, LiveSeason, timestamp
 from epl_forecast.market import market_assisted_probabilities
@@ -12,7 +9,6 @@ from epl_forecast.models.quality_tilt_scores import shift_scores
 from epl_forecast.personnel import COMPETITIONS, HORIZON, KAPPA
 from epl_forecast.schema import Match
 from epl_forecast.simulation import EuropeScenario, simulate_season
-from epl_forecast.storage import file_hash, write_json
 
 UNSCHEDULED_PLACEHOLDER = (
     "Postponed or undated fixtures are simulated on the model cutoff day until the provider "
@@ -25,12 +21,6 @@ UNSETTLED_PLACEHOLDER = (
     "a match in play. The projection of that match, and of the clubs in it, is a pre-match "
     "projection that is one match behind the live table."
 )
-
-
-def flatten_rows(rows):
-    nested = {key for row in rows for key, value in row.items() if isinstance(value, (dict, list))}
-    flat = [{key: value for key, value in row.items() if key not in nested} for row in rows]
-    return flat, list(dict.fromkeys(key for row in flat for key in row))
 
 
 def score_stage(scores, max_goals, probabilities=None):
@@ -165,204 +155,11 @@ def current_table(live: LiveSeason, adjustments: list[dict]) -> dict[str, dict]:
     return table
 
 
-def render_forecast(forecast: dict) -> str:
-    names = forecast["team_names"]
-    simulation = forecast["simulation"]
-    promotion = bool(simulation) and "promotion_probability" in simulation["teams"][0]
-    # The adjustment is part of the forecast, so the page may not say that personnel are
-    # omitted. What the forecast does not do is predict personnel changes after the horizon.
-    personnel = forecast.get("personnel") or {}
-    personnel_note = (
-        f"A fixture in the next {personnel.get('horizon_days', HORIZON.days)} days carries the "
-        "matchday-squad continuity adjustment. Transfers, injuries and squad changes after "
-        "that are not forecast."
-        if personnel.get("adjusted_fixtures")
-        else "Transfers, injuries and squad changes are not forecast."
-    )
-    uncertainty_note = (
-        "These probabilities include uncertainty in current team strength and match randomness. "
-        f"Each simulated season holds its sampled strengths fixed. {personnel_note}"
-        if forecast.get("state_uncertainty") == "posterior"
-        else "Team strengths are held fixed; these probabilities include match randomness and omit "
-        f"uncertainty in team strength. {personnel_note}"
-    )
-    if forecast.get("future_state_evolution"):
-        uncertainty_note = (
-            "These probabilities include current Quality/Tilt uncertainty, uncertain dynamics, "
-            f"future changes in strength and match tempo. {personnel_note}"
-        )
-    prior_note = (
-        "Clubs entering the division start from transition-aware entry priors. Strength uncertainty "
-        "is available in the team strengths download."
-        if forecast.get("state_uncertainty") == "posterior"
-        else "Clubs without history in the training window start at 1."
-    )
-    table = ""
-    if simulation:
-        rows = []
-        for team in sorted(simulation["teams"], key=lambda row: row["mean_position"]):
-            cells = [
-                escape(names[team["team_id"]]),
-                str(team["played"]),
-                str(team["current_points"]),
-                f"{team['mean_position']:.1f}",
-                f"{int(team['position_quantiles_05_50_95'][0])}–{int(team['position_quantiles_05_50_95'][2])}",
-                f"{team['mean_points']:.1f}",
-                f"{int(team['points_quantiles_05_50_95'][0])}–{int(team['points_quantiles_05_50_95'][2])}",
-                f"{team['title_probability']:.1%}",
-            ]
-            if promotion:
-                cells.extend(
-                    [
-                        f"{team['automatic_promotion_probability']:.1%}",
-                        f"{team['playoff_qualification_probability']:.1%}",
-                        f"{team['promotion_probability']:.1%}",
-                    ]
-                )
-            else:
-                cells.extend(
-                    [f"{team['top_four_probability']:.1%}", f"{team['top_five_probability']:.1%}"]
-                )
-            cells.append(f"{team['relegation_probability']:.1%}")
-            rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
-        event_headers = (
-            "<th>Automatic promotion</th><th>Playoffs</th><th>Promotion</th>"
-            if promotion
-            else "<th>Top four</th><th>Top five</th>"
-        )
-        table = (
-            "<div class='scroll'><table><thead><tr><th>Team</th><th>Played</th>"
-            "<th>Points now</th><th>Expected rank</th><th>90% rank interval</th>"
-            "<th>Expected final points</th><th>90% points interval</th><th>Title</th>"
-            + event_headers
-            + "<th>Relegation</th></tr></thead><tbody>"
-            + "".join(rows)
-            + "</tbody></table></div>"
-        )
-    else:
-        table = f"<p>{escape(forecast['simulation_unavailable_reason'])}</p>"
-    matches = []
-    for match in forecast["matches"]:
-        if not match["next_match_for_teams"]:
-            continue
-        assisted = match["market_assisted_probabilities"]
-        cells = [
-            escape(match["kickoff_time"] or "To be scheduled"),
-            escape(names[match["home_team_id"]]),
-            escape(names[match["away_team_id"]]),
-            f"{match['p_home']:.1%}",
-            f"{match['p_draw']:.1%}",
-            f"{match['p_away']:.1%}",
-            "—" if assisted is None else f"{assisted['p_home']:.1%}",
-            "—" if assisted is None else f"{assisted['p_draw']:.1%}",
-            "—" if assisted is None else f"{assisted['p_away']:.1%}",
-            f"{match['score_distribution']['home_rate']:.2f}",
-            f"{match['score_distribution']['away_rate']:.2f}",
-        ]
-        matches.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
-    strengths = []
-    for team in sorted(forecast["team_strengths"], key=lambda row: -row["attack_log_rate"]):
-        strengths.append(
-            f"<tr><td>{escape(names[team['team_id']])}</td>"
-            f"<td>{team['attack_multiplier']:.2f}</td>"
-            f"<td>{team['defense_multiplier']:.2f}</td>"
-            f"<td>{team['training_matches']}</td></tr>"
-        )
-    quality_table = ""
-    if forecast["team_strengths"] and "quality" in forecast["team_strengths"][0]:
-        quality_rows = []
-        for team in sorted(forecast["team_strengths"], key=lambda row: -row["quality"]):
-            quality_rows.append(
-                f"<tr><td>{escape(names[team['team_id']])}</td>"
-                f"<td>{team['quality']:.3f}</td><td>{team['quality_sd']:.3f}</td>"
-                f"<td>{team['tilt']:.3f}</td><td>{team['tilt_sd']:.3f}</td></tr>"
-            )
-        quality_table = (
-            "<h2>Quality and Tilt</h2><p>Quality measures relative strength; positive Tilt "
-            "raises both teams' expected goals. SD measures uncertainty "
-            "in each log-rate rating.</p>"
-            "<div class='scroll'><table><thead><tr><th>Team</th><th>Quality</th>"
-            "<th>Quality SD</th><th>Tilt</th><th>Tilt SD</th></tr></thead><tbody>"
-            + "".join(quality_rows)
-            + "</tbody></table></div>"
-        )
-    europe = ""
-    if simulation and simulation["europe_scenario"]:
-        scenario = escape(simulation["europe_scenario"]["name"])
-        europe_rows = []
-        for team in sorted(simulation["teams"], key=lambda row: row["mean_position"]):
-            probabilities = team["conditional_europe_probabilities"]
-            europe_rows.append(
-                f"<tr><td>{escape(names[team['team_id']])}</td>"
-                + "".join(
-                    f"<td>{probabilities[key]:.1%}</td>"
-                    for key in ("champions_league", "europa_league", "conference_league")
-                )
-                + "</tr>"
-            )
-        europe = (
-            f"<h2>Conditional European qualification</h2><p>{scenario}</p>"
-            "<p>Assumes no additional English UEFA titleholders or eligibility exclusions.</p>"
-            "<div class='scroll'><table><thead><tr><th>Team</th><th>Champions League</th>"
-            "<th>Europa League</th><th>Conference League</th></tr></thead><tbody>"
-            + "".join(europe_rows)
-            + "</tbody></table></div>"
-        )
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{escape(forecast["competition_name"])} {escape(forecast["season_id"])} forecast</title>
-<style>
-body {{font:16px/1.5 system-ui,sans-serif;max-width:1120px;margin:32px auto;padding:0 20px;
-color:#17242c;background:#fafbf9}} h1,h2 {{line-height:1.2}} h2 {{margin-top:36px}}
-p {{max-width:900px}} a {{color:#12654f}} .scroll {{overflow-x:auto}}
-table {{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;background:white}}
-th,td {{text-align:right;padding:9px 12px;border-bottom:1px solid #dce3dd;white-space:nowrap}}
-th:first-child,td:first-child {{text-align:left}} th {{background:#edf3ee}}
-.note {{color:#52616b;font-size:14px}} details {{margin-top:24px}}
-</style></head><body>
-<h1>{escape(forecast["competition_name"])} {escape(forecast["season_id"])}</h1>
-<p>Probabilistic match forecasts and the expected final table.
-Model: {escape(forecast["model"]["id"])}.</p>
-<p class="note">Season state captured {escape(forecast["state_observed_at"])}.
-Forecast generated {escape(forecast["generated_at"])}. Times are UTC.
-Full-time scores include today's completed games; results use captured provider reports.
-Team strengths use results before {escape(forecast["model_results_cutoff"])} (London date).</p>
-<h2>Season forecast</h2>{table}
-<p class="note">Top four and top five are league positions. European qualification also
-depends on cup results and allocated places. {escape(uncertainty_note)}</p>
-{europe}
-<h2>Next match for each team</h2>
-<div class="scroll"><table><thead><tr><th>Kickoff (UTC)</th><th>Home</th><th>Away</th>
-<th>Structural H</th><th>Structural D</th><th>Structural A</th>
-<th>Market-assisted H</th><th>Market-assisted D</th><th>Market-assisted A</th>
-<th>Home goals</th><th>Away goals</th>
-</tr></thead><tbody>{"".join(matches)}</tbody></table></div>
-<p class="note">Market-assisted probabilities use the latest captured pre-closing prices
-available at the forecast cutoff. A dash means no suitable quote was available. Goals and
-exact-score matrices come from the structural model; season simulation does not use markets.
-All remaining match probabilities and matrices, with omitted tail mass, are in the JSON download.</p>
-{quality_table}
-<details><summary>Current attack and defense strengths</summary>
-<p class="note">Attack above 1 raises scoring rates; defense above 1 reduces the opponent's
-rate. Both use the model's league reference. {escape(prior_note)}</p>
-<div class="scroll"><table><thead><tr><th>Team</th><th>Attack</th><th>Defense</th>
-<th>Training matches</th></tr></thead><tbody>{"".join(strengths)}</tbody></table></div></details>
-<p><a href="forecast.json">Full forecast JSON</a> · <a href="matches.csv">Match CSV</a> ·
-<a href="table.csv">Season CSV</a> · <a href="team_strengths.csv">Team strengths CSV</a></p>
-<p class="note">Source data:
-<a href="https://www.api-football.com/">API-Football</a> and
-<a href="https://football-data.co.uk/">Football-Data</a>. Use and redistribution
-are subject to each provider's terms.</p>
-</body></html>
-"""
-
-
-def export_forecast(
+def build_forecast(
     live: LiveSeason,
     model: ForecastModel,
     training: list[Match],
     run: dict,
-    output: Path,
     simulations: int,
     seed: int,
     max_goals: int,
@@ -373,7 +170,6 @@ def export_forecast(
     impact_horizon_days: int = 7,
     personnel: dict | None = None,
 ) -> dict:
-    new_run_directory(output)
     personnel = personnel or {}
     shifts = {
         match_id: record["home_log_rate_shift"]
@@ -564,62 +360,4 @@ def export_forecast(
         "sources": live.manifest["files"],
         "source_errors": live.manifest["errors"],
     }
-    write_json(output / "forecast.json", forecast)
-    write_json(output / "run.json", run)
-    flat_matches, match_fields = flatten_rows(matches)
-    for name, rows, fields in (
-        ("team_strengths.csv", strengths, list(strengths[0])),
-        ("fixtures.csv", list(live.details.values()), list(next(iter(live.details.values())))),
-        (
-            "matches.csv",
-            flat_matches,
-            match_fields if matches else ["match_id", "p_home", "p_draw", "p_away"],
-        ),
-        (
-            "table.csv",
-            [
-                {
-                    **{
-                        key: value
-                        for key, value in row.items()
-                        if not isinstance(value, (dict, list))
-                    },
-                    **row.get("conditional_europe_probabilities", {}),
-                }
-                for row in sorted(simulation["teams"], key=lambda row: row["mean_position"])
-            ]
-            if simulation
-            else [],
-            [
-                key
-                for key, value in simulation["teams"][0].items()
-                if not isinstance(value, (dict, list))
-            ]
-            + list(simulation["teams"][0].get("conditional_europe_probabilities", {}))
-            if simulation
-            else ["team_id", "mean_points"],
-        ),
-    ):
-        write_csv(output / name, fields, rows)
-    (output / "index.html").write_text(render_forecast(forecast))
-    hashes = {path.name: file_hash(path) for path in sorted(output.iterdir()) if path.is_file()}
-    archived = datetime.now(UTC)
-    write_json(
-        output / "archive.json",
-        {
-            "archived_at": archived.isoformat(),
-            "files": hashes,
-            "forward_match_ids": [
-                row["match_id"]
-                for row in matches
-                if row["status"] == "scheduled"
-                and row["kickoff_time"]
-                and timestamp(row["kickoff_time"]) > archived
-            ],
-            "forward_policy": (
-                "Archive completed before captured kickoff, with fixture unstarted in snapshot. "
-                "Rescheduled fixtures must be checked against later snapshots when scoring."
-            ),
-        },
-    )
     return forecast

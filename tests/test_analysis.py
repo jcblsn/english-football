@@ -1,6 +1,8 @@
 import json
 import math
+import tempfile
 from datetime import date, datetime
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -16,11 +18,7 @@ from epl_forecast.analysis import (
 from epl_forecast.datasets import publish
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast, forecast_pointer
-from epl_forecast.results import (
-    expire_forecast_detail,
-    store_public_projection,
-    write_forecast_result,
-)
+from epl_forecast.results import store_public_projection, write_forecast_result
 from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
 
@@ -224,7 +222,42 @@ def test_personnel_views_keep_latest_successful_empty_snapshots(tmp_path):
         historical.close()
 
 
-def forecast_stores():
+def store_typed_forecasts(data, publish_store):
+    archive = publish_store.objects["forecasts/eng-premier-league/archive.json"]
+    with tempfile.TemporaryDirectory(prefix="page324-analysis-test-") as directory:
+        database = Path(directory) / "results.duckdb"
+        for entry in archive["forecasts"]:
+            prefix = f"runs/forecasts/{entry['forecast_id']}/eng-premier-league"
+            forecast = data.objects[f"{prefix}/forecast.json"]
+            for strength in forecast["team_strengths"]:
+                strength.setdefault("attack_log_rate", 0.0)
+                strength.setdefault("defense_log_rate", 0.0)
+                strength.setdefault("training_matches", 0)
+                strength.setdefault("state_source", "test fixture")
+            write_forecast_result(
+                database,
+                forecast,
+                data.objects[f"{prefix}/run.json"],
+                input_revision="test-input",
+                result_id=entry["forecast_id"],
+            )
+            store_public_projection(
+                database,
+                entry["forecast_id"],
+                publish_store.objects[entry["href"]],
+            )
+        database_key = "results/eng-premier-league/test.duckdb"
+        data.objects[database_key] = database.read_bytes()
+        data.objects["state/results/eng-premier-league.json"] = {
+            "schema_version": 1,
+            "competition_id": "eng-premier-league",
+            "database_key": database_key,
+            "database_bytes": database.stat().st_size,
+            "database_sha256": file_hash(database),
+        }
+
+
+def forecast_stores(*, typed=True):
     forecast_id = "2026-09-10T120000Z"
     private = {"schema_version": 1, **sample_forecast()}
     public = derive_forecast(private, forecast_id)
@@ -268,11 +301,13 @@ def forecast_stores():
             },
         }
     )
+    if typed:
+        store_typed_forecasts(data, publish_store)
     return data, publish_store
 
 
 def version_two_forecast_stores():
-    data, publish_store = forecast_stores()
+    data, publish_store = forecast_stores(typed=False)
     forecast_id = "2026-09-10T120000Z"
     key = f"runs/forecasts/{forecast_id}/eng-premier-league/forecast.json"
     private = data.objects[key]
@@ -521,6 +556,7 @@ def version_two_forecast_stores():
     }
     pointer = publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"][0]
     publish_store.objects[pointer["href"]] = public
+    store_typed_forecasts(data, publish_store)
     return data, publish_store
 
 
@@ -579,6 +615,7 @@ def test_team_usability_uses_only_the_evidence_of_that_team(tmp_path):
         "home": {"discontinuity": 0.2, "unresolved_weight": 0.5, "reference_matches": []},
         "away": {"discontinuity": 0.1, "unresolved_weight": 0.0, "reference_matches": []},
     }
+    store_typed_forecasts(data, publish_store)
     session = open_analysis_session(data_store=data, publish_store=publish_store)
     try:
         rows = session.rows(
@@ -704,6 +741,15 @@ def test_typed_result_analysis_avoids_per_forecast_remote_reads(tmp_path):
         input_revision="input-1",
         result_id=forecast_id,
     )
+    store_public_projection(
+        database,
+        forecast_id,
+        publish_store.objects[
+            publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"][0][
+                "href"
+            ]
+        ],
+    )
     unrelated_id = "2026-09-10T130000Z"
     write_forecast_result(
         database,
@@ -767,53 +813,6 @@ def test_typed_result_analysis_avoids_per_forecast_remote_reads(tmp_path):
     assert public_href not in publish_store.reads
 
 
-def test_expired_private_detail_keeps_public_history_in_the_typed_store(tmp_path):
-    data, publish_store = version_two_forecast_stores()
-    forecast_id = "2026-09-10T120000Z"
-    prefix = f"runs/forecasts/{forecast_id}/eng-premier-league"
-    private = data.objects[f"{prefix}/forecast.json"]
-    database = tmp_path / "results.duckdb"
-    write_forecast_result(
-        database,
-        private,
-        data.objects[f"{prefix}/run.json"],
-        input_revision="input-1",
-        result_id=forecast_id,
-    )
-    public = derive_forecast(private, forecast_id)
-    store_public_projection(database, forecast_id, public)
-    expire_forecast_detail(database, datetime.fromisoformat("2026-09-11T00:00:00+00:00"))
-    database_key = "results/eng-premier-league/result.duckdb"
-    data.objects[database_key] = database.read_bytes()
-    data.objects["state/results/eng-premier-league.json"] = {
-        "schema_version": 1,
-        "competition_id": "eng-premier-league",
-        "database_key": database_key,
-        "database_bytes": database.stat().st_size,
-        "database_sha256": file_hash(database),
-    }
-    data.reads.clear()
-    publish_store.reads.clear()
-    session = open_analysis_session(
-        data_store=data,
-        publish_store=publish_store,
-        forecast_ids=[forecast_id],
-    )
-    try:
-        assert session.rows("SELECT count(*) AS n FROM analysis.forecasts") == [{"n": 1}]
-        assert session.rows("SELECT count(*) AS n FROM analysis.forecast_teams") == [{"n": 2}]
-        assert session.rows("SELECT private_schema_version FROM analysis.forecasts") == [
-            {"private_schema_version": 1}
-        ]
-    finally:
-        session.close()
-    href = publish_store.objects["forecasts/eng-premier-league/archive.json"]["forecasts"][0][
-        "href"
-    ]
-    assert database_key in data.reads
-    assert href not in publish_store.reads
-
-
 def test_catalogs_cover_every_analysis_relation_and_column(tmp_path):
     data, publish_store = version_two_forecast_stores()
     session = open_analysis_session(data_store=data, publish_store=publish_store)
@@ -842,10 +841,10 @@ def test_catalogs_cover_every_analysis_relation_and_column(tmp_path):
         session.close()
 
 
-def test_a_successful_public_forecast_requires_its_private_run(tmp_path):
+def test_a_successful_public_forecast_requires_its_typed_result(tmp_path):
     data, publish_store = forecast_stores()
-    del data.objects["runs/forecasts/2026-09-10T120000Z/eng-premier-league/forecast.json"]
-    with pytest.raises(ValueError, match="pointer does not resolve"):
+    del data.objects["state/results/eng-premier-league.json"]
+    with pytest.raises(ValueError, match="has no cumulative typed result"):
         open_analysis_session(data_store=data, publish_store=publish_store)
 
 
@@ -1078,6 +1077,7 @@ def test_session_file_is_reused_only_while_r2_state_is_unchanged(tmp_path, monke
     prefix = f"runs/forecasts/{forecast_id}/eng-premier-league"
     data.objects[f"{prefix}/forecast.json"] = private
     data.objects[f"{prefix}/run.json"] = sample_run()
+    store_typed_forecasts(data, publish_store)
 
     third = open_analysis_session(
         data_store=data, publish_store=publish_store, session_directory=directory

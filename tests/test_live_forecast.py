@@ -4,20 +4,9 @@ import math
 import numpy as np
 import pytest
 
-from epl_forecast.live_forecast import flatten_rows, forecast_probability_stages
+from epl_forecast.live_forecast import forecast_probability_stages
 from epl_forecast.models.base import Forecast
 from epl_forecast.models.poisson import IndependentPoisson, PoissonMixture
-
-
-def test_flatten_rows_removes_optional_nested_fields_from_every_row():
-    rows, fields = flatten_rows(
-        [
-            {"match_id": "a", "probabilities": {"home": 0.5}, "price": 2},
-            {"match_id": "b", "probabilities": None, "price": None},
-        ]
-    )
-    assert fields == ["match_id", "price"]
-    assert rows == [{"match_id": "a", "price": 2}, {"match_id": "b", "price": None}]
 
 
 def test_forecast_artifact_keeps_the_three_probability_stages():

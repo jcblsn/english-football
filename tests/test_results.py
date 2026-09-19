@@ -7,12 +7,8 @@ from test_publication import sample_forecast, sample_run
 
 from epl_forecast.publication import derive_forecast
 from epl_forecast.results import (
-    ForecastDetailExpired,
     clone_forecast_result,
-    expire_forecast_detail,
     read_forecast_result,
-    read_public_projection,
-    store_public_projection,
     write_forecast_result,
 )
 
@@ -328,33 +324,3 @@ def test_result_clone_is_idempotent_and_cannot_name_different_content(tmp_path):
     arguments["team_names"] = {"arsenal": "Arsenal", "chelsea": "Chelsea"}
     with pytest.raises(ValueError, match="different content"):
         clone_forecast_result(database, "forecast-1", "forecast-2", **arguments)
-
-
-def test_old_private_detail_expires_only_after_public_projection_is_stored(tmp_path):
-    database = tmp_path / "results.duckdb"
-    forecast = result_forecast()
-    forecast["generated_at"] = "2026-08-01T12:00:00+00:00"
-    forecast["simulation"]["match_impacts"] = None
-    write_forecast_result(
-        database,
-        forecast,
-        sample_run(),
-        input_revision="input-1",
-        result_id="forecast-1",
-    )
-    cutoff = datetime(2026, 9, 1, tzinfo=UTC)
-    with pytest.raises(ValueError, match="without a public projection"):
-        expire_forecast_detail(database, cutoff)
-    public = derive_forecast(forecast, "forecast-1", public_model_version="v-test")
-    store_public_projection(database, "forecast-1", public)
-    assert expire_forecast_detail(database, cutoff)["expired_results"] == 1
-    with pytest.raises(ForecastDetailExpired):
-        read_forecast_result(database, "forecast-1")
-    assert read_public_projection(database, "forecast-1") == public
-    with duckdb.connect(str(database), read_only=True) as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM forecast_result.forecast_runs"
-        ).fetchone() == (1,)
-        assert connection.execute(
-            "SELECT count(*) FROM forecast_result.forecast_scores"
-        ).fetchone() == (0,)

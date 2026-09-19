@@ -13,9 +13,9 @@ The product forecasts the four divisions of the English league:
 
 M10 makes every published forecast in every division. M2 is the benchmark. The [methodology](methodology.md) describes both models. M10 is frozen. A change to the structural model needs the evidence that [validation](validation.md) describes.
 
-## Contents of each forecast archive
+## Contents of each typed forecast result
 
-Each M10 archive contains:
+Each M10 result contains:
 
 - structural H/D/A probabilities and an exact-score matrix for each remaining fixture;
 - a market-assisted H/D/A probability when a captured pre-closing quote exists;
@@ -32,9 +32,9 @@ Each M10 archive contains:
 
 A hindcast is a separate, retrospective product. It gives the season estimates of each club at each Wednesday of a completed season, 2021/22–2025/26, in the four divisions. The frozen public model and the structural simulation make it after the season. A hindcast is not a forecast that existed at its origin, and the prospective record does not include it. [Operations](operations.md#hindcasts) gives its rules and layout.
 
-## Checks on each archive
+## Checks on each result
 
-`uv run epl-forecast verify` checks an archive against this contract. The product publishes nothing unless every check passes. The checks are:
+`uv run epl-forecast verify --results <database> --result-id <ID>` checks a typed result against this contract. The product publishes nothing unless every check passes. Verification reads no provider data or R2 object. The checks are:
 
 1. Every match probability set is a distribution.
 2. Every score matrix, plus its omitted tail, sums to one and gives the published H/D/A probabilities.

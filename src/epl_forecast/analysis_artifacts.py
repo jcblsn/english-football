@@ -501,156 +501,8 @@ def _simulation_rows(
         )
 
 
-class _SelectedDocuments:
-    def __init__(self, documents: dict[str, dict]):
-        self.documents = documents
-
-    def get_json(self, key: str, default=None):
-        return self.documents.get(key, default)
-
-
-def _public_analysis_projection(public: dict) -> dict:
-    matches = []
-    for row in public["matches"]:
-        match = dict(row)
-        match["market_assisted_probabilities"] = row.get("market_assisted")
-        matches.append(match)
-    teams = []
-    for row in public["teams"]:
-        team = dict(row)
-        team.update(
-            {
-                event: probability
-                for event, probability in row.get("events", {}).items()
-                if event.endswith("_probability")
-            }
-        )
-        teams.append(team)
+def _empty_live_rows() -> dict[str, list]:
     return {
-        "schema_version": 1,
-        "competition_id": public["competition_id"],
-        "season_id": public["season_id"],
-        "generated_at": public["generated_at"],
-        "state_observed_at": public["state_observed_at"],
-        "model_results_cutoff": public["model_results_cutoff"],
-        "model": {},
-        "matches": matches,
-        "simulation": {
-            "simulations": public["simulations"],
-            "state_uncertainty": public.get("state_uncertainty"),
-            "teams": teams,
-        },
-        "team_names": {row["team_id"]: row.get("name") for row in public["teams"]},
-        "state_uncertainty": public.get("state_uncertainty"),
-    }
-
-
-def _typed_live_rows(
-    data_store,
-    publish_store,
-    result_pointers: dict[str, dict | None],
-    forecast_ids: tuple[str, ...] | None,
-):
-    from epl_forecast.publication import derive_forecast
-    from epl_forecast.results import (
-        ForecastDetailExpired,
-        read_forecast_result,
-        read_forecast_run,
-        read_public_projection,
-    )
-    from epl_forecast.storage import file_hash
-
-    private_documents = {}
-    public_documents = {}
-    with tempfile.TemporaryDirectory(prefix="page324-analysis-results-") as directory:
-        for competition_id in COMPETITION_IDS:
-            archive_key = f"forecasts/{competition_id}/archive.json"
-            archive = publish_store.get_json(archive_key)
-            if archive is None:
-                continue
-            entries = [
-                entry
-                for entry in archive["forecasts"]
-                if forecast_ids is None or entry["forecast_id"] in forecast_ids
-            ]
-            public_documents[archive_key] = {**archive, "forecasts": entries}
-            if not entries:
-                continue
-            pointer = result_pointers[competition_id]
-            if pointer is None:
-                raise ValueError(
-                    f"The published {competition_id} archive has no cumulative typed result"
-                )
-            database = Path(directory) / f"{competition_id}.duckdb"
-            data_store.download(pointer["database_key"], database)
-            if database.stat().st_size != pointer["database_bytes"]:
-                raise ValueError("Result database byte count does not match its pointer")
-            if file_hash(database) != pointer["database_sha256"]:
-                raise ValueError("Result database hash does not match its pointer")
-            for entry in entries:
-                result_id = entry["forecast_id"]
-                try:
-                    private = read_forecast_result(database, result_id)
-                    run = read_forecast_run(database, result_id)
-                    public = derive_forecast(
-                        private,
-                        result_id,
-                        public_model_version=entry["model_version"],
-                    )
-                except ForecastDetailExpired:
-                    public = read_public_projection(database, result_id)
-                    private = _public_analysis_projection(public)
-                    run = read_forecast_run(database, result_id)
-                except KeyError as error:
-                    raise ValueError(
-                        f"The cumulative {competition_id} result does not contain released result {result_id}"
-                    ) from error
-                public_documents[entry["href"]] = public
-                prefix = f"runs/forecasts/{result_id}/{competition_id}"
-                private_documents[f"{prefix}/forecast.json"] = {
-                    **private,
-                    "schema_version": private.get("schema_version", 2),
-                }
-                private_documents[f"{prefix}/run.json"] = run
-    return _legacy_live_rows(
-        _SelectedDocuments(private_documents),
-        _SelectedDocuments(public_documents),
-    )
-
-
-def _live_rows(data_store, publish_store, forecast_ids: tuple[str, ...] | None = None):
-    result_pointers = {
-        competition_id: data_store.get_json(f"state/results/{competition_id}.json")
-        for competition_id in COMPETITION_IDS
-    }
-    if any(result_pointers.values()):
-        return _typed_live_rows(data_store, publish_store, result_pointers, forecast_ids)
-    if forecast_ids is not None:
-        documents = {}
-        for competition_id in COMPETITION_IDS:
-            key = f"forecasts/{competition_id}/archive.json"
-            archive = publish_store.get_json(key)
-            if archive is not None:
-                documents[key] = {
-                    **archive,
-                    "forecasts": [
-                        entry
-                        for entry in archive["forecasts"]
-                        if entry["forecast_id"] in forecast_ids
-                    ],
-                }
-        for archive in documents.values():
-            for entry in archive["forecasts"]:
-                documents[entry["href"]] = publish_store.get_json(entry["href"])
-        publish_store = _SelectedDocuments(documents)
-    return _legacy_live_rows(data_store, publish_store)
-
-
-def _legacy_live_rows(
-    data_store,
-    publish_store,
-) -> tuple[dict[str, list], dict, set[str]]:
-    rows = {
         name: []
         for name in (
             "forecasts",
@@ -684,273 +536,303 @@ def _legacy_live_rows(
             "forecast_impacts",
         )
     }
+
+
+def _append_typed_live_result(
+    rows: dict[str, list],
+    entry: dict,
+    private: dict,
+    public: dict,
+    run: dict,
+    private_location: str,
+    forecast_schema: int,
+) -> str:
+    forecast_id = entry["forecast_id"]
+    competition_id = public["competition_id"]
+    if public["forecast_id"] != forecast_id:
+        raise ValueError(f"Forecast release identity does not match: {entry['href']}")
+    if (
+        private.get("competition_id") != competition_id
+        or private.get("season_id") != public["season_id"]
+    ):
+        raise ValueError(f"Typed and public forecast identities differ: {forecast_id}")
+    public_matches = {match["match_id"] for match in public["matches"]}
+    private_matches = {match["match_id"] for match in private.get("matches", ())}
+    if not public_matches <= private_matches:
+        raise ValueError(f"Public forecast has matches absent from its typed result: {forecast_id}")
+    model_version = public["model"]["version"]
+    base = {
+        "forecast_id": forecast_id,
+        "competition_id": competition_id,
+        "season_id": public["season_id"],
+    }
+    private_prefix = private_location
+    private_schema = forecast_schema
+    personnel_summary = private.get("personnel") or {}
+    rows["forecasts"].append(
+        {
+            **base,
+            "generated_at": public["generated_at"],
+            "state_observed_at": public["state_observed_at"],
+            "model_results_cutoff": public["model_results_cutoff"],
+            "public_model_version": model_version,
+            "private_model_id": private.get("model", {}).get("id"),
+            "private_schema_version": forecast_schema,
+            "simulations": public["simulations"],
+            "public_href": entry["href"],
+            "private_prefix": private_prefix,
+        }
+    )
+    for match in private.get("matches", ()):
+        assisted = match.get("market_assisted_probabilities")
+        on_public_surface = match["match_id"] in public_matches
+        rows["forecast_matches"].append(
+            {
+                **base,
+                "match_id": match["match_id"],
+                "kickoff_time": match.get("kickoff_time"),
+                "match_date": match.get("match_date"),
+                "home_team_id": match["home_team_id"],
+                "away_team_id": match["away_team_id"],
+                "status": match.get("status"),
+                "on_public_surface": on_public_surface,
+                "structural_p_home": match.get("p_home"),
+                "structural_p_draw": match.get("p_draw"),
+                "structural_p_away": match.get("p_away"),
+                "market_assisted_p_home": None if assisted is None else assisted.get("p_home"),
+                "market_assisted_p_draw": None if assisted is None else assisted.get("p_draw"),
+                "market_assisted_p_away": None if assisted is None else assisted.get("p_away"),
+                "market_family": None if assisted is None else assisted.get("market_family"),
+                "market_observed_at": None
+                if assisted is None
+                else assisted.get("market_observed_at"),
+                "personnel": _json(match.get("personnel")),
+            }
+        )
+        _match_detail_rows(match, base, private_schema, on_public_surface, rows)
+        _personnel_rows(match, base, personnel_summary.get("kappa"), rows)
+    simulation = private.get("simulation") or {}
+    _simulation_rows(simulation, base, rows, team_names=private.get("team_names"))
+    for team in simulation.get("teams", ()):
+        public_team = next(
+            (row for row in public["teams"] if row["team_id"] == team["team_id"]), team
+        )
+        _team_rows("forecast", public_team, base, rows)
+    for state in private.get("team_strengths", ()):
+        rows["model_team_states"].append(
+            {
+                **base,
+                "team_id": state["team_id"],
+                "quality": state.get("quality"),
+                "tilt": state.get("tilt"),
+                "quality_sd": state.get("quality_sd"),
+                "tilt_sd": state.get("tilt_sd"),
+                "quality_tilt_covariance": state.get("quality_tilt_covariance"),
+                "quality_level": state.get("quality_level"),
+                "quality_form": state.get("quality_form"),
+                "quality_level_sd": state.get("quality_level_sd"),
+                "quality_form_sd": state.get("quality_form_sd"),
+                "quality_level_form_covariance": state.get("quality_level_form_covariance"),
+                "attack_log_rate": state.get("attack_log_rate"),
+                "defense_log_rate": state.get("defense_log_rate"),
+                "attack_sd": state.get("attack_sd"),
+                "defense_sd": state.get("defense_sd"),
+                "attack_multiplier": state.get("attack_multiplier"),
+                "defense_multiplier": state.get("defense_multiplier"),
+                "training_matches": state.get("training_matches"),
+                "state_source": state.get("state_source"),
+                "season_matches": state.get("season_matches"),
+                "state": _json(state),
+            }
+        )
+    rows["forecast_runs"].append(
+        {
+            **base,
+            "generated_at": public["generated_at"],
+            "model_id": private.get("model", {}).get("id"),
+            "model_version": model_version,
+            "package_version": run.get("package_version"),
+            "code_sha256": run.get("code_sha256"),
+            "commit": run.get("execution", {}).get("commit"),
+            "training_matches": private.get("training_matches"),
+            "training_date_max": private.get("training_date_max"),
+            "league_away_goal_rate": private.get("league_away_goal_rate"),
+            "league_log_rate": math.log(private["league_away_goal_rate"])
+            if private.get("league_away_goal_rate", 0) > 0
+            else None,
+            "home_scoring_multiplier": private.get("home_scoring_multiplier"),
+            "home_advantage_log": math.log(private["home_scoring_multiplier"])
+            if private.get("home_scoring_multiplier", 0) > 0
+            else None,
+            "state_uncertainty": private.get("state_uncertainty"),
+            "future_state_evolution": private.get("future_state_evolution"),
+            "personnel_kappa": personnel_summary.get("kappa"),
+            "personnel_horizon_days": personnel_summary.get("horizon_days"),
+            "personnel_records": personnel_summary.get("records"),
+            "personnel_adjusted_fixtures": personnel_summary.get("adjusted_fixtures"),
+            "persistent_state_changed": personnel_summary.get("persistent_state_changed"),
+            "market_available_match_forecasts": (private.get("market_assistance") or {}).get(
+                "available_match_forecasts"
+            ),
+            "season_simulation_uses_market": (private.get("market_assistance") or {}).get(
+                "season_simulation_uses_market"
+            ),
+            "fit_diagnostics": _json(private.get("fit_diagnostics")),
+            "provenance": _json(run),
+        }
+    )
+    for index, specification in enumerate(
+        (private.get("fit_diagnostics") or {}).get("specifications", ())
+    ):
+        rows["model_specifications"].append(
+            {
+                **base,
+                "specification_index": index,
+                "quality_retention": specification.get("quality_retention"),
+                "quality_sd": specification.get("quality_sd"),
+                "form_retention": specification.get("form_retention"),
+                "form_sd": specification.get("form_sd"),
+                "tilt_retention": specification.get("tilt_retention"),
+                "tilt_sd": specification.get("tilt_sd"),
+                "dispersion": specification.get("dispersion"),
+                "chance_probability": specification.get("chance_probability"),
+                "prior_weight": specification.get("prior_weight"),
+                "posterior_weight": specification.get("posterior_weight"),
+                "log_evidence": specification.get("log_evidence"),
+            }
+        )
+    impact = public.get("impact") or {}
+    event_baselines = {team["team_id"]: team.get("events", {}) for team in public.get("teams", ())}
+    for fixture in impact.get("fixtures", ()):
+        carried = fixture.get("carried_from") or {}
+        counts = fixture.get("outcome_counts") or {}
+        rows["forecast_impact_fixtures"].append(
+            {
+                **base,
+                "match_id": fixture["match_id"],
+                "match_date": fixture.get("match_date"),
+                "kickoff_time": fixture.get("kickoff_time"),
+                "home_team_id": fixture.get("home_team_id"),
+                "away_team_id": fixture.get("away_team_id"),
+                "status": fixture.get("status"),
+                "outcome": fixture.get("outcome"),
+                "outcome_count_home": counts.get("home"),
+                "outcome_count_draw": counts.get("draw"),
+                "outcome_count_away": counts.get("away"),
+                "sufficient_sample": fixture.get("sufficient_sample"),
+                "max_standard_error": fixture.get("max_standard_error"),
+                "top_rms_movement": fixture.get("top_rms_movement"),
+                "unavailable_reason": fixture.get("unavailable_reason"),
+                "carried_from_forecast_id": carried.get("forecast_id"),
+                "carried_from_generated_at": carried.get("generated_at"),
+                "impact_horizon_days": impact.get("horizon_days"),
+                "impact_window_start": impact.get("window_start"),
+                "impact_window_end": impact.get("window_end"),
+                "impact_coverage": impact.get("coverage"),
+                "minimum_conditional_samples": impact.get("minimum_conditional_samples"),
+            }
+        )
+        for event, block in fixture.get("impacts", {}).items():
+            for index, team_id in enumerate(block.get("team_id", ())):
+                for outcome in ("home", "draw", "away"):
+                    values = block.get(outcome, ())
+                    baselines = block.get("baseline", ())
+                    movements = block.get("rms_movement", ())
+                    rows["forecast_impacts"].append(
+                        {
+                            **base,
+                            "match_id": fixture["match_id"],
+                            "event": event,
+                            "team_id": team_id,
+                            "outcome": outcome,
+                            "baseline": baselines[index]
+                            if index < len(baselines)
+                            else event_baselines.get(team_id, {}).get(event),
+                            "conditional_probability": values[index]
+                            if index < len(values)
+                            else None,
+                            "rms_movement": movements[index] if index < len(movements) else None,
+                            "carried_from_forecast_id": carried.get("forecast_id"),
+                            "carried_from_generated_at": carried.get("generated_at"),
+                        }
+                    )
+
+    return model_version
+
+
+def _typed_live_rows(
+    data_store,
+    publish_store,
+    result_pointers: dict[str, dict | None],
+    forecast_ids: tuple[str, ...] | None,
+):
+    from epl_forecast.results import read_forecast_result, read_forecast_run, read_public_projection
+    from epl_forecast.storage import file_hash
+
+    rows = _empty_live_rows()
     updated = {}
     model_versions = set()
-    for competition_id in COMPETITION_IDS:
-        key = f"forecasts/{competition_id}/archive.json"
-        archive = publish_store.get_json(key)
-        if archive is None:
-            continue
-        if archive.get("schema_version") != 1:
-            raise ValueError(
-                f"Unsupported forecast archive schema at {key}: {archive.get('schema_version')!r}"
-            )
-        _required(archive, ("forecasts", "updated_at", "competition_id"), "forecast archive")
-        if archive["competition_id"] != competition_id:
-            raise ValueError(f"Forecast archive competition does not match its key: {key}")
-        updated[key] = archive["updated_at"]
-        for pointer in archive["forecasts"]:
-            _required(pointer, ("forecast_id", "href"), "forecast pointer")
-            forecast_id = pointer["forecast_id"]
-            public = _document(publish_store, pointer["href"], 3, "forecast")
-            _required(
-                public,
-                (
-                    "forecast_id",
-                    "competition_id",
-                    "season_id",
-                    "generated_at",
-                    "state_observed_at",
-                    "model_results_cutoff",
-                    "simulations",
-                    "model",
-                    "matches",
-                    "teams",
-                ),
-                "forecast",
-            )
-            if public["forecast_id"] != pointer["forecast_id"]:
-                raise ValueError(f"Forecast pointer identity does not match: {pointer['href']}")
-            forecast_id = public["forecast_id"]
-            private_prefix = f"runs/forecasts/{forecast_id}/{competition_id}"
-            private = _document(
-                data_store, f"{private_prefix}/forecast.json", (1, 2), "private forecast"
-            )
-            run = data_store.get_json(f"{private_prefix}/run.json")
-            if run is None:
-                raise ValueError(
-                    f"A successful public forecast has no private run: {private_prefix}"
-                )
+    with tempfile.TemporaryDirectory(prefix="page324-analysis-results-") as directory:
+        for competition_id in COMPETITION_IDS:
+            archive_key = f"forecasts/{competition_id}/archive.json"
+            archive = publish_store.get_json(archive_key)
+            if archive is None:
+                continue
             if (
-                private.get("competition_id") != competition_id
-                or private.get("season_id") != public["season_id"]
+                archive.get("schema_version") != 1
+                or archive.get("competition_id") != competition_id
             ):
-                raise ValueError(f"Private and public forecast identities differ: {forecast_id}")
-            public_matches = {match["match_id"] for match in public["matches"]}
-            private_matches = {match["match_id"] for match in private.get("matches", ())}
-            if not public_matches <= private_matches:
+                raise ValueError(f"Unsupported forecast release index: {archive_key}")
+            updated[archive_key] = archive["updated_at"]
+            entries = [
+                entry
+                for entry in archive["forecasts"]
+                if forecast_ids is None or entry["forecast_id"] in forecast_ids
+            ]
+            if not entries:
+                continue
+            pointer = result_pointers[competition_id]
+            if pointer is None:
                 raise ValueError(
-                    f"Public forecast has matches absent from its private run: {forecast_id}"
+                    f"The published {competition_id} release index has no cumulative typed result"
                 )
-            model_version = public["model"]["version"]
-            model_versions.add(model_version)
-            base = {
-                "forecast_id": forecast_id,
-                "competition_id": competition_id,
-                "season_id": public["season_id"],
-            }
-            rows["forecasts"].append(
-                {
-                    **base,
-                    "generated_at": public["generated_at"],
-                    "state_observed_at": public["state_observed_at"],
-                    "model_results_cutoff": public["model_results_cutoff"],
-                    "public_model_version": model_version,
-                    "private_model_id": private.get("model", {}).get("id"),
-                    "private_schema_version": private["schema_version"],
-                    "simulations": public["simulations"],
-                    "public_href": pointer["href"],
-                    "private_prefix": private_prefix,
-                }
-            )
-            private_schema = private["schema_version"]
-            personnel_summary = private.get("personnel") or {}
-            for match in private.get("matches", ()):
-                assisted = match.get("market_assisted_probabilities")
-                on_public_surface = match["match_id"] in public_matches
-                rows["forecast_matches"].append(
-                    {
-                        **base,
-                        "match_id": match["match_id"],
-                        "kickoff_time": match.get("kickoff_time"),
-                        "match_date": match.get("match_date"),
-                        "home_team_id": match["home_team_id"],
-                        "away_team_id": match["away_team_id"],
-                        "status": match.get("status"),
-                        "on_public_surface": on_public_surface,
-                        "structural_p_home": match.get("p_home"),
-                        "structural_p_draw": match.get("p_draw"),
-                        "structural_p_away": match.get("p_away"),
-                        "market_assisted_p_home": None
-                        if assisted is None
-                        else assisted.get("p_home"),
-                        "market_assisted_p_draw": None
-                        if assisted is None
-                        else assisted.get("p_draw"),
-                        "market_assisted_p_away": None
-                        if assisted is None
-                        else assisted.get("p_away"),
-                        "market_family": None
-                        if assisted is None
-                        else assisted.get("market_family"),
-                        "market_observed_at": None
-                        if assisted is None
-                        else assisted.get("market_observed_at"),
-                        "personnel": _json(match.get("personnel")),
-                    }
+            database = Path(directory) / f"{competition_id}.duckdb"
+            data_store.download(pointer["database_key"], database)
+            if database.stat().st_size != pointer["database_bytes"]:
+                raise ValueError("Result database byte count does not match its pointer")
+            if file_hash(database) != pointer["database_sha256"]:
+                raise ValueError("Result database hash does not match its pointer")
+            for entry in entries:
+                result_id = entry["forecast_id"]
+                run = read_forecast_run(database, result_id)
+                public = read_public_projection(database, result_id)
+                try:
+                    private = read_forecast_result(database, result_id)
+                    forecast_schema = private.get("schema_version", 2)
+                except KeyError as error:
+                    raise ValueError(
+                        f"The cumulative {competition_id} result does not contain released result {result_id}"
+                    ) from error
+                model_versions.add(
+                    _append_typed_live_result(
+                        rows,
+                        entry,
+                        private,
+                        public,
+                        run,
+                        pointer["database_key"],
+                        forecast_schema,
+                    )
                 )
-                _match_detail_rows(match, base, private_schema, on_public_surface, rows)
-                _personnel_rows(match, base, personnel_summary.get("kappa"), rows)
-            simulation = private.get("simulation") or {}
-            _simulation_rows(simulation, base, rows, team_names=private.get("team_names"))
-            for team in simulation.get("teams", ()):
-                public_team = next(
-                    (row for row in public["teams"] if row["team_id"] == team["team_id"]), team
-                )
-                _team_rows("forecast", public_team, base, rows)
-            for state in private.get("team_strengths", ()):
-                rows["model_team_states"].append(
-                    {
-                        **base,
-                        "team_id": state["team_id"],
-                        "quality": state.get("quality"),
-                        "tilt": state.get("tilt"),
-                        "quality_sd": state.get("quality_sd"),
-                        "tilt_sd": state.get("tilt_sd"),
-                        "quality_tilt_covariance": state.get("quality_tilt_covariance"),
-                        "quality_level": state.get("quality_level"),
-                        "quality_form": state.get("quality_form"),
-                        "quality_level_sd": state.get("quality_level_sd"),
-                        "quality_form_sd": state.get("quality_form_sd"),
-                        "quality_level_form_covariance": state.get("quality_level_form_covariance"),
-                        "attack_log_rate": state.get("attack_log_rate"),
-                        "defense_log_rate": state.get("defense_log_rate"),
-                        "attack_sd": state.get("attack_sd"),
-                        "defense_sd": state.get("defense_sd"),
-                        "attack_multiplier": state.get("attack_multiplier"),
-                        "defense_multiplier": state.get("defense_multiplier"),
-                        "training_matches": state.get("training_matches"),
-                        "state_source": state.get("state_source"),
-                        "season_matches": state.get("season_matches"),
-                        "state": _json(state),
-                    }
-                )
-            rows["forecast_runs"].append(
-                {
-                    **base,
-                    "generated_at": public["generated_at"],
-                    "model_id": private.get("model", {}).get("id"),
-                    "model_version": model_version,
-                    "package_version": run.get("package_version"),
-                    "code_sha256": run.get("code_sha256"),
-                    "commit": run.get("execution", {}).get("commit"),
-                    "training_matches": private.get("training_matches"),
-                    "training_date_max": private.get("training_date_max"),
-                    "league_away_goal_rate": private.get("league_away_goal_rate"),
-                    "league_log_rate": math.log(private["league_away_goal_rate"])
-                    if private.get("league_away_goal_rate", 0) > 0
-                    else None,
-                    "home_scoring_multiplier": private.get("home_scoring_multiplier"),
-                    "home_advantage_log": math.log(private["home_scoring_multiplier"])
-                    if private.get("home_scoring_multiplier", 0) > 0
-                    else None,
-                    "state_uncertainty": private.get("state_uncertainty"),
-                    "future_state_evolution": private.get("future_state_evolution"),
-                    "personnel_kappa": personnel_summary.get("kappa"),
-                    "personnel_horizon_days": personnel_summary.get("horizon_days"),
-                    "personnel_records": personnel_summary.get("records"),
-                    "personnel_adjusted_fixtures": personnel_summary.get("adjusted_fixtures"),
-                    "persistent_state_changed": personnel_summary.get("persistent_state_changed"),
-                    "market_available_match_forecasts": (
-                        private.get("market_assistance") or {}
-                    ).get("available_match_forecasts"),
-                    "season_simulation_uses_market": (private.get("market_assistance") or {}).get(
-                        "season_simulation_uses_market"
-                    ),
-                    "fit_diagnostics": _json(private.get("fit_diagnostics")),
-                    "provenance": _json(run),
-                }
-            )
-            for index, specification in enumerate(
-                (private.get("fit_diagnostics") or {}).get("specifications", ())
-            ):
-                rows["model_specifications"].append(
-                    {
-                        **base,
-                        "specification_index": index,
-                        "quality_retention": specification.get("quality_retention"),
-                        "quality_sd": specification.get("quality_sd"),
-                        "form_retention": specification.get("form_retention"),
-                        "form_sd": specification.get("form_sd"),
-                        "tilt_retention": specification.get("tilt_retention"),
-                        "tilt_sd": specification.get("tilt_sd"),
-                        "dispersion": specification.get("dispersion"),
-                        "chance_probability": specification.get("chance_probability"),
-                        "prior_weight": specification.get("prior_weight"),
-                        "posterior_weight": specification.get("posterior_weight"),
-                        "log_evidence": specification.get("log_evidence"),
-                    }
-                )
-            impact = public.get("impact") or {}
-            event_baselines = {
-                team["team_id"]: team.get("events", {}) for team in public.get("teams", ())
-            }
-            for fixture in impact.get("fixtures", ()):
-                carried = fixture.get("carried_from") or {}
-                counts = fixture.get("outcome_counts") or {}
-                rows["forecast_impact_fixtures"].append(
-                    {
-                        **base,
-                        "match_id": fixture["match_id"],
-                        "match_date": fixture.get("match_date"),
-                        "kickoff_time": fixture.get("kickoff_time"),
-                        "home_team_id": fixture.get("home_team_id"),
-                        "away_team_id": fixture.get("away_team_id"),
-                        "status": fixture.get("status"),
-                        "outcome": fixture.get("outcome"),
-                        "outcome_count_home": counts.get("home"),
-                        "outcome_count_draw": counts.get("draw"),
-                        "outcome_count_away": counts.get("away"),
-                        "sufficient_sample": fixture.get("sufficient_sample"),
-                        "max_standard_error": fixture.get("max_standard_error"),
-                        "top_rms_movement": fixture.get("top_rms_movement"),
-                        "unavailable_reason": fixture.get("unavailable_reason"),
-                        "carried_from_forecast_id": carried.get("forecast_id"),
-                        "carried_from_generated_at": carried.get("generated_at"),
-                        "impact_horizon_days": impact.get("horizon_days"),
-                        "impact_window_start": impact.get("window_start"),
-                        "impact_window_end": impact.get("window_end"),
-                        "impact_coverage": impact.get("coverage"),
-                        "minimum_conditional_samples": impact.get("minimum_conditional_samples"),
-                    }
-                )
-                for event, block in fixture.get("impacts", {}).items():
-                    for index, team_id in enumerate(block.get("team_id", ())):
-                        for outcome in ("home", "draw", "away"):
-                            values = block.get(outcome, ())
-                            baselines = block.get("baseline", ())
-                            movements = block.get("rms_movement", ())
-                            rows["forecast_impacts"].append(
-                                {
-                                    **base,
-                                    "match_id": fixture["match_id"],
-                                    "event": event,
-                                    "team_id": team_id,
-                                    "outcome": outcome,
-                                    "baseline": baselines[index]
-                                    if index < len(baselines)
-                                    else event_baselines.get(team_id, {}).get(event),
-                                    "conditional_probability": values[index]
-                                    if index < len(values)
-                                    else None,
-                                    "rms_movement": movements[index]
-                                    if index < len(movements)
-                                    else None,
-                                    "carried_from_forecast_id": carried.get("forecast_id"),
-                                    "carried_from_generated_at": carried.get("generated_at"),
-                                }
-                            )
     return rows, updated, model_versions
+
+
+def _live_rows(data_store, publish_store, forecast_ids: tuple[str, ...] | None = None):
+    result_pointers = {
+        competition_id: data_store.get_json(f"state/results/{competition_id}.json")
+        for competition_id in COMPETITION_IDS
+    }
+    return _typed_live_rows(data_store, publish_store, result_pointers, forecast_ids)
 
 
 def _hindcast_rows(

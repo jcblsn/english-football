@@ -8,20 +8,20 @@ This page states how the product runs, what it publishes and where it keeps old 
 uv run epl-forecast operate
 ```
 
-`operate` does these steps. It keeps collection files, forecast renderings and verification reports in temporary directories that it deletes at the end of the run.
+`operate` does these steps. It keeps collection files and local working databases in temporary directories that it deletes at the end of the run.
 
 1. It loads compact operational state from `page324-data`.
 2. It collects each data source when that source is eligible. A retained response that is still inside its refresh interval is not requested, downloaded or normalized again. The run reads a retained body only when collection needs it, for example to find the teams in a fixture list.
 3. It uploads only the raw payloads and canonical batches created in this run. It updates the state that makes them visible only after those objects exist. When a run collects nothing new, it does not write the collection state, the manifest catalog or an audit with the same content.
 4. It calculates a fingerprint from the effective model inputs, the forecast code and configuration, and the public model version.
 5. It runs each division whose last successful fingerprint differs.
-6. It writes and verifies each typed private result against the product contract by using its temporary rendering.
-7. It commits the cumulative result database and applicable fit state to `page324-data`. It does not upload the temporary rendering, logs or verification tree.
+6. It writes and verifies each typed private result directly against the product contract.
+7. It commits the cumulative result database and applicable fit state to `page324-data`.
 8. It writes each verified public document and immutable release receipt to `page324-publish`, then updates the forecast index and prospective record. A run that publishes nothing writes `record.json` only when a result changes it.
 
 A failed or unverified division does not publish. Other verified divisions in the same run can publish and advance their own latest pointers. The next run retries only the divisions that do not have the current successful fingerprint.
 
-Private typed forecast detail has a 14-day rolling window. Every issued result also keeps a compact public projection and its run identity in the typed result database. Historical analysis uses that compact projection after private detail expires. See [capacity and retention](capacity.md). Production object cleanup follows the [migration and rollback](migration.md) runbook and requires a reviewed deletion manifest.
+Private typed forecast detail has indefinite retention. An issued prospective forecast keeps its complete analytical result, compact public projection and run identity in the typed result database. Age does not authorize deletion of forecast facts. Production object cleanup can remove temporary renderings, logs and superseded physical generations only through the reviewed manifest process. See [capacity and retention](capacity.md) and [migration and rollback](migration.md).
 
 | Option | Effect |
 | --- | --- |
@@ -38,6 +38,8 @@ Fixture lists are eligible each hour. Match details are eligible every 9 minutes
 Each collection run that sends requests to API-Football writes one usage record to `audits/api_football/<UTC timestamp>.json` in `page324-data`. The record has the number of requests and the last daily limit and remaining values from the provider. `audits/collection.json` shows the same values for the most recent run. Use these records to see the real usage over a week.
 
 `audits/collection.json` also has an informational readiness summary. It reports finished matches that still have incomplete xG after three days, Premier League matches in the next seven days that have no market data, and FPL and API-Football availability disagreements in the personnel horizon. These signals do not stop collection, forecasting or publication.
+
+Each operation emits machine-readable timings for collection, input preparation, each division forecast, verification, publication and the full wake. Its final benchmark block reports Class A and Class B operations, transferred bytes, the fit-state status of each computed division and the selected recomputation action. The Pages workflow duration supplies the final deployment timing. Record the first ordinary scheduled changed run after a release; do not use a forced or idle migration run as the production benchmark.
 
 A new forecast is due only when the effective model inputs for that competition or the statistical model code and configuration change. A schedule change in one division does not cause another division to run. Availability and injury data do not change the fingerprint because the structural model does not use them. Publication, site and pipeline code also do not change the statistical fingerprint. A repeated provider response with the same consumed values does not cause publication only because its retrieval time changed.
 
@@ -58,7 +60,7 @@ A published document carries two version numbers. They answer different question
 
 A reader that parses documents uses `schema_version`. A reader that compares numbers over time uses `model_version`. One can change without the other: `v0.2` changes the forecast semantics, and it adds the optional `personnel` block without raising any `schema_version`.
 
-Each document kind carries its own `schema_version`. There is no single number for the whole surface, and the numbers do not move together. The private forecast archive that `epl-forecast forecast` writes is a different artifact from the published forecast document, and it keeps its own `schema_version`.
+Each document kind carries its own `schema_version`. There is no single number for the whole surface, and the numbers do not move together. Typed private result tables and public forecast documents have separate schema versions.
 
 Private forecast schema version 2 retains three explicit match-probability stages: the unadjusted model distribution, the personnel-adjusted score distribution, and the outcome-only market-assisted pool. It retains a score grid for each score-generating stage. Public forecast schema version 3 is unchanged because the public horizon and probability fields did not change.
 
@@ -81,11 +83,11 @@ A new version needs new hindcasts. The hindcast edition of a version freezes its
 ## Single steps
 
 ```sh
-uv run epl-forecast forecast --competition eng-league-one --output runs/check/l1
-uv run epl-forecast verify --archive runs/check/l1 --output runs/check/l1-verification
+uv run epl-forecast forecast --competition eng-league-one --results runs/check/l1.duckdb --result-id check
+uv run epl-forecast verify --results runs/check/l1.duckdb --result-id check
 ```
 
-`forecast` writes a private archive: `forecast.json`, `run.json`, CSV tables and an HTML page. `verify` writes `verification.json` and fails if any check fails.
+`forecast` writes the authoritative typed result. `verify` reads that result and fails if any check fails. The commands can restore provider evidence through their storage adapter, but model and verification code receive only the selected local input or typed result.
 
 ## Publication boundary
 
@@ -186,7 +188,7 @@ A season hindcast is a season-state trajectory of a completed season. A match hi
 uv run epl-forecast match-hindcast --workers 7
 ```
 
-The command reads the canonical history from `page324-data` and the forecast archives from `page324-publish`. Use `--competition` to make a part of the bridge, and `--season` to name a season other than the one the boundary falls in.
+The command reads the canonical history from `page324-data` and the competition release indexes from `page324-publish`. Use `--competition` to make a part of the bridge, and `--season` to name a season other than the one the boundary falls in.
 
 The rules for each match hindcast:
 
@@ -199,7 +201,7 @@ The rules for each match hindcast:
 
 ### The retrospective and prospective handoff
 
-`prospective_from` is the first London day on which a live forecast of the model version covered that division. It is derived from the division's forecast archive, which is the authority for what the product published, so no separate release metadata can drift away from it. A published forecast covers only kickoffs after it was generated, so no prospective row of a version in that division can fall before that day. The bridge therefore ends on the day before, and the two products can never overlap. For `v0.3.0` the first live forecast of each division was published on 2026-09-17, so every bridge ends on 2026-09-16.
+`prospective_from` is the first London day on which a live forecast of the model version covered that division. It is derived from the division's competition release index, which is the authority for what the product published, so no separate release metadata can drift away from it. A published forecast covers only kickoffs after it was generated, so no prospective row of a version in that division can fall before that day. The bridge therefore ends on the day before, and the two products can never overlap. For `v0.3.0` the first live forecast of each division was published on 2026-09-17, so every bridge ends on 2026-09-16.
 
 The handoff belongs to the division, not to the release. Production publishes each division on its own and lets one fail while the others go out, so a release can leave the divisions on different versions for a time. A division that has no live forecast of the version gets no bridge at all, rather than one that stops on a day its own coverage never reached, and the run result names it under `skipped`.
 
@@ -221,7 +223,7 @@ Making the bridge again for a version that already has one rewrites the season d
 
 ## Prospective record
 
-`record.json` keeps one pending last pre-kickoff forecast for each match. As results arrive, the pipeline moves these small records to the settled list and recalculates the summaries. It does not read the forecast archive during a routine run. It reports H/D/A log loss, Brier score and classwise ECE, overall and for each division. The record can be rebuilt from the partitioned competition archives when necessary.
+`record.json` keeps one pending last pre-kickoff forecast for each match. As results arrive, the pipeline moves these small records to the settled list and recalculates the summaries. It does not read historical typed detail during a routine run. It reports H/D/A log loss, Brier score and classwise ECE, overall and for each division. The record can be rebuilt from the competition release indexes and compact typed projections when necessary.
 
 ## Viewer
 

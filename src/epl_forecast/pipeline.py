@@ -1,17 +1,17 @@
 """Run collection, verified forecasts and publication from an ephemeral workspace."""
 
 import json
-import subprocess
-import sys
 import tempfile
 import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from epl_forecast.cli import forecast_result
 from epl_forecast.cloud import sync_data
 from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.data.capture import SourceAccessError
@@ -27,7 +27,6 @@ from epl_forecast.publication import (
 from epl_forecast.record import realized_outcomes, update_record
 from epl_forecast.results import (
     clone_forecast_result,
-    expire_forecast_detail,
     read_forecast_result,
     store_public_projection,
 )
@@ -47,6 +46,7 @@ from epl_forecast.storage import (
     sha256_bytes,
     write_immutable,
 )
+from epl_forecast.verification import verify_result
 
 PRODUCT_MODEL = "M10-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
@@ -54,7 +54,6 @@ LEAGUES = COMPETITION_IDS
 REPOSITORY = Path(__file__).resolve().parents[2]
 SNAPSHOT_POINTER = "state/canonical-snapshot.json"
 LONDON = ZoneInfo("Europe/London")
-RESULT_DETAIL_RETENTION = timedelta(days=14)
 
 
 @dataclass
@@ -68,11 +67,11 @@ class PreparedSnapshot:
 @dataclass
 class ForecastAttempt:
     league: str
-    archive: Path
     result_store: Path
     result_version: str | None
     fit_store: Path
     fit_version: str | None
+    fit_state_status: str | None
     failure: dict | None
 
 
@@ -86,18 +85,43 @@ def progress(event: str, **details) -> None:
     )
 
 
+def operation_benchmark(
+    result: dict,
+    operation_started: float,
+    data_store,
+    publish_store,
+    *,
+    actions: dict[str, str] | None = None,
+    fit_states: dict[str, str | None] | None = None,
+) -> dict:
+    stores = {"data": data_store.metrics(), "publication": publish_store.metrics()}
+    combined = {
+        key: sum(metrics.get(key, 0) for metrics in stores.values())
+        for key in set().union(*(metrics.keys() for metrics in stores.values()))
+        if key.endswith("_requests") or key in {"request_bytes", "response_bytes"}
+    }
+    benchmark = {
+        "wake_to_completion_seconds": round(time.monotonic() - operation_started, 3),
+        "class_a_operations": sum(combined.get(f"{name}_requests", 0) for name in ("put", "list")),
+        "class_b_operations": sum(combined.get(f"{name}_requests", 0) for name in ("get", "head")),
+        "request_bytes": combined.get("request_bytes", 0),
+        "response_bytes": combined.get("response_bytes", 0),
+        "recomputed_stages": actions or {},
+        "fit_state_by_division": fit_states or {},
+        "stores": stores,
+    }
+    result["benchmark"] = benchmark
+    progress("operation_finished", status=result["status"], **benchmark)
+    return result
+
+
 def forecast_id(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H%M%SZ")
-
-
-def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, text=True, capture_output=True, check=False, cwd=REPOSITORY)
 
 
 def run_forecast(
     league: str,
     cutoff: datetime,
-    output: Path,
     simulations: int,
     *,
     snapshot: Path | None = None,
@@ -106,48 +130,26 @@ def run_forecast(
     fits: Path | None = None,
     result_id: str | None = None,
 ):
-    command = [
-        sys.executable,
-        "-m",
-        "epl_forecast.cli",
-        "forecast",
-        "--competition",
-        league,
-        "--cutoff",
-        cutoff.isoformat(),
-        "--config",
-        str(PRODUCT_CONFIG),
-        "--model",
-        PRODUCT_MODEL,
-        "--output",
-        str(output),
-        "--simulations",
-        str(simulations),
-    ]
-    for option, value in (
-        ("--snapshot", snapshot),
-        ("--snapshot-manifest", snapshot_manifest),
-        ("--results", results),
-        ("--fits", fits),
-        ("--result-id", result_id),
-    ):
-        if value is not None:
-            command.extend([option, str(value)])
-    return _run(command)
-
-
-def verify_archive(archive: Path, output: Path):
-    return _run(
-        [
-            sys.executable,
-            "-m",
-            "epl_forecast.cli",
-            "verify",
-            "--archive",
-            str(archive),
-            "--output",
-            str(output),
-        ]
+    return forecast_result(
+        SimpleNamespace(
+            cutoff=cutoff,
+            snapshot=snapshot,
+            snapshot_manifest=snapshot_manifest,
+            competition=league,
+            season=None,
+            max_snapshot_age_hours=24,
+            config=PRODUCT_CONFIG,
+            model=PRODUCT_MODEL,
+            fits=fits,
+            europe_scenario=None,
+            adjustments=None,
+            market_pool=Path("configs/market_pool.json"),
+            simulations=simulations,
+            seed=20260905,
+            max_goals=10,
+            results=results,
+            result_id=result_id,
+        )
     )
 
 
@@ -160,76 +162,91 @@ def forecast_and_verify(
     prepared: PreparedSnapshot,
     data_store,
 ) -> ForecastAttempt:
-    archive = attempt / league
     result_store = attempt.parent / "results" / f"{league}.duckdb"
     result_version = prepare_result_store(data_store, league, result_store)
     fit_store = attempt.parent / "fits" / f"{league}.duckdb"
     fit_version = prepare_fit_store(data_store, league, fit_store)
     forecast_started = time.monotonic()
     progress("forecast_started", competition_id=league)
-    forecast = run_forecast(
-        league,
-        now,
-        archive,
-        simulations,
-        snapshot=prepared.database,
-        snapshot_manifest=prepared.manifest_path,
-        results=result_store,
-        fits=fit_store,
-        result_id=run_id,
-    )
-    write_immutable(
-        attempt / f"{league}-forecast.log", (forecast.stdout + forecast.stderr).encode()
-    )
-    if forecast.returncode:
+    try:
+        _, run, _ = run_forecast(
+            league,
+            now,
+            simulations,
+            snapshot=prepared.database,
+            snapshot_manifest=prepared.manifest_path,
+            results=result_store,
+            fits=fit_store,
+            result_id=run_id,
+        )
+    except Exception as error:
         progress(
             "forecast_failed",
             competition_id=league,
             elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+            detail=str(error),
         )
         return ForecastAttempt(
             league,
-            archive,
             result_store,
             result_version,
             fit_store,
             fit_version,
-            {"league": league, "stage": "forecast", "detail": forecast.stderr[-800:]},
+            None,
+            {"league": league, "stage": "forecast", "detail": str(error)[-800:]},
         )
+    fit_state_status = (run.get("fit_checkpoint") or {}).get("status")
     progress(
         "forecast_finished",
         competition_id=league,
         elapsed_seconds=round(time.monotonic() - forecast_started, 3),
+        fit_state_status=fit_state_status,
     )
-    reports = attempt / f"{league}-verification"
     verification_started = time.monotonic()
     progress("verification_started", competition_id=league)
-    verification = verify_archive(archive, reports)
-    write_immutable(
-        attempt / f"{league}-verify.log", (verification.stdout + verification.stderr).encode()
-    )
-    if verification.returncode:
+    try:
+        verification = verify_result(result_store, run_id)
+    except Exception as error:
         progress(
             "verification_failed",
             competition_id=league,
             elapsed_seconds=round(time.monotonic() - verification_started, 3),
+            detail=str(error),
         )
         return ForecastAttempt(
             league,
-            archive,
             result_store,
             result_version,
             fit_store,
             fit_version,
-            {"league": league, "stage": "verify", "detail": verification.stdout[-800:]},
+            fit_state_status,
+            {"league": league, "stage": "verify", "detail": str(error)[-800:]},
+        )
+    if verification["failures"]:
+        detail = "; ".join(row["check"] for row in verification["checks"] if not row["passed"])
+        progress(
+            "verification_failed",
+            competition_id=league,
+            elapsed_seconds=round(time.monotonic() - verification_started, 3),
+            failures=verification["failures"],
+        )
+        return ForecastAttempt(
+            league,
+            result_store,
+            result_version,
+            fit_store,
+            fit_version,
+            fit_state_status,
+            {"league": league, "stage": "verify", "detail": detail[-800:]},
         )
     progress(
         "verification_finished",
         competition_id=league,
         elapsed_seconds=round(time.monotonic() - verification_started, 3),
+        checks=len(verification["checks"]),
     )
     return ForecastAttempt(
-        league, archive, result_store, result_version, fit_store, fit_version, None
+        league, result_store, result_version, fit_store, fit_version, fit_state_status, None
     )
 
 
@@ -670,7 +687,13 @@ def operate(
                 )
         except SourceAccessError as error:
             progress("collection_failed", detail=str(error))
-            return {"status": "skipped", "reason": str(error)}
+            result.update(status="skipped", reason=str(error))
+            return operation_benchmark(
+                result,
+                operation_started,
+                data_store,
+                publish_store,
+            )
         progress(
             "collection_finished",
             api_football_calls=result["collection"]["api_football"]["calls"],
@@ -733,12 +756,13 @@ def operate(
                 publish_store.put_json("record.json", record)
             result["public_changed"] = record_changed
             result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
-            progress(
-                "operation_finished",
-                elapsed_seconds=round(time.monotonic() - operation_started, 3),
-                status=result["status"],
+            return operation_benchmark(
+                result,
+                operation_started,
+                data_store,
+                publish_store,
+                actions=actions,
             )
-            return result
         run_id = forecast_id(now)
         return _forecast_and_publish(
             result,
@@ -816,7 +840,6 @@ def _forecast_and_publish(
             impact_state,
         )
         store_public_projection(row.result_store, run_id, document)
-        expire_forecast_detail(row.result_store, now - RESULT_DETAIL_RETENTION)
         try:
             commit_result_store(data_store, league, row.result_store, row.result_version)
         except ConditionalWriteFailed:
@@ -871,7 +894,6 @@ def _forecast_and_publish(
                 impact_state,
             )
             store_public_projection(result_store, run_id, document)
-            expire_forecast_detail(result_store, now - RESULT_DETAIL_RETENTION)
             commit_result_store(data_store, league, result_store, result_version)
             refresh_log = attempt / league / "refresh.json"
             refresh_log.parent.mkdir(parents=True)
@@ -892,12 +914,15 @@ def _forecast_and_publish(
             failures.append({"league": league, "stage": "result_refresh", "detail": str(error)})
     if not documents:
         result.update(status="failed", failures=failures, attempt=str(attempt))
-        write_immutable(attempt / "pipeline.json", json_bytes(result))
-        progress(
-            "operation_finished",
-            elapsed_seconds=round(time.monotonic() - operation_started, 3),
-            status=result["status"],
+        result = operation_benchmark(
+            result,
+            operation_started,
+            data_store,
+            publish_store,
+            actions=actions,
+            fit_states={league: row.fit_state_status for league, row in attempts.items()},
         )
+        write_immutable(attempt / "pipeline.json", json_bytes(result))
         return result
     progress("publication_started", forecasts=len(documents))
     current = publish_documents(publish_store, documents, policy)
@@ -914,7 +939,6 @@ def _forecast_and_publish(
         current_forecasts=len(current["forecasts"]),
         scored_matches=record["summary"].get("overall", {}).get("scored", 0),
     )
-    write_immutable(attempt / "pipeline.json", json_bytes(result))
     competition_state = state.setdefault("competitions", {})
     for document in documents:
         competition_state[document["competition_id"]] = {
@@ -927,10 +951,13 @@ def _forecast_and_publish(
         }
     data_store.put_json("state/forecast.json", state)
     data_store.put_json("state/impacts.json", impact_state)
-    progress(
-        "operation_finished",
-        elapsed_seconds=round(time.monotonic() - operation_started, 3),
-        published=len(result["published"]),
-        status=result["status"],
+    result = operation_benchmark(
+        result,
+        operation_started,
+        data_store,
+        publish_store,
+        actions=actions,
+        fit_states={league: row.fit_state_status for league, row in attempts.items()},
     )
+    write_immutable(attempt / "pipeline.json", json_bytes(result))
     return result

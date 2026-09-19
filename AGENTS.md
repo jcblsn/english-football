@@ -32,5 +32,7 @@ A `uv` command in this repository may warn that `VIRTUAL_ENV` does not match the
 - Fetch through `src/epl_forecast/data/capture.py`, never a web-reader tool. Football-Data 503s through readers and on the `www` host.
 - Retained Understat payloads are gzip; decompress on the `\x1f\x8b` magic byte. Legacy FPL archives (2016–19) are Latin-1, not UTF-8.
 - Team identity comes from `src/epl_forecast/data/teams.csv` verbatim — extend the reviewed registry rather than inventing a slug.
-- The private R2 bucket `page324-data` is the only source of canonical evidence. `Dataset` reads R2. Only `operate` collects, and it captures into a temporary workspace that it deletes after upload. Do not add a local data directory, a `--data` option, or a local copy of R2 data that a command reads without first checking it against R2.
+- R2 pointers and immutable revisions are the durable authority for canonical evidence, fit state, and typed forecast results. Production restores and verifies a local snapshot of the selected canonical revision. That verified local snapshot is the normal input for forecasting and other computation.
+- Only storage, collection, restore, and analysis-session adapters can discover or read R2. Low-level model, simulation, verification, and publication code must receive explicit local data or typed results. It must not create a `Dataset` that discovers R2.
+- Only `operate` collects. It captures into a temporary workspace that it deletes after upload. Do not add an unverified local data source, a `--data` option, or a local copy that bypasses the selected R2 pointer and revision check.
 - Preserve raw provider evidence. When a source is internally inconsistent, mark the field unknown and surface it in the audit; do not normalize it away.

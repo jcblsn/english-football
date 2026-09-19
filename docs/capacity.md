@@ -24,9 +24,16 @@ A read-only inventory of both buckets found 3,072,450,503 bytes on 18 September 
 | `research/` | 1,624 | 738,048,127 | Not part of the product occupancy plan. Protect it in the approved backup before an authorized move or deletion. |
 | Published forecasts, hindcasts and record | 2,621 | 199,731,464 | Retain. |
 
-The final post-retention inventory on 19 September 2026 is 2,316,739,847 bytes: 2,114,434,326 bytes in the private data bucket and 202,305,521 bytes in the publication bucket. The private bucket has 26,310 objects, and the publication bucket has 2,633 objects. After exclusion of the separately protected 738,048,127-byte `research/` archive, current product occupancy is 1.579 GB.
+The final post-retention inventory on 19 September 2026 has two required occupancy measures:
 
-The capacity model keeps a conservative 1.86 GB starting point. It includes the existing raw and request history, the selected canonical catalog, one verified snapshot, four fit stores, a mature 14-day private-result window, compact issued projections, the existing private hindcasts and the current public bucket. The exact cleanup removed the superseded live run archives, canonical batches, snapshot generations and result generations. Current occupancy is below the modeled start because the private-result window is not yet mature and the measured fit stores total 20,758,528 bytes.
+| Measure | Objects | Bytes |
+| --- | ---: | ---: |
+| Total billable R2 occupancy | 28,943 | 2,316,739,847 |
+| Product-only occupancy | 27,319 | 1,578,691,720 |
+
+The difference is the separately protected `research/` archive: 1,624 objects and 738,048,127 bytes. It counts toward the R2 service allowance even though it is outside the product occupancy target. The measured research growth since the post-retention baseline is zero objects and zero bytes. Every projection on this page assumes zero research growth. New research data in these buckets invalidates that assumption and requires a capacity review.
+
+The current product-only starting point is the measured 1.579 GB. It includes the existing raw and request history, the selected canonical catalog, one verified snapshot, four fit stores, all migrated typed issued results, the existing private hindcasts and the current public bucket. The exact cleanup removed superseded live run archives, canonical batches, snapshot generations and result generations. The forward projection below predates the indefinite issued-result contract and is not an accepted capacity forecast until the measured table-level result growth replaces it.
 
 ## Recurring measurement
 
@@ -46,15 +53,17 @@ The measured four-division 10,000-path calculation finished in 147.51 seconds af
 | Canonical observation history | One current verified snapshot plus the active canonical batches that collection still needs. Remove an unreferenced physical batch only after backup and reconciliation. |
 | Snapshot generations | One pointed generation in steady state. Keep the prior object only through the pointer commit and smoke check. Report the two-file overlap as peak storage. |
 | Fit state | One pointed cumulative database for each division. Its schema-declared checkpoints can contain more than one logical fitting boundary. |
-| Private forecast detail | 14 days. A recent lightweight revision also protects its structural parent. |
+| Private forecast detail | Indefinite for every issued prospective forecast. |
 | Issued forecast projection and release receipt | Indefinite. One compact projection stays in the typed result database and one sanitized document stays on the public surface. |
 | Result database generations | One pointed generation for each division in steady state. The prior immutable generation is a commit-time overlap, not permanent retention. |
 | Hindcasts | Retain each released model edition until an explicit product-version disposition removes it. |
 | Research and migration evidence | Store outside the steady product roots. Never delete it before the approved backup and disposition check. |
 
-The result writer refuses to expire private detail when the compact issued projection is absent. Recent result lineage is protected. Analysis of an expired result uses the compact typed projection and does not fetch the historical public object. It exposes the retained public grain and labels the synthetic private schema as version 1. Full score, simulation, personnel and provenance detail remains available only inside the 14-day window.
+The production writer does not expire issued-result detail by age. Historical analysis reads the complete typed result. A compact public projection is a publication representation and is not a substitute for the private analytical grain. Any proposal to discard issued prospective facts is a separate product and data-retention decision that requires explicit approval.
 
-Physical generation deletion is not automatic. The migration run produced and applied one exact object manifest after a fresh inventory match. Routine operation still needs an explicit retention task for superseded generations.
+`.github/workflows/retention.yml` runs a read-only exact-manifest plan each week. It records total billable occupancy, product-only occupancy, research growth, all deletion candidates and superseded snapshot, fit and result generations. It uploads the plan and a short report for 90 days. It fails as an operational alert when any reviewed-cleanup limit in `configs/retention.toml` is reached.
+
+A reviewed cleanup is required at 5,000 candidate objects, 250 MB of candidates, eight superseded snapshot/fit/result objects, 5,000 net new objects, 6 GB of product occupancy, any research-byte growth, or 90 days since the baseline review. The workflow never deletes. An operator must review its exact plan and run `scripts/apply_r2_retention.py` separately. The first post-cutover dry run on 19 September 2026 found zero candidates, zero superseded generations and zero object or byte growth.
 
 ## Workload assumptions
 
@@ -63,13 +72,13 @@ Physical generation deletion is not automatic. The migration run produced and ap
 | Scheduled wakes | 8 per day | 8 per day |
 | Matchday-like changed deltas | 4 per day | 8 per day on 60 days and 4 per day otherwise |
 | Full issued forecasts | 4 per day | 6 per day on 60 days and 4 per day otherwise |
-| Detailed result window | 14 days | 14 days |
+| Issued result detail | Indefinite | Indefinite |
 | New hindcast editions | 1 per year | 1 per year |
 | New research/backfill bytes in product buckets | 0 | 0 |
 | New analyst cold starts | 30 per month | 300 per month |
 | Retry allowance | Included in the operation estimate | 25% of request operations |
 
-The base case treats four wakes as no-change or reusable-source wakes. The busy case applies the measured matchday-like delta at every wake for 60 days. Raw and canonical growth scale from the measured 44-batch delta. Issued projection growth uses the current public forecast average, about 0.289 MB, once in the public bucket and once in the compact typed history. One new hindcast edition uses the current combined private and public edition size, about 0.35 GB. Research and one-off historical backfills are separate capacity events.
+The base case treats four wakes as no-change or reusable-source wakes. The busy case applies the measured matchday-like delta at every wake for 60 days. Raw and canonical growth scales from the measured 44-batch delta. The issued-projection values in the next table include only the compact projection and public document. They do not include indefinite detailed-result growth and therefore are not a complete capacity forecast. One new hindcast edition uses the current combined private and public edition size, about 0.35 GB. Research and one-off historical backfills are separate capacity events.
 
 ## Projection
 
@@ -80,7 +89,7 @@ The base case treats four wakes as no-change or reusable-source wakes. The busy 
 | 24-month base sensitivity | 1.86 GB | 1.20 GB | 1.34 GB | 2.30 GB | 0.06 GB | 1.68 GB | 0.70 GB | 9.14 GB |
 | 24-month busy sensitivity | 1.86 GB | 1.39 GB | 1.57 GB | 2.67 GB | 0.07 GB | 1.83 GB | 0.70 GB | 10.09 GB |
 
-The 12-month cases stay below the internal 7 GB target only after the authorized cleanup and retention policy. The 24-month sensitivities do not. At 6 GB, or no later than nine months after cutover, review canonical partitioning, collection frequency and the duplication between active canonical batches and the snapshot. Do not wait for the R2 free-tier limit.
+These totals are obsolete because they omit indefinite detailed-result growth. Do not use them for a capacity decision. Replace them with the measured table-level model before the next capacity review. At 6 GB, or no later than nine months after cutover, review canonical partitioning, collection frequency and the duplication between active canonical batches and the snapshot. Do not wait for the R2 free-tier limit.
 
 One changed wake is projected at about 627 Class B and 209 Class A operations before forecast publication. This includes the measured 415 DuckDB source reads, snapshot and catalog reads, immutable-object existence checks and the measured 204 collection objects. Base usage is about 78,000 Class B and 26,000 Class A operations per month. The busy case with the retry allowance is about 112,000 Class B and 38,000 Class A operations per month. Fit, result, publication and analyst operations add less than 5,000 operations per month in this model. Both cases are below the internal and service limits.
 
@@ -88,10 +97,10 @@ At the end of the base year, a changed wake can download and upload a snapshot o
 
 ## Peaks and exclusions
 
-The final two-bucket live inventory is 2.32 GB before backup compression or versioning. The projection assumes that the protected backup is outside the two steady product buckets. A backup copied into the same R2 product account must be added in full and would consume part of the headroom.
+The final two-bucket billable inventory is 2.32 GB before backup compression or versioning. Product-only occupancy is 1.579 GB. The projection assumes that the protected backup is outside the two steady product buckets. A backup copied into the same R2 product account must be added in full and would consume part of the headroom.
 
 The final retention planner resolved 2,747 protected objects and listed 50,646 deletion candidates with 1,680,125,353 bytes. The candidate total contained 201,719,150 bytes of unreferenced canonical Parquet, 19,710,509 bytes of unselected manifests, 998,912,988 bytes of legacy forecast runs, 54,383,674 bytes of old run snapshots, 56,436,216 bytes of superseded canonical snapshots and 348,962,816 bytes of the four staged result generations. It listed all 1,624 `research/` objects and 738,048,127 bytes separately for review. The exact executor deleted all candidates in 51 requests and found zero survivors. The ignored evidence is at `runs/refactor/m4/final-retention-plan.json` and `runs/refactor/m4/final-retention-report.json`.
 
 Each immutable pointer commit temporarily holds the old and new database. The projection reports only one steady generation. Migration can also hold the 3.07 GB old layout, the new 1.86 GB layout and the backup at the same time. That migration and recovery peak is separate from the steady target.
 
-The capacity gate is live-certified at current production size. The clean `main` runner collected evidence, extended and restored the snapshot, checked all four divisions and completed unchanged. A clean Pages run materialized and validated the complete public surface before deployment. A projected-size restore remains part of the review at 6 GB or nine months after cutover.
+The current production inventory is measured, but the forward operating-capacity gate is open until the indefinite detailed-result model is complete. The clean `main` runner collected evidence, extended and restored the snapshot, checked all four divisions and completed unchanged. A clean Pages run materialized and validated the complete public surface before deployment. Disaster recovery is not verified because no owner-confirmed bucket backup has been restored independently. A projected-size restore remains part of the review at 6 GB or nine months after cutover.

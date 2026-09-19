@@ -158,7 +158,7 @@ CATALOG_ROWS = (
         "forecasts",
         "one row per successful forecast and competition",
         "Successful live forecast identity, timing, model, simulation, and storage provenance.",
-        "competition forecast archive pointers and cumulative typed results",
+        "competition release indexes and cumulative typed results",
         "generated_at, state_observed_at, and model_results_cutoff have distinct meanings.",
         False,
         "A row exists only when a release pointer resolves to its typed result.",

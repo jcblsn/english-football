@@ -51,7 +51,7 @@ uv run epl-forecast operate
 
 ## Validation
 
-- Every forecast archive passes the checks in the [product contract](docs/mvp.md) before publication. For example, event probabilities must sum to the places that the rules award.
+- Every authoritative typed forecast result passes the checks in the [product contract](docs/mvp.md) before publication. For example, event probabilities must sum to the places that the rules award.
 - Historical season panels compare the structural model with M2 in every division: rank, points and event scores at five points in each season.
 - A match scoreboard compares M10 with M2 and with the betting market.
 - The prospective record scores each published forecast after the match.

@@ -2,7 +2,7 @@
 
 Four kinds of evidence support the structural model. This page gives the results and the commands to reproduce them. M10 replaced M7 in model version `v0.3.0`. The sections before [M10 Quality dynamics](#m10-quality-dynamics) report evidence that was made with M7, and they name M7.
 
-1. Product checks on every forecast archive.
+1. Product checks on every authoritative typed forecast result.
 2. Historical season panels in all four divisions.
 3. A match scoreboard in the Premier League.
 4. The prospective forecast record.
@@ -11,7 +11,7 @@ Each section names the code that produced its own evidence. Code commit `fc94353
 
 ## Product checks
 
-Every archive must pass the checks in the [product contract](mvp.md) before publication. A failed check stops the publication. These checks do not measure skill. They show that each forecast is internally consistent: probabilities, event totals, rules, sanctions, playoff conditioning and provenance.
+Every typed result must pass the checks in the [product contract](mvp.md) before publication. A failed check stops the publication. These checks do not measure skill. They show that each forecast is internally consistent: probabilities, event totals, rules, sanctions, playoff conditioning and provenance.
 
 ## Season panels
 

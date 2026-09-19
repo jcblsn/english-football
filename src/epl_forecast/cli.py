@@ -12,7 +12,7 @@ from epl_forecast.data.capture import SourceAccessError
 from epl_forecast.datasets import Dataset, load_dataset, timestamp
 from epl_forecast.evaluation import market_predictions, rolling_predictions, summarize
 from epl_forecast.live import LONDON, load_live_season
-from epl_forecast.live_forecast import check_freshness, export_forecast
+from epl_forecast.live_forecast import build_forecast, check_freshness
 from epl_forecast.models import make_model
 from epl_forecast.personnel import current_adjustments
 from epl_forecast.sanctions import load_registry
@@ -126,7 +126,8 @@ def evaluate_command(args) -> None:
     print(report)
 
 
-def forecast_command(args) -> None:
+def forecast_result(args) -> tuple[dict, dict, dict]:
+    """Calculate one live forecast and store its authoritative typed result."""
     cutoff = timestamp(args.cutoff) if args.cutoff else datetime.now(UTC)
     if args.snapshot_manifest and not args.snapshot:
         raise ValueError("--snapshot-manifest requires --snapshot")
@@ -189,9 +190,6 @@ def forecast_command(args) -> None:
         if args.adjustments
         else sanctions.known_adjustments(live.competition_id, live.season_id, as_of)
     )
-    output = args.output or Path("runs/forecasts") / datetime.now(UTC).strftime(
-        "%Y-%m-%dT%H%M%S.%fZ"
-    )
     market_pool = json.loads(args.market_pool.read_text()) if args.market_pool else None
     if market_pool and market_pool["structural_model_id"] != args.model:
         market_pool = None
@@ -215,12 +213,11 @@ def forecast_command(args) -> None:
         if market_pool is None
         else {**market_pool, "config_sha256": file_hash(args.market_pool)},
     }
-    result = export_forecast(
+    result = build_forecast(
         live,
         model,
         training,
         run,
-        output,
         args.simulations,
         args.seed,
         args.max_goals,
@@ -230,29 +227,29 @@ def forecast_command(args) -> None:
         market_pool,
         personnel=personnel,
     )
-    if args.results:
-        from epl_forecast.results import write_forecast_result
+    from epl_forecast.results import write_forecast_result
 
-        stored = write_forecast_result(
-            args.results,
-            result,
-            run,
-            input_revision=input_revision,
-            result_id=args.result_id,
-        )
-        print(f"Stored typed forecast result {stored['result_id']} in {args.results}")
+    stored = write_forecast_result(
+        args.results,
+        result,
+        run,
+        input_revision=input_revision,
+        result_id=args.result_id,
+    )
+    return result, run, stored
+
+
+def forecast_command(args) -> None:
+    result, _, stored = forecast_result(args)
+    print(f"Stored typed forecast result {stored['result_id']} in {args.results}")
     print(
-        f"Archived {len(result['matches'])} match forecasts and "
-        f"{len(result['team_strengths'])} team strengths to {output}"
+        f"Stored {len(result['matches'])} match forecasts and "
+        f"{len(result['team_strengths'])} team strengths"
     )
     if result["simulation"]:
-        print(
-            f"Fixed {len(live.played)} captured full-time results; "
-            f"simulated {len(live.remaining)} fixtures {args.simulations:,} times"
-        )
+        print(f"Simulated the remaining season {args.simulations:,} times")
     else:
         print(result["simulation_unavailable_reason"])
-    print(f"Open {output / 'index.html'}")
 
 
 def operate_command(args) -> None:
@@ -305,9 +302,13 @@ def snapshot_command(args) -> None:
 
 
 def verify_command(args) -> None:
-    from epl_forecast.verification import verify_archives
+    from epl_forecast.verification import verify_result
 
-    report = verify_archives(args.archive, args.output)
+    report = verify_result(args.results, args.result_id)
+    passed = len(report["checks"]) - report["failures"]
+    print(f"{args.result_id}: {passed}/{len(report['checks'])} checks passed")
+    for failure in (row for row in report["checks"] if not row["passed"]):
+        print(f"  FAILED {failure['check']}: {failure['detail']}")
     if report["failures"]:
         raise SystemExit(f"{report['failures']} product checks failed")
 
@@ -378,12 +379,11 @@ def parser() -> argparse.ArgumentParser:
         description="Probabilistic forecasts and season simulation for England's four league divisions"
     )
     commands = root.add_subparsers(dest="command", required=True)
-    forecast = commands.add_parser("forecast", help="Archive a current-season score-model forecast")
+    forecast = commands.add_parser("forecast", help="Store a current-season typed forecast result")
     forecast.add_argument("--cutoff", type=datetime.fromisoformat)
     forecast.add_argument("--competition", choices=COMPETITION_IDS, default=COMPETITION_IDS[0])
     forecast.add_argument("--season")
     forecast.add_argument("--config", type=Path, default=Path("configs/product.toml"))
-    forecast.add_argument("--output", type=Path)
     forecast.add_argument("--model", default="M10-xg-v1")
     forecast.add_argument("--simulations", type=int, default=10000)
     forecast.add_argument("--seed", type=int, default=20260905)
@@ -391,7 +391,7 @@ def parser() -> argparse.ArgumentParser:
     forecast.add_argument("--max-snapshot-age-hours", type=float, default=24)
     forecast.add_argument("--snapshot", type=Path)
     forecast.add_argument("--snapshot-manifest", type=Path)
-    forecast.add_argument("--results", type=Path)
+    forecast.add_argument("--results", type=Path, required=True)
     forecast.add_argument("--result-id")
     forecast.add_argument("--fits", type=Path)
     forecast.add_argument("--europe-scenario", type=Path)
@@ -410,11 +410,9 @@ def parser() -> argparse.ArgumentParser:
     )
     snapshot.add_argument("--output", type=Path, required=True)
     snapshot.set_defaults(func=snapshot_command)
-    verify = commands.add_parser(
-        "verify", help="Check forecast archives against the product contract"
-    )
-    verify.add_argument("--archive", type=Path, nargs="+", required=True)
-    verify.add_argument("--output", type=Path, required=True)
+    verify = commands.add_parser("verify", help="Check a typed forecast result")
+    verify.add_argument("--results", type=Path, required=True)
+    verify.add_argument("--result-id", required=True)
     verify.set_defaults(func=verify_command)
     datawrapper = commands.add_parser(
         "datawrapper-poc", help="Run the temporary Page 324 Datawrapper smoke test"

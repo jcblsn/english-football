@@ -28,11 +28,6 @@ def test_forecast_id_is_a_sortable_second():
     assert forecast_id(NOW) == "2026-09-10T224303Z"
 
 
-class Completed:
-    def __init__(self, returncode):
-        self.returncode, self.stdout, self.stderr = returncode, "", "forecast failed"
-
-
 class FakeDataset:
     def fixtures(self):
         return []
@@ -127,13 +122,10 @@ def disable_fit_store(monkeypatch):
     monkeypatch.setattr(pipeline, "prepare_result_store", lambda *args: None)
     monkeypatch.setattr(pipeline, "commit_result_store", lambda *args: {})
     monkeypatch.setattr(pipeline, "store_public_projection", lambda *args: None)
-    monkeypatch.setattr(pipeline, "expire_forecast_detail", lambda *args: {"expired_results": 0})
     monkeypatch.setattr(
         pipeline,
         "read_forecast_result",
-        lambda path, result_id: json.loads(
-            (path.parent.parent / result_id / path.stem / "forecast.json").read_text()
-        ),
+        lambda path, result_id: sample_forecast(competition=path.stem),
     )
 
 
@@ -173,24 +165,21 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
     """One division that cannot be forecast leaves the others published."""
     started = Barrier(4)
 
-    def fake_forecast(league, cutoff, output, simulations, **kwargs):
+    def fake_forecast(league, cutoff, simulations, **kwargs):
         started.wait(timeout=1)
         if league == "eng-championship":
-            return Completed(1)
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "forecast.json").write_text(json.dumps(sample_forecast(competition=league)))
-        (output / "run.json").write_text(json.dumps(sample_run()))
-        return Completed(0)
+            raise RuntimeError("forecast failed")
+        forecast = sample_forecast(competition=league)
+        run = sample_run()
+        kwargs["results"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["results"].write_bytes(b"typed result")
+        return forecast, run, {"result_id": kwargs["result_id"]}
 
-    def fake_verify(archive, output):
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "verification.json").write_text(
-            json.dumps({"archives": {str(archive): {"checks": [], "failures": 0}}})
-        )
-        return Completed(0)
+    def fake_verify(database, result_id):
+        return {"checks": [], "failures": 0}
 
     monkeypatch.setattr(pipeline, "run_forecast", fake_forecast)
-    monkeypatch.setattr(pipeline, "verify_archive", fake_verify)
+    monkeypatch.setattr(pipeline, "verify_result", fake_verify)
     disable_fit_store(monkeypatch)
     monkeypatch.setattr(
         pipeline,
@@ -605,21 +594,18 @@ def test_snapshot_commit_conflict_restores_winning_revision(tmp_path, monkeypatc
 
 
 def test_operation_does_not_retain_the_temporary_run_tree(tmp_path, monkeypatch):
-    def fake_forecast(league, cutoff, output, simulations, **kwargs):
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "forecast.json").write_text(json.dumps(sample_forecast(competition=league)))
-        (output / "run.json").write_text(json.dumps(sample_run()))
-        return Completed(0)
+    def fake_forecast(league, cutoff, simulations, **kwargs):
+        forecast = sample_forecast(competition=league)
+        run = sample_run()
+        kwargs["results"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["results"].write_bytes(b"typed result")
+        return forecast, run, {"result_id": kwargs["result_id"]}
 
-    def fake_verify(archive, output):
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "verification.json").write_text(
-            json.dumps({"archives": {str(archive): {"checks": [], "failures": 0}}})
-        )
-        return Completed(0)
+    def fake_verify(database, result_id):
+        return {"checks": [], "failures": 0}
 
     monkeypatch.setattr(pipeline, "run_forecast", fake_forecast)
-    monkeypatch.setattr(pipeline, "verify_archive", fake_verify)
+    monkeypatch.setattr(pipeline, "verify_result", fake_verify)
     disable_fit_store(monkeypatch)
     monkeypatch.setattr(
         pipeline,

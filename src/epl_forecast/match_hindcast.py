@@ -85,7 +85,7 @@ def private_key(model_version: str, competition_id: str, season_id: str, identit
 def prospective_start(publish_store, model_version: str, competition_id: str) -> date | None:
     """The first London day a live forecast of this model version covered this division.
 
-    The forecast archive of the division is the authority, so no release metadata can drift away
+    The competition release index is the authority, so no release metadata can drift away
     from what the product actually published. A published forecast only covers kickoffs after it
     was generated, so no prospective row of this version in this division falls before this day.
     Production publishes each division on its own, so one division can reach a version days

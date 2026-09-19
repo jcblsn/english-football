@@ -1,4 +1,4 @@
-"""Check a published forecast archive against what the product promises.
+"""Check an authoritative typed forecast result against what the product promises.
 
 The MVP contract is a list of things every archive must contain and every archive
 must be internally consistent about: probabilities that are probabilities, a score
@@ -7,27 +7,22 @@ whose event masses equal the number of places the competition actually awards, t
 rules and sanctions in force at the cutoff, a playoff bracket conditioned on the same
 paths as the table, and enough provenance to say what was known when.
 
-Every check reads only the archive, so it can be run on an old run as easily as a
-fresh one, and it fails loudly rather than reporting a score.
+Every check reads only the typed result database. It fails loudly rather than reporting a score.
 """
 
-import json
 from datetime import date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from epl_forecast.artifacts import execution_provenance
 from epl_forecast.competitions import competition as competition_info
 from epl_forecast.data.rules import league_rules, reviewed_rules_evidence
-from epl_forecast.datasets import Dataset, timestamp
+from epl_forecast.datasets import timestamp
 from epl_forecast.market import logarithmic_pool
 from epl_forecast.personnel import MAX_UNRESOLVED
 from epl_forecast.postseason import playoff_format
-from epl_forecast.sanctions import load_registry
 from epl_forecast.simulation import EVERY_TEAM
-from epl_forecast.storage import write_json
 
 LONDON = ZoneInfo("Europe/London")
 
@@ -58,9 +53,7 @@ class Checks:
         return [r for r in self.results if not r["passed"]]
 
 
-def verify(archive: Path) -> dict:
-    forecast = json.loads((archive / "forecast.json").read_text())
-    run = json.loads((archive / "run.json").read_text())
+def verify_forecast(forecast: dict, run: dict) -> dict:
     checks = Checks()
     competition = forecast["competition_id"]
     season = forecast["season_id"]
@@ -296,13 +289,7 @@ def verify(archive: Path) -> dict:
         "reviewed rules evidence is carried when it exists",
         simulation["ranking_rules_evidence"] == reviewed_rules_evidence(competition, season),
     )
-    dataset = Dataset(observed)
-    try:
-        expected_adjustments = load_registry(dataset).known_adjustments(
-            competition, season, cutoff_day
-        )
-    finally:
-        dataset.close()
+    expected_adjustments = run.get("adjustments", [])
     applied = {(a["team_id"], a["points"]) for a in simulation["point_adjustments"]}
     checks.check(
         "sanctions in force at the cutoff are applied",
@@ -432,18 +419,10 @@ def verify(archive: Path) -> dict:
     }
 
 
-def verify_archives(archives: list[Path], output: Path) -> dict:
-    """Verify each archive, write one report and print every failed check."""
-    report = {"execution": execution_provenance(), "archives": {}}
-    for archive in archives:
-        report["archives"][str(archive)] = verify(archive)
-    report["failures"] = sum(a["failures"] for a in report["archives"].values())
-    output.mkdir(parents=True, exist_ok=True)
-    write_json(output / "verification.json", report)
-    for name, result in report["archives"].items():
-        passed = len(result["checks"]) - result["failures"]
-        print(f"{name}: {passed}/{len(result['checks'])} checks passed", flush=True)
-        for failure in (r for r in result["checks"] if not r["passed"]):
-            print(f"  FAILED {failure['check']}: {failure['detail']}", flush=True)
-    print(output / "verification.json")
-    return report
+def verify_result(database: Path, result_id: str) -> dict:
+    from epl_forecast.results import read_forecast_result, read_forecast_run
+
+    return verify_forecast(
+        read_forecast_result(database, result_id),
+        read_forecast_run(database, result_id),
+    )
