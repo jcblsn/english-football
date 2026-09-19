@@ -783,6 +783,14 @@ def _result_lineage(connection, result_id: str) -> list[str]:
 
 
 def _is_market_replacement(connection, result_id: str) -> bool:
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info('forecast_result.forecast_runs')"
+        ).fetchall()
+    }
+    if "market_replacement" not in columns:
+        return False
     row = connection.execute(
         "SELECT coalesce(market_replacement, false) FROM forecast_result.forecast_runs "
         "WHERE result_id = ?",
@@ -825,6 +833,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         lineage = _result_lineage(connection, result_id)
         structural_result_id = lineage[-1]
         settings, metadata = _decoded(run[6]), _decoded(run[7])
+        forecast_metadata = _decoded(run[9]) or {}
         context = metadata["publication_context"]
         names = {}
         for revision_id in lineage:
@@ -1030,7 +1039,11 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             "simulations": settings.get("simulations", metadata["simulations"]),
             "teams": teams,
             "state_uncertainty": metadata.get("state_uncertainty"),
-            "match_impacts": _read_impacts(connection, structural_result_id),
+            "match_impacts": _read_impacts(
+                connection,
+                structural_result_id,
+                forecast_metadata.get("impact_window") or context.get("impact_window"),
+            ),
         }
         strengths = [
             {
@@ -1073,7 +1086,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             ).fetchall()
         ]
     return {
-        **(_decoded(run[9]) or {}),
+        **forecast_metadata,
         "competition_id": run[0],
         "competition_name": context["competition_name"],
         "season_id": run[1],
@@ -1090,7 +1103,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         "unscheduled_placeholder": context.get("unscheduled_placeholder"),
         "unsettled_placeholder": context.get("unsettled_placeholder"),
         "unsettled_fixtures": unsettled,
-        "impact_window": context.get("impact_window"),
+        "impact_window": forecast_metadata.get("impact_window") or context.get("impact_window"),
     }
 
 
@@ -1298,7 +1311,7 @@ def _insert_market_probabilities(
     return len(rows)
 
 
-def _read_impacts(connection, result_id: str) -> dict | None:
+def _read_impacts(connection, result_id: str, impact_window: dict | None = None) -> dict | None:
     metadata = connection.execute(
         """
         SELECT simulations, horizon_days, window_start, window_end, coverage,
@@ -1355,11 +1368,12 @@ def _read_impacts(connection, result_id: str) -> dict | None:
                 "impacts": list(grouped.values()),
             }
         )
+    impact_window = impact_window or {}
     return {
         "simulations": metadata[0],
         "horizon_days": metadata[1],
-        "window_start": _iso(metadata[2]),
-        "window_end": _iso(metadata[3]),
+        "window_start": impact_window.get("window_start") or _iso(metadata[2]),
+        "window_end": impact_window.get("window_end") or _iso(metadata[3]),
         "coverage": metadata[4],
         "minimum_conditional_samples": metadata[5],
         "smallest_outcome_count": metadata[6],

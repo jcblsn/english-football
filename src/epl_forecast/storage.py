@@ -100,6 +100,21 @@ class R2Store:
             aws_secret_access_key=config.secret_access_key,
             region_name="auto",
         )
+        if getattr(getattr(self.client, "meta", None), "events", None) is not None:
+            self.client.meta.events.register("needs-retry.s3", self._record_sdk_attempt)
+
+    def _record_sdk_attempt(self, *, event_name: str, **_kwargs) -> None:
+        operation_name = event_name.rsplit(".", 1)[-1]
+        operation = {
+            "GetObject": "get",
+            "HeadObject": "head",
+            "PutObject": "put",
+            "ListObjectsV2": "list",
+            "DeleteObjects": "delete",
+        }.get(operation_name, operation_name.lower())
+        with self._metrics_lock:
+            self._metrics["sdk_attempts"] += 1
+            self._metrics[f"{operation}_sdk_attempts"] += 1
 
     def _record(self, operation: str, *, read=0, written=0) -> None:
         with self._metrics_lock:

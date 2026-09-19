@@ -1,6 +1,6 @@
 import json
 from datetime import UTC, datetime
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +26,44 @@ TEST_IDENTITIES = {
 
 def test_forecast_id_is_a_sortable_second():
     assert forecast_id(NOW) == "2026-09-10T224303Z"
+
+
+def test_operation_benchmark_combines_sdk_attempts_and_duckdb_http():
+    class Metrics:
+        def __init__(self, values):
+            self.values = values
+
+        def metrics(self):
+            return self.values
+
+    result = pipeline.operation_benchmark(
+        {"status": "ok"},
+        pipeline.time.monotonic(),
+        Metrics(
+            {
+                "get_requests": 1,
+                "get_sdk_attempts": 2,
+                "put_requests": 1,
+                "put_sdk_attempts": 1,
+                "request_bytes": 11,
+                "response_bytes": 22,
+            }
+        ),
+        Metrics({"head_requests": 1, "head_sdk_attempts": 1}),
+        engine_http={
+            "request_bytes": 3,
+            "response_bytes": 7,
+            "by_method": [
+                {"method": "GET", "requests": 4},
+                {"method": "HEAD", "requests": 5},
+            ],
+        },
+    )
+
+    assert result["benchmark"]["class_a_operations"] == 1
+    assert result["benchmark"]["class_b_operations"] == 12
+    assert result["benchmark"]["request_bytes"] == 14
+    assert result["benchmark"]["response_bytes"] == 29
 
 
 class FakeDataset:
@@ -164,9 +202,12 @@ def install_fake_snapshot(monkeypatch, calls):
 def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypatch, capsys):
     """One division that cannot be forecast leaves the others published."""
     started = Barrier(4)
+    first_published = Event()
 
     def fake_forecast(league, cutoff, simulations, **kwargs):
         started.wait(timeout=1)
+        if league != "eng-premier-league":
+            assert first_published.wait(timeout=1)
         if league == "eng-championship":
             raise RuntimeError("forecast failed")
         forecast = sample_forecast(competition=league)
@@ -180,6 +221,15 @@ def test_a_division_that_fails_does_not_hold_back_the_others(tmp_path, monkeypat
 
     monkeypatch.setattr(pipeline, "run_forecast", fake_forecast)
     monkeypatch.setattr(pipeline, "verify_result", fake_verify)
+    publish_documents = pipeline.publish_documents
+
+    def publish_without_barrier(store, documents, policy):
+        current = publish_documents(store, documents, policy)
+        if documents[0]["competition_id"] == "eng-premier-league":
+            first_published.set()
+        return current
+
+    monkeypatch.setattr(pipeline, "publish_documents", publish_without_barrier)
     disable_fit_store(monkeypatch)
     monkeypatch.setattr(
         pipeline,
@@ -320,6 +370,46 @@ def test_record_only_change_requests_deploy_and_next_idle_wake_does_not(tmp_path
 
     idle = pipeline.operate(collect_first=False, data_store=data_store, publish_store=publish_store)
     assert not idle["public_changed"]
+
+
+def test_an_idle_wake_retries_a_pending_public_deployment(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "prepare_operation_snapshot",
+        lambda cutoff, store, workspace: prepared_snapshot(workspace),
+    )
+    install_fake_identities(monkeypatch)
+    monkeypatch.setattr(pipeline, "realized_outcomes", lambda fixtures: {})
+    fingerprint = pipeline.identities_fingerprint(TEST_IDENTITIES)
+    data_store = Store()
+    data_store.objects["state/forecast.json"] = {
+        "competitions": {
+            league: {
+                "fingerprint": fingerprint,
+                "identities": TEST_IDENTITIES,
+                "origin_date": pipeline.projection_day(datetime.now(UTC)),
+            }
+            for league in pipeline.LEAGUES
+        }
+    }
+    publish_store = Store()
+    desired = {"schema_version": 1, "revision_id": "pending", "forecasts": []}
+    publish_store.objects["deployments/desired.json"] = desired
+
+    pending = pipeline.operate(
+        collect_first=False, data_store=data_store, publish_store=publish_store
+    )
+
+    assert pending["status"] == "unchanged"
+    assert pending["public_changed"]
+    publish_store.objects["deployments/current.json"] = {
+        **desired,
+        "activated_at": datetime.now(UTC).isoformat(),
+    }
+    activated = pipeline.operate(
+        collect_first=False, data_store=data_store, publish_store=publish_store
+    )
+    assert not activated["public_changed"]
 
 
 def test_forecast_code_and_configuration_are_part_of_the_fingerprint(tmp_path, monkeypatch):

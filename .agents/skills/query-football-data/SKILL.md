@@ -30,9 +30,9 @@ Run SQL through the bounded query helper:
 
 The helper keeps a disposable session file outside the repository and checks it against R2 on each call. The check is one HEAD request for each mutable R2 pointer, so a warm call starts in about a second. The first call after R2 or the code changes prepares a new file from R2 and can take several minutes, so give that call a long command timeout. Do not read, change, or delete the session file directly.
 
-The session loads only the current public model version of the hindcast archive. Use `--hindcast-versions all`, or a comma-separated list of version names, when the question compares model versions. Each selection keeps its own session file, so the first call for a new selection prepares one.
+The session loads only the current public model version of the hindcast archive by default. Use `--hindcast-versions none` for a live-only question, `--hindcast-versions all` for the complete retrospective archive, or a comma-separated list of version names when the question compares model versions. Each selection keeps its own session file, so the first call for a new selection prepares one.
 
-The live forecast tables come from the cumulative typed result database of each division. Use `--forecast-id <ID>` more than once to load only the released live forecasts needed for a historical comparison. Without this option, the session loads all released live forecast IDs that the compact competition archives select.
+The live forecast tables come from the cumulative typed result database of each division. Use `--forecast-id <ID>` more than once to load only the released live forecasts needed for a historical comparison. Add `--hindcast-versions none` when the question does not need retrospective evidence. Without this option, the session loads all released live forecast IDs that the compact competition archives select.
 
 Use `--sql-file <file>` for long SQL, or use `--sql-file -` to read SQL from stdin. Repeat `--query <name> <sql>` to run several named statements in one analysis session:
 

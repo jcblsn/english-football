@@ -13,6 +13,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("plan", type=Path)
     parser.add_argument("report", type=Path)
+    parser.add_argument(
+        "--writer-disabled",
+        action="store_true",
+        required=True,
+        help="Confirm that production is disabled and no production run is active",
+    )
     args = parser.parse_args()
     load_environment()
     store = R2Store.from_environment("R2_DATA_BUCKET")

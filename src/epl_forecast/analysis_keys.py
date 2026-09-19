@@ -16,7 +16,7 @@ PUBLICATION_ROOTS = (
     MATCH_HINDCAST_INDEX_KEY,
     "record.json",
 )
-CANONICAL_ROOTS = ("state/manifests.json",)
+CANONICAL_ROOTS = ("state/manifests.json", "state/canonical-snapshot.json")
 RESULT_ROOTS = tuple(f"state/results/{competition_id}.json" for competition_id in COMPETITION_IDS)
 
 

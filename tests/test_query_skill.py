@@ -42,6 +42,12 @@ def test_forecast_ids_select_a_bounded_live_result_scope():
     assert args.forecast_id == ["forecast-1", "forecast-2"]
 
 
+def test_live_only_scope_selects_no_hindcast_versions():
+    module = query_module()
+
+    assert module.hindcast_versions("none") == "none"
+
+
 def test_query_output_rounds_floats_to_significant_digits():
     module = query_module()
     connection = duckdb.connect()

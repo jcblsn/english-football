@@ -12,13 +12,15 @@ from epl_forecast import analysis_contract
 from epl_forecast.analysis import (
     ALL_MODEL_VERSIONS,
     CURRENT_MODEL_VERSION,
+    NO_HINDCAST_VERSIONS,
     open_analysis_session,
     start_ui,
 )
-from epl_forecast.datasets import publish
+from epl_forecast.datasets import Dataset, publish
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast, forecast_pointer
 from epl_forecast.results import store_public_projection, write_forecast_result
+from epl_forecast.snapshot import create_snapshot, snapshot_manifest_path
 from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
 
@@ -45,6 +47,9 @@ class Store:
 
     def configure_duckdb(self, connection, name="page324_r2"):
         pass
+
+    def metrics(self):
+        return {}
 
 
 class ObjectStore:
@@ -156,6 +161,60 @@ def test_remote_only_session_ignores_local_manifests_and_post_cutoff_rows(tmp_pa
         assert session.rows("SELECT remote_only FROM analysis.session") == [{"remote_only": True}]
     finally:
         session.close()
+
+
+def test_analysis_uses_the_verified_canonical_snapshot_without_remote_parquet(tmp_path):
+    remote = tmp_path / "remote"
+    manifest = publish(
+        remote,
+        request("2026-01-02T12:00:00+00:00", "a"),
+        {"fixtures": [fixture()]},
+    )
+    source_store = Store(remote, [manifest])
+    source_revision = source_store.identities(["state/manifests.json"])["state/manifests.json"]
+    database = tmp_path / "canonical.duckdb"
+    source = Dataset(store=source_store)
+    try:
+        snapshot = create_snapshot(source, database, source_revision=source_revision)
+    finally:
+        source.close()
+    database_key = "snapshots/canonical.duckdb"
+    manifest_key = "snapshots/canonical.manifest.json"
+    store = ObjectStore(
+        {
+            "state/manifests.json": {"schema_version": 1, "manifests": [manifest]},
+            "state/canonical-snapshot.json": {
+                "schema_version": 1,
+                "source_revision": source_revision,
+                "database_key": database_key,
+                "manifest_key": manifest_key,
+                "database_bytes": snapshot["database_bytes"],
+                "database_sha256": snapshot["database_sha256"],
+            },
+            database_key: database.read_bytes(),
+            manifest_key: snapshot_manifest_path(database).read_bytes(),
+        }
+    )
+
+    session = open_analysis_session(data_store=store, include_derived=False)
+    snapshot_path = session.dataset.snapshot_path
+    try:
+        assert session.rows("SELECT home_goals FROM analysis.matches") == [{"home_goals": 2}]
+        assert database_key in store.reads
+        assert manifest_key in store.reads
+    finally:
+        session.close()
+    assert not snapshot_path.exists()
+
+    cached = open_analysis_session(
+        data_store=store,
+        include_derived=False,
+        session_directory=tmp_path / "sessions",
+    )
+    try:
+        assert cached.rows("SELECT home_goals FROM analysis.matches") == [{"home_goals": 2}]
+    finally:
+        cached.close()
 
 
 def test_personnel_views_keep_latest_successful_empty_snapshots(tmp_path):
@@ -1240,6 +1299,13 @@ def test_an_older_or_every_hindcast_version_stays_available():
     every, session_row, _ = loaded_hindcast_versions(hindcast_versions=ALL_MODEL_VERSIONS)
     assert every == ["v0.2", "v0.3.0"]
     assert session_row["hindcast_version_request"] == ALL_MODEL_VERSIONS
+
+
+def test_a_live_only_session_does_not_read_hindcast_objects():
+    versions, session_row, reads = loaded_hindcast_versions(hindcast_versions=NO_HINDCAST_VERSIONS)
+    assert versions == []
+    assert session_row["hindcast_version_request"] == NO_HINDCAST_VERSIONS
+    assert not any(key.startswith("hindcasts/") for key in reads)
 
 
 def test_a_version_selection_must_name_a_version():

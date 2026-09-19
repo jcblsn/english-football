@@ -30,7 +30,7 @@ Protect these roots or exact pointer targets:
 - the database and manifest named by `state/canonical-snapshot.json`;
 - each database named by `state/fits/<competition>.json` and `state/results/<competition>.json`;
 - operational state, collection audits and reviewed rule or identity evidence;
-- all issued public forecast documents, competition archives, current pointers, release receipts and `record.json`;
+- all issued public forecast documents, competition archives, current and desired deployment pointers, private commitment receipts, public availability receipts and `record.json`;
 - every retained public and private hindcast edition;
 - the verified backup location and the final pre-cutover revision record.
 
@@ -73,6 +73,8 @@ Disaster recovery is not verified. This workspace has no immutable identifier or
 
 The next recovery action is to obtain an immutable backup identifier and a readable restore source for each R2 bucket. Restore both buckets into isolated non-production locations, restore the matching code revision, verify all pointer receipts, open the canonical snapshot and four typed result stores, resolve all issued forecast and hindcast IDs, and reproduce the selected four-division smoke forecast. Do not label R4 or disaster recovery as verified until that exercise passes.
 
+The pre-activation inventory had 59 forecast objects and four legacy receipt keys. Those keys do not independently prove public availability for every historical forecast. The record rebuild does not fabricate missing activation times. Compare the incrementally retained record with a rebuild and report the historical difference before any record replacement.
+
 ## Post-migration simplification record
 
 For each completed simplification, this section answers: “What mechanism became unnecessary and was removed?”
@@ -81,7 +83,15 @@ For each completed simplification, this section answers: “What mechanism becam
 - Live forecasting: process-isolated CLI workers, archive-shaped JSON, CSV and HTML renderings, local verification reports and subprocess logs became unnecessary. Production now calls the forecast calculation in process, writes the cumulative typed result and verifies that result directly.
 - Scientific verification: the private archive became unnecessary as the verification authority. The checks now read the authoritative typed result, including exact impact-window timestamps, team states, simulation detail and retained run provenance.
 - Live analysis: `_legacy_live_rows`, fake archive stores and the fallback that read `runs/forecasts/<ID>/forecast.json` and `run.json` became unnecessary after all issued IDs moved to cumulative typed stores. Analysis now requires typed result pointers. The separate hindcast and match-hindcast readers remain.
-- Forecast-detail expiration: the age-based deleter and the synthetic expired-private-result branch became unnecessary when indefinite retention of issued analytical facts was restored. Production no longer deletes typed detail by age. A read-only inventory found full detail for all 59 issued IDs and no exception.
+- Forecast-detail expiration: the age-based deleter and the synthetic expired-private-result branch became unnecessary when indefinite retention of issued analytical facts was restored. Production no longer deletes typed detail by age. A read-only inventory resolved all 59 issued IDs, verified every typed result, reproduced every stored public projection exactly and found no current age-expiration loss. It did not compare values with a pre-migration backup because no owner-confirmed backup is available.
 - Migration diary: the tracked `refactor-handoff/` packet became unnecessary after its durable authority boundary, retention rules, recovery status and operational decisions moved into `AGENTS.md` and current documentation. Git history retains the diary.
+- Fit identity: the requested capture timestamp and provider byte lineage became unnecessary as mathematical checkpoint keys. Mathematical parameters, semantic training values, the explicit model cutoff and model protocol now select reuse. Requested cutoff and capture lineage remain separate retained fit-use and result provenance.
+- Fit-store accumulation: an unbounded list of complete resume histories became unnecessary because fit checkpoints are rebuildable cache, while issued results retain the scientific fit summary and provenance. Each division keeps the newest eight logical checkpoints and replay tests compare a bounded-cache resume with a fresh fit.
+- Market overlays: ambiguous absence in a market revision became unnecessary. Each lightweight revision is an explicit complete replacement boundary, including an empty set, and points directly to the structural result. A display-only revision materializes the effective market set instead of creating an inheritance chain.
+- Release time: a private-bucket write timestamp became unnecessary as a proxy for public availability. Private commitment, desired public revision and successful public activation now have separate receipts. Historical releases without an availability receipt keep an unknown public time and do not enter a rebuilt prospective record by assumption.
+- Forecast worker barrier: waiting for all divisions before any successful division could publish became unnecessary. The main thread now verifies, commits and privately publishes each completed division while the other workers continue.
+- Analysis canonical scan: remote Parquet discovery became unnecessary during normal analytical preparation. The analysis adapter now restores the selected verified canonical snapshot. A live-only scope also avoids reading hindcast indexes, series and origins when the question does not need retrospective evidence.
+- Request estimates: wrapper-call counts became unnecessary as a proxy for billable operations. The operation benchmark now reports actual SDK attempts and current DuckDB HTTP requests and bytes without replaying metrics from a restored manifest.
+- Public retention plans: a detailed private-key manifest in a public Actions artifact became unnecessary. The workflow keeps the exact plan on its runner and uploads only the aggregate report.
 
 The first ordinary scheduled post-cutover run with new effective evidence has not yet been observed. Workflow dispatch `35412237119` was an idle cutover smoke run, so it is not the production benchmark. The operation now emits the required wake duration, stage timings, Class A and Class B operations, transferred bytes, fit-state status and recomputed stages. Record the first qualifying scheduled production run and its dependent Pages duration here without substituting a forced or idle run.

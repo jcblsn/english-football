@@ -355,6 +355,112 @@ def test_checkpoint_resumes_only_at_complete_day_boundary(tmp_path, small_histor
     assert same_day_model.fit_state_status == "fresh"
 
 
+def test_resume_loads_only_the_newest_compatible_checkpoint_history(
+    tmp_path, small_history, monkeypatch
+):
+    path = tmp_path / "fits.duckdb"
+    spec = model_spec()
+    rows = xg_rows(small_history)
+    checkpoint_ids = []
+    for stop in (4, 6, 8):
+        history = small_history[:stop]
+        fitted_model_from_checkpoint(
+            path,
+            spec,
+            history,
+            history[-1].available_on,
+            f"revision-{stop}",
+            observations=rows,
+        )
+        with duckdb.connect(str(path), read_only=True) as connection:
+            checkpoint_ids.append(
+                connection.execute(
+                    "SELECT checkpoint_id FROM fit_checkpoints ORDER BY as_of DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+    loaded = []
+    read_history = fit_state._history
+
+    def observe_history(connection, checkpoint_id):
+        loaded.append(checkpoint_id)
+        return read_history(connection, checkpoint_id)
+
+    monkeypatch.setattr(fit_state, "_history", observe_history)
+    resumed, reused = fitted_model_from_checkpoint(
+        path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-final",
+        observations=rows,
+    )
+
+    assert not reused
+    assert resumed.fit_state_status == "resumed"
+    assert loaded == [checkpoint_ids[-1]]
+
+
+def test_rebuildable_checkpoint_cache_is_bounded_and_still_resumes_exactly(
+    tmp_path, small_history, monkeypatch
+):
+    monkeypatch.setattr(fit_state, "FIT_CHECKPOINT_CACHE_LIMIT", 3)
+    path = tmp_path / "bounded.duckdb"
+    spec = model_spec()
+    rows = xg_rows(small_history)
+    for stop in range(2, len(small_history)):
+        history = small_history[:stop]
+        fitted_model_from_checkpoint(
+            path,
+            spec,
+            history,
+            history[-1].available_on,
+            f"revision-{stop}",
+            observations=rows,
+        )
+    with duckdb.connect(str(path), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM fit_checkpoints").fetchone() == (3,)
+        retained = {
+            row[0]
+            for row in connection.execute("SELECT checkpoint_id FROM fit_checkpoints").fetchall()
+        }
+        for table in (
+            "fit_uses",
+            "fit_history",
+            "fit_entry_priors",
+            "fit_appearances",
+            "fit_teams",
+            "fit_members",
+            "fit_inputs",
+        ):
+            assert {
+                row[0]
+                for row in connection.execute(
+                    f"SELECT DISTINCT checkpoint_id FROM {table}"
+                ).fetchall()
+            } <= retained
+
+    resumed, _ = fitted_model_from_checkpoint(
+        path,
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-final",
+        observations=rows,
+    )
+    fresh, _ = fitted_model_from_checkpoint(
+        tmp_path / "fresh.duckdb",
+        spec,
+        small_history,
+        small_history[-1].available_on,
+        "revision-final",
+        observations=rows,
+    )
+    assert resumed.fit_state_status == "resumed"
+    for actual, expected in zip(resumed.members, fresh.members, strict=True):
+        np.testing.assert_allclose(actual.mean, expected.mean, atol=1e-11)
+        np.testing.assert_allclose(actual.covariance, expected.covariance, atol=1e-11)
+
+
 def test_season_boundary_resume_matches_fresh_fit(tmp_path, small_history):
     path = tmp_path / "fits.duckdb"
     spec = model_spec()

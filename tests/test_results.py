@@ -160,6 +160,109 @@ def test_legacy_forecast_preserves_only_its_known_probability_stages(tmp_path):
             }
 
 
+def test_reader_accepts_a_result_store_before_market_replacement_boundaries(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="legacy-input",
+        result_id="legacy-forecast",
+    )
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            "ALTER TABLE forecast_result.forecast_runs DROP COLUMN market_replacement"
+        )
+
+    restored = read_forecast_result(database, "legacy-forecast")
+
+    assert restored["matches"][0]["p_home"] == forecast["matches"][0]["p_home"]
+
+
+def test_exact_array_score_grid_prototype_preserves_every_cell_and_tail(tmp_path):
+    database = tmp_path / "results.duckdb"
+    write_forecast_result(
+        database,
+        result_forecast(),
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE compact_score_grids AS
+            SELECT score.result_id, score.match_id, score.stage,
+                   CAST(max(home_goals) + 1 AS USMALLINT) AS home_dimension,
+                   CAST(max(away_goals) + 1 AS USMALLINT) AS away_dimension,
+                   list(probability ORDER BY home_goals, away_goals)::DOUBLE[] AS probabilities,
+                   any_value(metadata.home_rate) AS home_rate,
+                   any_value(metadata.away_rate) AS away_rate,
+                   any_value(metadata.omitted_probability) AS omitted_probability,
+                   any_value(metadata.uncertainty_components) AS uncertainty_components
+            FROM forecast_result.forecast_scores AS score
+            JOIN forecast_result.forecast_score_metadata AS metadata
+            USING (result_id, match_id, stage)
+            GROUP BY score.result_id, score.match_id, score.stage
+            """
+        )
+        cells, exact_cells, dimensions, tails = connection.execute(
+            """
+            SELECT count(*),
+                   count(*) FILTER (
+                       WHERE score.probability = compact.probabilities[
+                           score.home_goals * compact.away_dimension + score.away_goals + 1
+                       ]
+                   ),
+                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
+                       WHERE array_length(compact.probabilities) =
+                           compact.home_dimension * compact.away_dimension
+                   ),
+                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
+                       WHERE compact.omitted_probability = metadata.omitted_probability
+                   )
+            FROM forecast_result.forecast_scores AS score
+            JOIN compact_score_grids AS compact USING (result_id, match_id, stage)
+            JOIN forecast_result.forecast_score_metadata AS metadata
+            USING (result_id, match_id, stage)
+            """
+        ).fetchone()
+        grids = connection.execute("SELECT count(*) FROM compact_score_grids").fetchone()[0]
+
+    assert exact_cells == cells
+    assert dimensions == grids
+    assert tails == grids
+
+
+def test_reader_recovers_exact_impact_times_from_legacy_date_columns(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    forecast["impact_window"] = {
+        "window_start": "2026-09-10T23:00:00+00:00",
+        "window_end": "2026-09-16T23:00:00+00:00",
+    }
+    forecast["simulation"]["match_impacts"].update(forecast["impact_window"])
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="legacy-input",
+        result_id="legacy-impact-window",
+    )
+    with duckdb.connect(str(database)) as connection:
+        for column in ("window_start", "window_end"):
+            connection.execute(
+                f"ALTER TABLE forecast_result.forecast_impact_metadata "
+                f"ALTER {column} TYPE DATE USING {column}::DATE"
+            )
+
+    restored = read_forecast_result(database, "legacy-impact-window")
+
+    assert restored["simulation"]["match_impacts"]["window_start"] == ("2026-09-10T23:00:00+00:00")
+    assert restored["simulation"]["match_impacts"]["window_end"] == ("2026-09-16T23:00:00+00:00")
+
+
 def test_result_identity_is_idempotent_and_cannot_name_different_content(tmp_path):
     database = tmp_path / "results.duckdb"
     forecast = result_forecast()

@@ -14,6 +14,7 @@ from epl_forecast.schema import Fixture, Match
 from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
 SCHEMA_VERSION = 3
+FIT_CHECKPOINT_CACHE_LIMIT = 8
 SOURCE_ROOT = Path(__file__).resolve().parent
 FIT_PROTOCOL_PATHS = (
     SOURCE_ROOT / "models",
@@ -394,6 +395,7 @@ def write_fit_checkpoint(
             training,
             observations,
         )
+        _prune_fit_checkpoints(connection)
         connection.execute("COMMIT")
         connection.execute("CHECKPOINT")
     except Exception:
@@ -405,6 +407,32 @@ def write_fit_checkpoint(
     finally:
         connection.close()
     return checkpoint_id
+
+
+def _prune_fit_checkpoints(connection) -> None:
+    expired = [
+        row[0]
+        for row in connection.execute(
+            "SELECT checkpoint_id FROM fit_checkpoints "
+            "ORDER BY as_of DESC, created_at DESC, checkpoint_id DESC "
+            "OFFSET ?",
+            [FIT_CHECKPOINT_CACHE_LIMIT],
+        ).fetchall()
+    ]
+    if not expired:
+        return
+    parameters = ", ".join("?" for _ in expired)
+    for table in (
+        "fit_uses",
+        "fit_history",
+        "fit_entry_priors",
+        "fit_appearances",
+        "fit_teams",
+        "fit_members",
+        "fit_inputs",
+        "fit_checkpoints",
+    ):
+        connection.execute(f"DELETE FROM {table} WHERE checkpoint_id IN ({parameters})", expired)
 
 
 def _record_fit_use(

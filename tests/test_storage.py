@@ -32,6 +32,20 @@ def test_r2_configuration_names_every_missing_setting(monkeypatch):
         R2Config.from_environment("R2_DATA_BUCKET")
 
 
+def test_sdk_attempt_metrics_count_retries_by_r2_operation():
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=object())
+
+    store._record_sdk_attempt(event_name="needs-retry.s3.GetObject")
+    store._record_sdk_attempt(event_name="needs-retry.s3.GetObject")
+    store._record_sdk_attempt(event_name="needs-retry.s3.PutObject")
+
+    assert store.metrics() == {
+        "get_sdk_attempts": 2,
+        "put_sdk_attempts": 1,
+        "sdk_attempts": 3,
+    }
+
+
 def test_dataset_reads_manifest_catalog_and_parquet_from_a_store(tmp_path):
     remote = tmp_path / "remote"
     request = {

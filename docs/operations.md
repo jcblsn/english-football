@@ -17,9 +17,9 @@ uv run epl-forecast operate
 5. It runs each division whose last successful fingerprint differs.
 6. It writes and verifies each typed private result directly against the product contract.
 7. It commits the cumulative result database and applicable fit state to `page324-data`.
-8. It writes each verified public document and immutable release receipt to `page324-publish`, then updates the forecast index and prospective record. A run that publishes nothing writes `record.json` only when a result changes it.
+8. It writes each verified public document and immutable private commitment receipt to `page324-publish`, then updates the desired public revision. The Pages workflow records immutable availability receipts only after a successful deployment. The prospective record uses that public activation time. A run that publishes nothing writes `record.json` only when a result changes it.
 
-A failed or unverified division does not publish. Other verified divisions in the same run can publish and advance their own latest pointers. The next run retries only the divisions that do not have the current successful fingerprint.
+A failed or unverified division does not publish. Each other verified division can commit and publish as soon as its forecast worker completes. It does not wait for the other workers. The next run retries only the divisions that do not have the current successful fingerprint. A desired public revision that did not deploy stays pending, and an otherwise idle wake requests the Pages retry.
 
 Private typed forecast detail has indefinite retention. An issued prospective forecast keeps its complete analytical result, compact public projection and run identity in the typed result database. Age does not authorize deletion of forecast facts. Production object cleanup can remove temporary renderings, logs and superseded physical generations only through the reviewed manifest process. See [capacity and retention](capacity.md) and [migration and rollback](migration.md).
 
@@ -47,7 +47,7 @@ Routine production does not compact canonical data. Run `uv run python scripts/c
 
 After a change to the normalization code, run `uv run python scripts/replay_r2.py` and compare the replayed row counts with the current counts. Then run it again with `--publish` to replace the canonical history. See [data](data.md#commands).
 
-GitHub Actions is the normal production writer. The workflow concurrency group prevents two production runs at the same time, but it does not know about local commands. Maintenance and migration writes to R2 must not overlap production. Before such a write, run `gh workflow disable production.yml`, make sure that no production run is in progress, do the write, then run `gh workflow enable production.yml`.
+GitHub Actions is the normal production writer. The workflow concurrency group prevents two production runs at the same time, but it does not know about local commands. Maintenance and migration writes to R2 must not overlap production. Before such a write, run `gh workflow disable production.yml`, make sure that no production run is in progress, do the write, then run `gh workflow enable production.yml`. The retention executor also requires the explicit `--writer-disabled` acknowledgement. Its generation grace protects a recent upload before its pointer commit, but the disabled-writer procedure is still mandatory.
 
 ## Versions
 
@@ -62,7 +62,7 @@ A reader that parses documents uses `schema_version`. A reader that compares num
 
 Each document kind carries its own `schema_version`. There is no single number for the whole surface, and the numbers do not move together. Typed private result tables and public forecast documents have separate schema versions.
 
-Private forecast schema version 2 retains three explicit match-probability stages: the unadjusted model distribution, the personnel-adjusted score distribution, and the outcome-only market-assisted pool. It retains a score grid for each score-generating stage. Public forecast schema version 3 is unchanged because the public horizon and probability fields did not change.
+Private forecast schema version 6 retains three explicit match-probability stages: the unadjusted model distribution, the personnel-adjusted score distribution, and the outcome-only market-assisted pool. It retains a score grid for each score-generating stage and explicit market-replacement boundaries. Public forecast schema version 3 is unchanged because the public horizon and probability fields did not change.
 
 The `schema_version` of a document stays where it is while every change to that document is additive and optional. The `personnel` block is such a change: it is present only for a Premier League or Championship fixture in the horizon, and a reader that ignores the key still reads a correct and complete forecast. Raise the `schema_version` of a document when a key is removed or renamed, when the type or the meaning of an existing key changes, or when a new key becomes necessary to read the document correctly.
 

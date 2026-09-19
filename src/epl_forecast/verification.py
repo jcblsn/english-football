@@ -198,10 +198,16 @@ def verify_forecast(forecast: dict, run: dict) -> dict:
                 < 1e-12,
             )
 
-    personnel = forecast["personnel"]
+    personnel = forecast.get("personnel")
+    personnel_matches = [match for match in forecast["matches"] if match["personnel"] is not None]
+    checks.check(
+        "the personnel summary is retained when match personnel detail exists",
+        not personnel_matches or personnel is not None,
+        f"{len(personnel_matches)} detailed matches",
+    )
     for match in forecast["matches"]:
         record = match["personnel"]
-        if record is None:
+        if record is None or personnel is None:
             continue
         kickoff = timestamp(match["kickoff_time"])
         checks.check(
