@@ -7,6 +7,10 @@ publish_bytes = 202305521
 research_objects = 1624
 research_bytes = 738048127
 
+[retention]
+object_grace_hours = 24
+generation_grace_days = 7
+
 [review]
 candidate_objects = 5000
 candidate_bytes = 250000000

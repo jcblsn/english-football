@@ -41,7 +41,8 @@ jobs:
             site/data/hindcasts
             site/.page324-hindcast-cache
           key: page324-hindcasts-${{ steps.hindcast.outputs.cache_key }}
-      - run: uv run epl-forecast materialize --site site --hindcasts
+      - id: materialize
+        run: uv run epl-forecast materialize --site site --hindcasts
       - run: uv run python scripts/check_publishable.py --site site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
@@ -49,3 +50,8 @@ jobs:
           path: site
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Record public activation
+        run: >-
+          uv run epl-forecast activate-publication
+          --revision-id "${{ steps.materialize.outputs.revision_id }}"
+          --page-url "${{ steps.deployment.outputs.page_url }}"

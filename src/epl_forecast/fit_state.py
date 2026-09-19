@@ -1,3 +1,4 @@
+import copy
 import json
 from collections import Counter
 from datetime import UTC, date, datetime
@@ -12,7 +13,7 @@ from epl_forecast.models.xg_observation import chance_rows
 from epl_forecast.schema import Fixture, Match
 from epl_forecast.storage import file_hash, json_bytes, sha256_bytes
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SOURCE_ROOT = Path(__file__).resolve().parent
 FIT_PROTOCOL_PATHS = (
     SOURCE_ROOT / "models",
@@ -57,6 +58,53 @@ def _training_rows(matches: list[Match]) -> list[dict]:
     ]
 
 
+def _semantic_training_rows(matches: list[Match]) -> list[dict]:
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if key not in {"source_sha256", "source_row", "source_time"}
+        }
+        for row in _training_rows(matches)
+    ]
+
+
+def _semantic_spec(spec: dict) -> dict:
+    effective = copy.deepcopy(spec)
+    effective.get("parameters", {}).pop("data_cutoff", None)
+    return effective
+
+
+def _capture_provenance(training: list[Match], observations) -> dict:
+    observation_rows = []
+    for row in observations or ():
+        observation_rows.append(
+            {
+                key: value.isoformat() if hasattr(value, "isoformat") else value
+                for key, value in row.items()
+                if key
+                in {
+                    "match_id",
+                    "source_sha256",
+                    "retrieved_at",
+                    "provider",
+                    "evidence_basis",
+                    "availability_basis",
+                }
+            }
+        )
+    return {
+        "training": [
+            {key: row[key] for key in ("match_id", "source_sha256", "source_row", "source_time")}
+            for row in _training_rows(_ordered_training(training))
+        ],
+        "observations": sorted(
+            observation_rows,
+            key=lambda row: (row.get("match_id", ""), row.get("source_sha256", "")),
+        ),
+    }
+
+
 def _ordered_training(matches: list[Match]) -> list[Match]:
     return sorted(matches, key=lambda match: (match.fixture.match_date, match.fixture.match_id))
 
@@ -93,8 +141,8 @@ def checkpoint_identity(
 ) -> tuple[str, str, str, str, str]:
     training = _ordered_training(training)
     protocol_identity = protocol_identity or fit_protocol_identity()
-    spec_sha256 = sha256_bytes(json_bytes(spec))
-    training_sha256 = sha256_bytes(json_bytes(_training_rows(training)))
+    spec_sha256 = sha256_bytes(json_bytes(_semantic_spec(spec)))
+    training_sha256 = sha256_bytes(json_bytes(_semantic_training_rows(training)))
     observation_sha256 = sha256_bytes(json_bytes(_observation_rows(training, observations)))
     checkpoint_id = sha256_bytes(
         json_bytes(
@@ -195,6 +243,14 @@ def _install_schema(connection) -> None:
             source_row INTEGER NOT NULL,
             source_time VARCHAR NOT NULL,
             PRIMARY KEY (checkpoint_id, match_order)
+        );
+        CREATE TABLE IF NOT EXISTS fit_uses (
+            use_id VARCHAR PRIMARY KEY,
+            checkpoint_id VARCHAR NOT NULL,
+            input_revision VARCHAR NOT NULL,
+            requested_cutoff TIMESTAMPTZ NOT NULL,
+            capture_provenance_sha256 VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL
         )
         """
     )
@@ -213,6 +269,7 @@ def write_fit_checkpoint(
     input_revision: str,
     *,
     observations=None,
+    requested_cutoff: datetime | None = None,
 ) -> str:
     training = _ordered_training(training)
     (
@@ -230,6 +287,15 @@ def write_fit_checkpoint(
             "SELECT checkpoint_id FROM fit_checkpoints WHERE checkpoint_id = ?", [checkpoint_id]
         ).fetchone()
         if existing:
+            _record_fit_use(
+                connection,
+                checkpoint_id,
+                input_revision,
+                requested_cutoff or datetime.combine(as_of, datetime.min.time(), UTC),
+                training,
+                observations,
+            )
+            connection.execute("CHECKPOINT")
             return checkpoint_id
         members = list(getattr(model, "members", [model]))
         if any(member.as_of != as_of for member in members):
@@ -242,7 +308,7 @@ def write_fit_checkpoint(
             [
                 checkpoint_id,
                 SCHEMA_VERSION,
-                _json(spec),
+                _json(_semantic_spec(spec)),
                 spec_sha256,
                 training_sha256,
                 input_revision,
@@ -320,6 +386,14 @@ def write_fit_checkpoint(
                 for match_order, row in enumerate(_training_rows(training))
             ],
         )
+        _record_fit_use(
+            connection,
+            checkpoint_id,
+            input_revision,
+            requested_cutoff or datetime.combine(as_of, datetime.min.time(), UTC),
+            training,
+            observations,
+        )
         connection.execute("COMMIT")
         connection.execute("CHECKPOINT")
     except Exception:
@@ -331,6 +405,38 @@ def write_fit_checkpoint(
     finally:
         connection.close()
     return checkpoint_id
+
+
+def _record_fit_use(
+    connection,
+    checkpoint_id: str,
+    input_revision: str,
+    requested_cutoff: datetime,
+    training: list[Match],
+    observations,
+) -> None:
+    capture_sha256 = sha256_bytes(json_bytes(_capture_provenance(training, observations)))
+    use_id = sha256_bytes(
+        json_bytes(
+            {
+                "checkpoint_id": checkpoint_id,
+                "input_revision": input_revision,
+                "requested_cutoff": requested_cutoff.isoformat(),
+                "capture_provenance_sha256": capture_sha256,
+            }
+        )
+    )
+    connection.execute(
+        "INSERT OR IGNORE INTO fit_uses VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            use_id,
+            checkpoint_id,
+            input_revision,
+            requested_cutoff,
+            capture_sha256,
+            datetime.now(UTC),
+        ],
+    )
 
 
 def _history(connection, checkpoint_id: str) -> list[Match]:
@@ -385,7 +491,7 @@ def load_fit_checkpoint(
         if stored_input != (observation_sha256, protocol_identity):
             raise ValueError("Fit checkpoint inputs do not match its identity")
         history = _history(connection, checkpoint_id)
-        if history != training:
+        if _semantic_training_rows(history) != _semantic_training_rows(training):
             raise ValueError("Fit checkpoint history does not match the requested training set")
         model = make_model(spec, observations=observations)
         members = list(getattr(model, "members", [model]))
@@ -476,31 +582,40 @@ def _resume_fit_checkpoint(
     try:
         candidates = connection.execute(
             """
-            SELECT checkpoint_id, as_of, input_revision
-            FROM fit_checkpoints
-            WHERE schema_version = ? AND spec_sha256 = ? AND competition_id = ? AND as_of <= ?
-            ORDER BY as_of DESC, created_at DESC
+            SELECT c.checkpoint_id, c.as_of, c.input_revision, c.training_sha256,
+                   count(h.match_order) AS history_count
+            FROM fit_checkpoints c
+            LEFT JOIN fit_history h USING (checkpoint_id)
+            WHERE c.schema_version = ? AND c.spec_sha256 = ?
+              AND c.competition_id = ? AND c.as_of <= ?
+            GROUP BY c.checkpoint_id, c.as_of, c.input_revision, c.training_sha256, c.created_at
+            ORDER BY c.as_of DESC, c.created_at DESC
             """,
             [SCHEMA_VERSION, spec_sha256, competition_id, as_of],
         ).fetchall()
-        histories = [
-            (checkpoint_id, checkpoint_as_of, input_revision, _history(connection, checkpoint_id))
-            for checkpoint_id, checkpoint_as_of, input_revision in candidates
-        ]
     finally:
         connection.close()
-    for _, checkpoint_as_of, input_revision, history in histories:
-        if len(history) > len(training) or training[: len(history)] != history:
+    for (
+        _checkpoint_id,
+        checkpoint_as_of,
+        input_revision,
+        training_sha256,
+        history_count,
+    ) in candidates:
+        if history_count > len(training):
+            continue
+        prefix = training[:history_count]
+        if sha256_bytes(json_bytes(_semantic_training_rows(prefix))) != training_sha256:
             continue
         if (
-            len(history) < len(training)
-            and history[-1].fixture.match_date == training[len(history)].fixture.match_date
+            history_count < len(training)
+            and prefix[-1].fixture.match_date == training[history_count].fixture.match_date
         ):
             continue
         model = load_fit_checkpoint(
             path,
             spec,
-            history,
+            prefix,
             checkpoint_as_of,
             input_revision,
             observations=observations,
@@ -520,6 +635,7 @@ def fitted_model_from_checkpoint(
     input_revision: str,
     *,
     observations=None,
+    requested_cutoff: datetime | None = None,
 ):
     model = load_fit_checkpoint(
         path,
@@ -531,6 +647,20 @@ def fitted_model_from_checkpoint(
     )
     if model is not None:
         model.fit_state_status = "exact"
+        with duckdb.connect(str(path)) as connection:
+            _install_schema(connection)
+            checkpoint_id, *_ = checkpoint_identity(
+                spec, training, as_of, observations=observations
+            )
+            _record_fit_use(
+                connection,
+                checkpoint_id,
+                input_revision,
+                requested_cutoff or datetime.combine(as_of, datetime.min.time(), UTC),
+                training,
+                observations,
+            )
+            connection.execute("CHECKPOINT")
         return model, True
     model = _resume_fit_checkpoint(path, spec, training, as_of, observations=observations)
     if model is None:
@@ -546,5 +676,6 @@ def fitted_model_from_checkpoint(
         as_of,
         input_revision,
         observations=observations,
+        requested_cutoff=requested_cutoff,
     )
     return model, False

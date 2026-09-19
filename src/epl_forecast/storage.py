@@ -18,7 +18,11 @@ def sha256_bytes(payload: bytes) -> str:
 
 
 def file_hash(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def json_bytes(value: Any) -> bytes:
@@ -215,19 +219,6 @@ class R2Store:
         content_type: str | None = None,
     ) -> None:
         digest = sha256_bytes(payload)
-        if immutable:
-            try:
-                existing = self.client.head_object(Bucket=self.config.bucket, Key=key)
-            except ClientError as error:
-                if error.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey"}:
-                    raise
-            else:
-                old_digest = existing.get("Metadata", {}).get("sha256")
-                if old_digest == digest or self.get_bytes(key) == payload:
-                    return
-                raise ValueError(f"Refusing to overwrite immutable R2 object: {key}")
-            finally:
-                self._record("HEAD")
         arguments = {
             "Bucket": self.config.bucket,
             "Key": key,
@@ -236,17 +227,74 @@ class R2Store:
         }
         if content_type:
             arguments["ContentType"] = content_type
+        self._put_object(arguments, digest, len(payload), immutable)
+
+    def _put_object(self, arguments: dict, digest: str, size: int, immutable: bool) -> None:
+        if immutable:
+            arguments["IfNoneMatch"] = "*"
         try:
             self.client.put_object(**arguments)
+        except Exception as error:
+            if immutable:
+                try:
+                    existing_digest = self._remote_digest(arguments["Key"])
+                except Exception:
+                    raise error from None
+                if existing_digest == digest:
+                    return
+                if isinstance(error, ClientError):
+                    code = error.response.get("Error", {}).get("Code")
+                    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                    if code in {"PreconditionFailed", "ConditionalRequestConflict"} or status in {
+                        409,
+                        412,
+                    }:
+                        raise ValueError(
+                            f"Refusing to overwrite immutable R2 object: {arguments['Key']}"
+                        ) from None
+            raise
         finally:
-            self._record("PUT", written=len(payload))
+            self._record("PUT", written=size)
+
+    def _remote_digest(self, key: str) -> str | None:
+        try:
+            head = self.client.head_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        finally:
+            self._record("HEAD")
+        stored = head.get("Metadata", {}).get("sha256")
+        if stored:
+            return stored
+        response = self.client.get_object(Bucket=self.config.bucket, Key=key)
+        digest = hashlib.sha256()
+        read = 0
+        while chunk := response["Body"].read(1024 * 1024):
+            digest.update(chunk)
+            read += len(chunk)
+        self._record("GET", read=read)
+        return digest.hexdigest()
 
     def put_json(self, key: str, value, *, immutable: bool = False) -> None:
         self.put_bytes(key, json_bytes(value), immutable=immutable, content_type="application/json")
 
     def download(self, key: str, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(self.get_bytes(key))
+        try:
+            response = self.client.get_object(Bucket=self.config.bucket, Key=key)
+        except ClientError as error:
+            self._record("GET")
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
+                raise FileNotFoundError(key) from None
+            raise
+        read = 0
+        with destination.open("wb") as stream:
+            while chunk := response["Body"].read(1024 * 1024):
+                stream.write(chunk)
+                read += len(chunk)
+        self._record("GET", read=read)
 
     def upload(self, source: Path, key: str, *, immutable: bool = False) -> None:
         content_types = {
@@ -254,12 +302,18 @@ class R2Store:
             ".json": "application/json",
             ".parquet": "application/vnd.apache.parquet",
         }
-        self.put_bytes(
-            key,
-            source.read_bytes(),
-            immutable=immutable,
-            content_type=content_types.get(source.suffix.lower()),
-        )
+        digest = file_hash(source)
+        arguments = {
+            "Bucket": self.config.bucket,
+            "Key": key,
+            "Metadata": {"sha256": digest},
+        }
+        content_type = content_types.get(source.suffix.lower())
+        if content_type:
+            arguments["ContentType"] = content_type
+        with source.open("rb") as stream:
+            arguments["Body"] = stream
+            self._put_object(arguments, digest, source.stat().st_size, immutable)
 
     def keys(self, prefix: str = "") -> Iterator[str]:
         paginator = self.client.get_paginator("list_objects_v2")

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from epl_forecast.competitions import COMPETITION_IDS
 from epl_forecast.retention import build_retention_plan, retention_status, validate_retention_plan
 
 
@@ -9,14 +10,9 @@ class Store:
     def __init__(self):
         self.objects = {
             "state/canonical-snapshot.json": {
+                "schema_version": 1,
                 "database_key": "snapshots/current.duckdb",
                 "manifest_key": "snapshots/current.manifest.json",
-            },
-            "state/fits/eng-premier-league.json": {
-                "database_key": "fits/eng-premier-league/current.duckdb"
-            },
-            "state/results/eng-premier-league.json": {
-                "database_key": "results/eng-premier-league/current.duckdb"
             },
             "state/manifests.json": {
                 "manifests": [
@@ -27,6 +23,15 @@ class Store:
                 ]
             },
         }
+        for competition_id in COMPETITION_IDS:
+            self.objects[f"state/fits/{competition_id}.json"] = {
+                "schema_version": 1,
+                "database_key": f"fits/{competition_id}/current.duckdb",
+            }
+            self.objects[f"state/results/{competition_id}.json"] = {
+                "schema_version": 1,
+                "database_key": f"results/{competition_id}/current.duckdb",
+            }
         self.rows = {
             "parquet/": ["parquet/fixtures/selected.parquet", "parquet/fixtures/old.parquet"],
             "manifests/": ["manifests/selected.json", "manifests/old.json"],
@@ -36,11 +41,11 @@ class Store:
                 "snapshots/old.duckdb",
             ],
             "fits/": [
-                "fits/eng-premier-league/current.duckdb",
+                *(f"fits/{competition_id}/current.duckdb" for competition_id in COMPETITION_IDS),
                 "fits/eng-premier-league/old.duckdb",
             ],
             "results/": [
-                "results/eng-premier-league/current.duckdb",
+                *(f"results/{competition_id}/current.duckdb" for competition_id in COMPETITION_IDS),
                 "results/eng-premier-league/old.duckdb",
             ],
             "runs/forecasts/": ["runs/forecasts/old/forecast.json"],
@@ -60,9 +65,16 @@ class Store:
                 "last_modified": "2026-09-18T00:00:00+00:00",
             }
 
+    def exists(self, key):
+        return key in self.objects or any(key in rows for rows in self.rows.values())
+
+
+def old_plan(store):
+    return build_retention_plan(store, now=datetime(2026, 10, 1, tzinfo=UTC))
+
 
 def test_retention_plan_protects_live_targets_and_only_lists_candidates():
-    plan = build_retention_plan(Store())
+    plan = old_plan(Store())
     candidates = {row["key"] for row in plan["delete_candidates"]}
     assert candidates == {
         "parquet/fixtures/old.parquet",
@@ -80,15 +92,15 @@ def test_retention_plan_protects_live_targets_and_only_lists_candidates():
 
 
 def test_retention_plan_must_match_a_fresh_inventory_exactly():
-    plan = build_retention_plan(Store())
-    validate_retention_plan(plan, build_retention_plan(Store()))
+    plan = old_plan(Store())
+    validate_retention_plan(plan, old_plan(Store()))
     changed = {**plan, "delete_candidates": plan["delete_candidates"][:-1]}
     with pytest.raises(ValueError, match="delete_candidates changed"):
         validate_retention_plan(changed, plan)
 
 
 def test_retention_status_separates_billable_and_product_occupancy():
-    plan = build_retention_plan(Store())
+    plan = old_plan(Store())
     data = [
         {"key": "research/archive", "bytes": 700},
         {"key": "results/current", "bytes": 200},
@@ -136,3 +148,24 @@ def test_retention_status_separates_billable_and_product_occupancy():
     )
     assert alert["cleanup_review_required"] is True
     assert "research_byte_growth" in alert["review_reasons"][0]
+
+
+def test_retention_plan_fails_closed_on_missing_pointer_or_target():
+    store = Store()
+    del store.objects["state/results/eng-league-two.json"]
+    with pytest.raises(ValueError, match="Required retention pointers are absent"):
+        old_plan(store)
+
+    store = Store()
+    store.rows["results/"].remove("results/eng-league-two/current.duckdb")
+    with pytest.raises(ValueError, match="Protected retention targets are absent"):
+        old_plan(store)
+
+
+def test_recent_unpointed_generations_stay_inside_the_rollback_grace():
+    store = Store()
+    plan = build_retention_plan(store, now=datetime(2026, 9, 19, tzinfo=UTC))
+    grace_keys = {row["key"] for row in plan["grace_protected"]}
+    assert "results/eng-premier-league/old.duckdb" in grace_keys
+    assert "snapshots/old.duckdb" in grace_keys
+    assert "runs/forecasts/old/forecast.json" not in grace_keys

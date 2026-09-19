@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from epl_forecast import __version__
+from epl_forecast.artifacts import code_fingerprint, execution_provenance
 from epl_forecast.cli import forecast_result
 from epl_forecast.cloud import sync_data
 from epl_forecast.competitions import COMPETITION_IDS
@@ -19,6 +21,8 @@ from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
 from epl_forecast.personnel import current_adjustments
 from epl_forecast.publication import (
+    activated_documents,
+    deployment_pending,
     derive_forecast,
     load_policy,
     publish_documents,
@@ -46,7 +50,7 @@ from epl_forecast.storage import (
     sha256_bytes,
     write_immutable,
 )
-from epl_forecast.verification import verify_result
+from epl_forecast.verification import verify_result, verify_result_revision
 
 PRODUCT_MODEL = "M10-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
@@ -83,6 +87,33 @@ def progress(event: str, **details) -> None:
         ),
         flush=True,
     )
+
+
+def refresh_provenance(
+    snapshot: dict,
+    observed_at: datetime,
+    action: str,
+    market_quotes: list[dict],
+) -> dict:
+    execution = execution_provenance()
+    return {
+        "package_version": __version__,
+        "code_sha256": code_fingerprint(),
+        "execution": execution,
+        "requested_cutoff": observed_at.isoformat(),
+        "refresh_action": action,
+        "snapshot": {
+            key: snapshot.get(key)
+            for key in (
+                "source_revision",
+                "data_revision",
+                "database_sha256",
+                "manifest_sha256",
+            )
+            if snapshot.get(key) is not None
+        },
+        "market_quote_evidence": market_quotes,
+    }
 
 
 def operation_benchmark(
@@ -706,7 +737,7 @@ def operate(
     progress("fingerprint_started", model_version=model_version)
     with tempfile.TemporaryDirectory(prefix="page324-operation-") as workspace:
         prepared = prepare_operation_snapshot(now, data_store, Path(workspace))
-        state = data_store.get_json("state/forecast.json", {})
+        state, state_version = data_store.get_json_versioned("state/forecast.json", {})
         try:
             identities = {
                 competition_id: production_identities(
@@ -746,15 +777,15 @@ def operate(
             result.update(
                 status="unchanged", reason="No new information since the last publication"
             )
-            previous = publish_store.get_json("record.json")
-            record = update_record(previous, [], outcomes, policy)
+            previous, record_version = publish_store.get_json_versioned("record.json")
+            record = update_record(previous, activated_documents(publish_store), outcomes, policy)
             record_changed = previous is None or {**previous, "updated_at": None} != {
                 **record,
                 "updated_at": None,
             }
             if record_changed:
-                publish_store.put_json("record.json", record)
-            result["public_changed"] = record_changed
+                publish_store.put_json_if("record.json", record, record_version)
+            result["public_changed"] = record_changed or deployment_pending(publish_store)
             result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
             return operation_benchmark(
                 result,
@@ -776,6 +807,7 @@ def operate(
             partial_inputs,
             outcomes,
             state,
+            state_version,
             policy,
             simulations,
             data_store,
@@ -797,6 +829,7 @@ def _forecast_and_publish(
     partial_inputs: dict[str, dict[str, object]],
     outcomes,
     state: dict,
+    state_version: str | None,
     policy: dict,
     simulations: int,
     data_store,
@@ -804,7 +837,9 @@ def _forecast_and_publish(
     operation_started: float,
     prepared: PreparedSnapshot,
 ) -> dict:
-    impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
+    impact_state, impact_version = data_store.get_json_versioned(
+        "state/impacts.json", {"schema_version": 1, "matches": {}}
+    )
     documents, failures = [], []
     attempt.mkdir(parents=True)
     full = [league for league in pending if actions[league] == "full"]
@@ -877,7 +912,14 @@ def _forecast_and_publish(
                 source_result_id,
                 run_id,
                 generated_at=now,
+                observed_at=now,
                 input_revision=fingerprints[league],
+                software_provenance=refresh_provenance(
+                    prepared.manifest,
+                    now,
+                    action,
+                    values["market_quotes"],
+                ),
                 replace_market=action in {"market", "market_display"},
                 market_quotes=values["market_quotes"],
                 market_pool=market_pool,
@@ -885,6 +927,21 @@ def _forecast_and_publish(
                     values["team_names"] if action in {"display", "market_display"} else None
                 ),
             )
+            revision_verification = verify_result_revision(
+                result_store,
+                run_id,
+                source_result_id,
+                replace_market=action in {"market", "market_display"},
+                market_quotes=values["market_quotes"],
+                market_pool=market_pool,
+                team_names=(
+                    values["team_names"] if action in {"display", "market_display"} else None
+                ),
+            )
+            if revision_verification["failures"]:
+                raise ValueError(
+                    f"Typed result revision failed {revision_verification['failures']} checks"
+                )
             document = update_impact_state(
                 derive_forecast(
                     read_forecast_result(result_store, run_id),
@@ -926,8 +983,14 @@ def _forecast_and_publish(
         return result
     progress("publication_started", forecasts=len(documents))
     current = publish_documents(publish_store, documents, policy)
-    record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
-    publish_store.put_json("record.json", record)
+    previous_record, record_version = publish_store.get_json_versioned("record.json")
+    record = update_record(
+        previous_record,
+        activated_documents(publish_store),
+        outcomes,
+        policy,
+    )
+    publish_store.put_json_if("record.json", record, record_version)
     result["public_changed"] = True
     for document in documents:
         result["published"].append(f"{document['competition_id']}/{document['forecast_id']}")
@@ -949,8 +1012,8 @@ def _forecast_and_publish(
             "result_id": document["forecast_id"],
             "origin_date": projection_day(now),
         }
-    data_store.put_json("state/forecast.json", state)
-    data_store.put_json("state/impacts.json", impact_state)
+    data_store.put_json_if("state/forecast.json", state, state_version)
+    data_store.put_json_if("state/impacts.json", impact_state, impact_version)
     result = operation_benchmark(
         result,
         operation_started,

@@ -1,6 +1,13 @@
+from datetime import UTC, datetime
+
 from test_publication import Store, sample_forecast
 
-from epl_forecast.publication import derive_forecast, load_policy, publish_documents
+from epl_forecast.publication import (
+    activate_publication,
+    derive_forecast,
+    load_policy,
+    publish_documents,
+)
 from epl_forecast.record import realized_outcomes, rebuild_record, update_record
 
 MATCH = "eng-premier-league:2026-2027:arsenal:chelsea"
@@ -90,6 +97,11 @@ def test_the_record_can_be_rebuilt_from_partitioned_archives():
             document("2026-09-12T06:00:00+00:00", "2026-09-12T060000Z", 0.6),
         ],
         policy,
+    )
+    activate_publication(
+        store,
+        store.objects["deployments/desired.json"]["revision_id"],
+        activated_at=datetime(2026, 9, 12, 7, tzinfo=UTC),
     )
 
     record = rebuild_record(store, {MATCH: "D"}, policy)

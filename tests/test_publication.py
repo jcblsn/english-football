@@ -3,7 +3,10 @@ import json
 import pytest
 
 from epl_forecast.publication import (
+    activate_publication,
+    activated_documents,
     check_publishable,
+    deployment_pending,
     derive_forecast,
     empty_archive,
     empty_current,
@@ -241,6 +244,7 @@ def test_check_publishable_refuses_private_content():
 class Store:
     def __init__(self):
         self.objects = {}
+        self.versions = {}
         self.writes = []
         self.reads = []
 
@@ -252,7 +256,15 @@ class Store:
         if immutable and key in self.objects and self.objects[key] != value:
             raise ValueError(key)
         self.objects[key] = value
+        self.versions[key] = str(int(self.versions.get(key, "0")) + 1)
         self.writes.append((key, immutable))
+
+    def get_json_versioned(self, key, default=None):
+        return self.objects.get(key, default), self.versions.get(key)
+
+    def put_json_if(self, key, value, version):
+        assert self.versions.get(key) == version
+        self.put_json(key, value)
 
     def exists(self, key):
         return key in self.objects
@@ -298,15 +310,54 @@ def test_immutable_forecasts_and_archive_are_written_before_current_pointer():
 
     publish_documents(store, [document], load_policy())
 
-    assert store.writes == [
+    assert store.writes[:4] == [
         ("forecasts/eng-premier-league/2026-09-10T120000Z.json", True),
-        ("receipts/eng-premier-league/2026-09-10T120000Z.json", True),
+        ("commitments/eng-premier-league/2026-09-10T120000Z.json", True),
         ("forecasts/eng-premier-league/archive.json", False),
         ("forecasts/current.json", False),
     ]
+    assert store.writes[4][0].startswith("deployments/revisions/")
+    assert store.writes[4][1]
+    assert store.writes[5] == ("deployments/desired.json", False)
     assert empty_current("now") == {
         "schema_version": 1,
         "updated_at": "now",
         "forecasts": [],
     }
     assert empty_archive("eng-league-one", "now")["competition_id"] == "eng-league-one"
+
+
+def test_public_activation_is_separate_from_private_commitment():
+    store = Store()
+    document = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
+    publish_documents(store, [document], load_policy())
+    revision_id = store.objects["deployments/desired.json"]["revision_id"]
+
+    assert deployment_pending(store)
+    assert activated_documents(store) == []
+
+    activation = activate_publication(store, revision_id)
+
+    assert not deployment_pending(store)
+    activated = activated_documents(store)
+    assert [row["forecast_id"] for row in activated] == ["2026-09-10T120000Z"]
+    assert activated[0]["released_at"] == activation["activated_at"]
+
+
+def test_repeated_revision_keeps_the_first_forecast_activation():
+    store = Store()
+    first = derive_forecast(sample_forecast(), "2026-09-10T120000Z")
+    publish_documents(store, [first], load_policy())
+    first_revision = store.objects["deployments/desired.json"]["revision_id"]
+    activate_publication(store, first_revision)
+    first_receipt = store.objects["availability/eng-premier-league/2026-09-10T120000Z.json"]
+
+    second = derive_forecast(
+        sample_forecast("eng-championship", "2026-09-11T12:00:00+00:00"),
+        "2026-09-11T120000Z",
+    )
+    publish_documents(store, [second], load_policy())
+    second_revision = store.objects["deployments/desired.json"]["revision_id"]
+    activate_publication(store, second_revision)
+
+    assert store.objects["availability/eng-premier-league/2026-09-10T120000Z.json"] == first_receipt

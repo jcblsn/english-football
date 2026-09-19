@@ -2,7 +2,7 @@
 
 import argparse
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from epl_forecast.retention import build_retention_plan, validate_retention_plan
@@ -17,12 +17,21 @@ def main() -> None:
     load_environment()
     store = R2Store.from_environment("R2_DATA_BUCKET")
     plan = json.loads(args.plan.read_text())
-    current = build_retention_plan(store)
+    grace = plan["grace"]
+    current = build_retention_plan(
+        store,
+        object_grace=timedelta(seconds=grace["object_seconds"]),
+        generation_grace=timedelta(seconds=grace["generation_seconds"]),
+    )
     validate_retention_plan(plan, current)
     keys = [row["key"] for row in plan["delete_candidates"]]
     deleted = store.delete_keys(keys)
-    remaining = build_retention_plan(store)
-    survivors = sorted(set(keys) & {row["key"] for row in remaining["delete_candidates"]})
+    remaining = build_retention_plan(
+        store,
+        object_grace=timedelta(seconds=grace["object_seconds"]),
+        generation_grace=timedelta(seconds=grace["generation_seconds"]),
+    )
+    survivors = sorted(key for key in keys if store.exists(key))
     if survivors:
         raise RuntimeError(f"Retention deletion left {len(survivors)} planned objects")
     report = {

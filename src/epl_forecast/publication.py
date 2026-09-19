@@ -128,6 +128,7 @@ FORECAST_KEYS = {
     "window_start",
 }
 POINTER_KEYS = {
+    "document_sha256",
     "release_href",
     "released_at",
     "competition_id",
@@ -353,7 +354,7 @@ def check_publishable(document, policy: dict, kind: str | None = None) -> None:
             for pattern in patterns:
                 if pattern.search(node):
                     raise ValueError(f"Private value on the published surface: {trail} ({node!r})")
-            if DIGEST.search(node):
+            if DIGEST.search(node) and key != "document_sha256":
                 raise ValueError(f"Unexpected digest on the published surface: {trail}")
 
     walk(document, "$")
@@ -693,7 +694,7 @@ def empty_archive(competition_id: str, updated_at: str | None = None) -> dict:
     }
 
 
-def forecast_pointer(document: dict) -> dict:
+def forecast_pointer(document: dict, document_sha256: str | None = None) -> dict:
     competition_id = document["competition_id"]
     forecast_id = document["forecast_id"]
     pointer = {
@@ -706,14 +707,17 @@ def forecast_pointer(document: dict) -> dict:
         "matches": len(document["matches"]),
         "href": f"forecasts/{competition_id}/{forecast_id}.json",
     }
-    if document.get("release_href"):
-        pointer["release_href"] = document["release_href"]
-        pointer["released_at"] = document["released_at"]
+    if document_sha256 is not None:
+        pointer["document_sha256"] = document_sha256
     return pointer
 
 
+def _versioned(store, key: str, default):
+    return store.get_json_versioned(key, default)
+
+
 def publish_documents(store, documents: list[dict], policy: dict) -> dict:
-    current = store.get_json("forecasts/current.json", empty_current())
+    current, current_version = _versioned(store, "forecasts/current.json", empty_current())
     latest = {row["competition_id"]: row for row in current["forecasts"]}
     archives = {}
     for document in documents:
@@ -728,16 +732,16 @@ def publish_documents(store, documents: list[dict], policy: dict) -> dict:
         document_key = f"forecasts/{document['competition_id']}/{document['forecast_id']}.json"
         document_sha256 = sha256_bytes(json_bytes(issued))
         store.put_json(document_key, issued, immutable=True)
-        receipt_key = f"receipts/{document['competition_id']}/{document['forecast_id']}.json"
+        receipt_key = f"commitments/{document['competition_id']}/{document['forecast_id']}.json"
         receipt = store.get_json(receipt_key)
         if receipt is None:
             receipt = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "competition_id": document["competition_id"],
                 "forecast_id": document["forecast_id"],
                 "document_href": document_key,
                 "document_sha256": document_sha256,
-                "released_at": document.get("released_at") or datetime.now(UTC).isoformat(),
+                "committed_at": datetime.now(UTC).isoformat(),
             }
             try:
                 store.put_json(receipt_key, receipt, immutable=True)
@@ -746,32 +750,125 @@ def publish_documents(store, documents: list[dict], policy: dict) -> dict:
                 if receipt is None:
                     raise
         if receipt["document_sha256"] != document_sha256:
-            raise ValueError("Availability receipt names different forecast content")
-        document["released_at"] = receipt["released_at"]
-        document["release_href"] = receipt_key
-        pointer = forecast_pointer(document)
+            raise ValueError("Commitment receipt names different forecast content")
+        pointer = forecast_pointer(document, document_sha256)
         competition_id = document["competition_id"]
         archive_key = f"forecasts/{competition_id}/archive.json"
-        archive = store.get_json(archive_key, empty_archive(competition_id))
+        archive, archive_version = _versioned(store, archive_key, empty_archive(competition_id))
         entries = {row["forecast_id"]: row for row in archive["forecasts"]}
         entries[pointer["forecast_id"]] = pointer
-        archives[archive_key] = {
-            **archive,
-            "updated_at": datetime.now(UTC).isoformat(),
-            "forecasts": sorted(entries.values(), key=lambda row: row["forecast_id"], reverse=True),
-        }
+        archives[archive_key] = (
+            {
+                **archive,
+                "updated_at": datetime.now(UTC).isoformat(),
+                "forecasts": sorted(
+                    entries.values(), key=lambda row: row["forecast_id"], reverse=True
+                ),
+            },
+            archive_version,
+        )
         latest[competition_id] = pointer
-    for key, archive in archives.items():
+    for key, (archive, version) in archives.items():
         check_publishable(archive, policy, "archive")
-        store.put_json(key, archive)
+        store.put_json_if(key, archive, version)
     result = {
         "schema_version": 1,
         "updated_at": datetime.now(UTC).isoformat(),
         "forecasts": sorted(latest.values(), key=_competition_order),
     }
     check_publishable(result, policy, "current")
-    store.put_json("forecasts/current.json", result)
+    store.put_json_if("forecasts/current.json", result, current_version)
+    forecasts = []
+    for pointer in result["forecasts"]:
+        digest = pointer.get("document_sha256")
+        if digest is None:
+            digest = sha256_bytes(json_bytes(store.get_json(pointer["href"])))
+        forecasts.append(
+            {
+                "competition_id": pointer["competition_id"],
+                "forecast_id": pointer["forecast_id"],
+                "document_href": pointer["href"],
+                "document_sha256": digest,
+            }
+        )
+    revision_id = sha256_bytes(json_bytes(forecasts))
+    revision = {
+        "schema_version": 1,
+        "revision_id": revision_id,
+        "forecasts": forecasts,
+    }
+    store.put_json(f"deployments/revisions/{revision_id}.json", revision, immutable=True)
+    desired, desired_version = store.get_json_versioned("deployments/desired.json")
+    if desired is None or desired.get("revision_id") != revision_id:
+        store.put_json_if(
+            "deployments/desired.json",
+            {**revision, "desired_at": datetime.now(UTC).isoformat()},
+            desired_version,
+        )
     return result
+
+
+def activate_publication(
+    store,
+    revision_id: str,
+    *,
+    activated_at: datetime | None = None,
+    page_url: str | None = None,
+) -> dict:
+    desired = store.get_json("deployments/desired.json")
+    if desired is None or desired.get("revision_id") != revision_id:
+        raise ValueError("The deployed revision is not the desired publication revision")
+    activated_at = activated_at or datetime.now(UTC)
+    activation = {
+        **desired,
+        "activated_at": activated_at.isoformat(),
+        "page_url": page_url,
+    }
+    for forecast in desired["forecasts"]:
+        receipt_key = f"availability/{forecast['competition_id']}/{forecast['forecast_id']}.json"
+        existing = store.get_json(receipt_key)
+        if existing is not None:
+            if existing["document_sha256"] != forecast["document_sha256"]:
+                raise ValueError("Availability receipt names different forecast content")
+            continue
+        receipt = {
+            "schema_version": 1,
+            **forecast,
+            "revision_id": revision_id,
+            "activated_at": activated_at.isoformat(),
+        }
+        store.put_json(receipt_key, receipt, immutable=True)
+    store.put_json(f"deployments/activations/{revision_id}.json", activation, immutable=True)
+    current, version = store.get_json_versioned("deployments/current.json")
+    if current is None or current.get("revision_id") != revision_id:
+        store.put_json_if("deployments/current.json", activation, version)
+    return activation
+
+
+def deployment_pending(store) -> bool:
+    desired = store.get_json("deployments/desired.json")
+    current = store.get_json("deployments/current.json")
+    return desired is not None and (
+        current is None or current.get("revision_id") != desired.get("revision_id")
+    )
+
+
+def activated_documents(store) -> list[dict]:
+    activation = store.get_json("deployments/current.json")
+    if activation is None:
+        return []
+    documents = []
+    for forecast in activation["forecasts"]:
+        document = store.get_json(forecast["document_href"])
+        if sha256_bytes(json_bytes(document)) != forecast["document_sha256"]:
+            raise ValueError("Activated publication content does not match its receipt")
+        receipt = store.get_json(
+            f"availability/{forecast['competition_id']}/{forecast['forecast_id']}.json"
+        )
+        if receipt is None or receipt["document_sha256"] != forecast["document_sha256"]:
+            raise ValueError("Activated forecast has no matching availability receipt")
+        documents.append({**document, "released_at": receipt["activated_at"]})
+    return documents
 
 
 def archive_documents(store, competition_id: str):
@@ -780,10 +877,9 @@ def archive_documents(store, competition_id: str):
     )
     for entry in reversed(archive["forecasts"]):
         document = store.get_json(entry["href"])
-        receipt_key = entry.get("release_href")
-        receipt = store.get_json(receipt_key) if receipt_key else None
+        receipt = store.get_json(f"availability/{competition_id}/{entry['forecast_id']}.json")
         if receipt:
-            document = {**document, "released_at": receipt["released_at"]}
+            document = {**document, "released_at": receipt["activated_at"]}
         yield document
 
 

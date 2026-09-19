@@ -1,11 +1,12 @@
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import duckdb
 import numpy as np
 import pytest
 
-from epl_forecast import fit_state
+from epl_forecast import cli, fit_state
 from epl_forecast.fit_state import (
     fitted_model_from_checkpoint,
     load_fit_checkpoint,
@@ -79,6 +80,153 @@ def test_checkpoint_restores_exact_m10_state(tmp_path, small_history):
     with duckdb.connect(str(path), read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM fit_checkpoints").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM fit_members").fetchone()[0] == 3
+
+
+def test_forecast_result_reuses_one_daily_fit_across_requested_cutoffs(
+    tmp_path, small_history, monkeypatch
+):
+    config = tmp_path / "product.toml"
+    config.write_text(
+        """
+competition_id = "eng-premier-league"
+development_start = "2018-01-01"
+development_end = "2018-02-01"
+validation_start = "2018-02-01"
+validation_end = "2018-03-01"
+holdout_start = "2018-03-01"
+holdout_end = "2018-04-01"
+train_window_days = 10000
+min_train_matches = 1
+
+[[models]]
+id = "test-model"
+kind = "bayesian_xg_quality_tilt"
+
+[models.parameters]
+canonical_xg = true
+""".strip()
+        + "\n"
+    )
+    observations = xg_rows(small_history)
+
+    class Data:
+        data_revision = "snapshot-revision"
+
+        def xg_observations(self):
+            return observations
+
+        def close(self):
+            pass
+
+    class Sanctions:
+        def known_adjustments(self, *args):
+            return []
+
+    def live(cutoff, competition, season, data):
+        return SimpleNamespace(
+            observed_at=cutoff,
+            competition_id=competition,
+            season_id=season,
+            remaining=[],
+            details={},
+            played=[],
+            manifest={"requested_cutoff": cutoff.isoformat()},
+        )
+
+    monkeypatch.setattr(cli, "Dataset", lambda cutoff: Data())
+    monkeypatch.setattr(cli, "load_live_season", live)
+    monkeypatch.setattr(cli, "check_freshness", lambda *args: None)
+    monkeypatch.setattr(cli, "load_dataset", lambda data: (small_history, [], {"batches": []}))
+    monkeypatch.setattr(cli, "load_registry", lambda data: Sanctions())
+    monkeypatch.setattr(cli, "current_adjustments", lambda *args: {})
+    monkeypatch.setattr(cli, "build_forecast", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        "epl_forecast.results.write_forecast_result",
+        lambda *args, **kwargs: {"result_id": kwargs["result_id"], "status": "written"},
+    )
+    arguments = SimpleNamespace(
+        snapshot=None,
+        snapshot_manifest=None,
+        result_id="forecast-1",
+        results=tmp_path / "results.duckdb",
+        competition="eng-premier-league",
+        season="2021-2022",
+        max_snapshot_age_hours=24,
+        config=config,
+        model="test-model",
+        fits=tmp_path / "fits.duckdb",
+        europe_scenario=None,
+        adjustments=None,
+        market_pool=None,
+        seed=1,
+        simulations=100,
+        max_goals=10,
+        cutoff="2026-09-18T10:00:00+00:00",
+    )
+    _, first_run, _ = cli.forecast_result(arguments)
+    arguments.cutoff = "2026-09-18T18:00:00+00:00"
+    arguments.result_id = "forecast-2"
+    _, second_run, _ = cli.forecast_result(arguments)
+
+    assert first_run["fit_checkpoint"]["status"] == "fresh"
+    assert second_run["fit_checkpoint"]["status"] == "exact"
+    assert "data_cutoff" not in second_run["model"]["parameters"]
+    with duckdb.connect(str(arguments.fits), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM fit_checkpoints").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM fit_uses").fetchone() == (2,)
+        assert connection.execute(
+            "SELECT count(DISTINCT requested_cutoff) FROM fit_uses"
+        ).fetchone() == (2,)
+
+
+def test_recaptured_provenance_does_not_block_semantic_prefix_resume(tmp_path, small_history):
+    path = tmp_path / "fits.duckdb"
+    spec = model_spec()
+    first = [
+        replace(match, source_sha256="a" * 64, source_row=index)
+        for index, match in enumerate(small_history[:6])
+    ]
+    first_rows = [{**row, "source_sha256": "a" * 64} for row in xg_rows(first)]
+    fitted_model_from_checkpoint(
+        path,
+        spec,
+        first,
+        first[-1].available_on,
+        "revision-1",
+        observations=first_rows,
+        requested_cutoff=datetime(2026, 9, 18, 12, tzinfo=UTC),
+    )
+    recaptured = [
+        replace(match, source_sha256="b" * 64, source_row=index + 100)
+        for index, match in enumerate(small_history[:6])
+    ]
+    appended = [*recaptured, *small_history[6:]]
+    appended_rows = [{**row, "source_sha256": "b" * 64} for row in xg_rows(appended)]
+    resumed, _ = fitted_model_from_checkpoint(
+        path,
+        spec,
+        appended,
+        appended[-1].available_on,
+        "revision-2",
+        observations=appended_rows,
+        requested_cutoff=datetime(2026, 9, 19, 12, tzinfo=UTC),
+    )
+    fresh, _ = fitted_model_from_checkpoint(
+        tmp_path / "fresh.duckdb",
+        spec,
+        appended,
+        appended[-1].available_on,
+        "revision-2",
+        observations=appended_rows,
+    )
+    assert resumed.fit_state_status == "resumed"
+    for actual, expected in zip(resumed.members, fresh.members, strict=True):
+        np.testing.assert_allclose(actual.mean, expected.mean, atol=1e-11)
+        np.testing.assert_allclose(actual.covariance, expected.covariance, atol=1e-11)
+    with duckdb.connect(str(path), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(DISTINCT capture_provenance_sha256) FROM fit_uses"
+        ).fetchone() == (2,)
 
 
 def test_irrelevant_revision_reuses_and_model_inputs_invalidate(
