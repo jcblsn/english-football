@@ -141,9 +141,11 @@ Captured history is retrospective evidence. It does not show what was known befo
 
 ## Interactive analysis
 
-Run `uv run epl-forecast data ui`. The command prepares the `analysis` schema, opens one read-only connection to the session file, and starts the DuckDB UI on that same connection. The process must stay open while you use the UI. Press Control-C in the terminal to stop the UI and close the connection.
+Run `uv run epl-forecast data ui`. The command prepares the `analysis` schema and starts the DuckDB UI from a separate writable temporary catalog. It attaches the prepared session as `page324` with `READ_ONLY` and selects that catalog, so queries can use `analysis.matches` without a catalog prefix. The prepared data stays read-only. The process must stay open while you use the UI. Press Control-C to stop the server, close its connections and remove the temporary host catalog. The Python `start_ui` interface requires a persisted session path.
 
 Use `uv run epl-forecast data ui --no-browser` to start the local server without opening a browser. The default address is `http://localhost:4213`.
+
+For a local UI smoke check, run that command, open the address and execute `SELECT count(*) FROM analysis.matches` and `SELECT count(*) FROM analysis.team_projections` in a notebook. Press Control-C in the terminal when the checks finish. CI tests the writable host and read-only attachment without downloading the UI extension or binding its server port.
 
 The UI runs queries on the local DuckDB process. It does not use MotherDuck unless you explicitly enable MotherDuck. The command uses temporary R2 secrets with separate scopes for `page324-data` and `page324-publish` only while it prepares the session file. It does not store credentials in the session file.
 

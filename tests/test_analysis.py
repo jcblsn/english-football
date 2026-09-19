@@ -1,6 +1,7 @@
 import json
 import math
 import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from epl_forecast.analysis import (
     ALL_MODEL_VERSIONS,
     CURRENT_MODEL_VERSION,
     NO_HINDCAST_VERSIONS,
+    _ui_host,
     open_analysis_session,
     start_ui,
 )
@@ -1078,7 +1080,7 @@ def test_the_hindcast_archive_keeps_every_published_model_version(tmp_path):
         session.close()
 
 
-def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
+def test_ui_uses_the_writable_host_and_stops_cleanly(monkeypatch):
     statements = []
 
     class Result:
@@ -1090,15 +1092,56 @@ def test_ui_uses_the_prepared_connection_and_stops_cleanly(monkeypatch):
             statements.append(sql)
             return Result()
 
-    class Session:
-        connection = Connection()
+    @contextmanager
+    def host(session):
+        yield Connection()
 
     def interrupt(_seconds):
         raise KeyboardInterrupt
 
     monkeypatch.setattr("epl_forecast.analysis.time.sleep", interrupt)
-    assert start_ui(Session(), open_browser=False) == "http://localhost:4213"
+    monkeypatch.setattr("epl_forecast.analysis._ui_host", host)
+    assert start_ui(object(), open_browser=False) == "http://localhost:4213"
     assert statements == ["CALL start_ui_server()", "CALL stop_ui_server()"]
+
+
+def test_ui_host_attaches_prepared_analysis_read_only(tmp_path):
+    data, publication = forecast_stores()
+    session = open_analysis_session(
+        data_store=data, publish_store=publication, session_directory=tmp_path / "sessions"
+    )
+    try:
+        before = file_hash(session.path)
+        expected = session.rows("SELECT count(*) AS n FROM analysis.forecasts")
+        with _ui_host(session) as host:
+            assert host.execute("SELECT current_database()").fetchone() == ("page324",)
+            modes = dict(
+                host.execute(
+                    "SELECT database_name, readonly FROM duckdb_databases() WHERE NOT internal"
+                ).fetchall()
+            )
+            assert modes == {"ui_host": False, "page324": True}
+            host.execute("CREATE TABLE ui_host.main.ui_state (value INTEGER)")
+            assert host.execute("SELECT count(*) FROM analysis.matches").fetchone() == (0,)
+            assert host.execute("SELECT count(*) FROM analysis.team_projections").fetchone() == (2,)
+            assert host.execute(
+                "SELECT count(*) FROM duckdb_views() WHERE sql ILIKE '%localmemdb%'"
+            ).fetchone() == (0,)
+            with pytest.raises(duckdb.Error):
+                host.execute("CREATE TABLE page324.analysis.forbidden (value INTEGER)")
+        assert file_hash(session.path) == before
+        assert session.rows("SELECT count(*) AS n FROM analysis.forecasts") == expected
+        with pytest.raises(duckdb.Error):
+            session.connection.execute("CREATE TABLE analysis.forbidden (value INTEGER)")
+    finally:
+        session.close()
+
+
+def test_ui_requires_a_persisted_session():
+    from types import SimpleNamespace
+
+    with pytest.raises(ValueError, match="persisted analysis session"):
+        start_ui(SimpleNamespace(path=None))
 
 
 def test_session_file_is_reused_only_while_r2_state_is_unchanged(tmp_path, monkeypatch):
