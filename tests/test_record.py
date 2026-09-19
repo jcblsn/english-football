@@ -1,6 +1,13 @@
+from datetime import UTC, datetime
+
 from test_publication import Store, sample_forecast
 
-from epl_forecast.publication import derive_forecast, load_policy, publish_documents
+from epl_forecast.publication import (
+    activate_publication,
+    derive_forecast,
+    load_policy,
+    publish_documents,
+)
 from epl_forecast.record import realized_outcomes, rebuild_record, update_record
 
 MATCH = "eng-premier-league:2026-2027:arsenal:chelsea"
@@ -91,8 +98,49 @@ def test_the_record_can_be_rebuilt_from_partitioned_archives():
         ],
         policy,
     )
+    activate_publication(
+        store,
+        store.objects["deployments/desired.json"]["revision_id"],
+        activated_at=datetime(2026, 9, 12, 7, tzinfo=UTC),
+    )
 
     record = rebuild_record(store, {MATCH: "D"}, policy)
 
     assert record["settled"][0]["forecast_id"] == "2026-09-12T060000Z"
     assert record["settled"][0]["outcome"] == "D"
+
+
+def test_private_commit_before_kickoff_and_public_activation_after_kickoff_is_ineligible():
+    store = Store()
+    policy = load_policy()
+    publish_documents(
+        store,
+        [document("2026-09-12T13:00:00+00:00", "late-public-activation", 0.9)],
+        policy,
+    )
+    activate_publication(
+        store,
+        store.objects["deployments/desired.json"]["revision_id"],
+        activated_at=datetime(2026, 9, 12, 14, 1, tzinfo=UTC),
+    )
+
+    record = rebuild_record(store, {MATCH: "H"}, policy)
+
+    assert "commitments/eng-premier-league/late-public-activation.json" in store.objects
+    assert record["pending"] == []
+    assert record["settled"] == []
+
+
+def test_rebuild_does_not_invent_public_time_for_historical_forecasts():
+    store = Store()
+    policy = load_policy()
+    publish_documents(
+        store,
+        [document("2026-09-10T12:00:00+00:00", "unknown-public-time", 0.5)],
+        policy,
+    )
+
+    record = rebuild_record(store, {MATCH: "H"}, policy)
+
+    assert record["pending"] == []
+    assert record["settled"] == []

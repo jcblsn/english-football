@@ -4,13 +4,15 @@ import json
 import tempfile
 import time
 import tomllib
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from epl_forecast import __version__
+from epl_forecast.artifacts import code_fingerprint, execution_provenance
 from epl_forecast.cli import forecast_result
 from epl_forecast.cloud import sync_data
 from epl_forecast.competitions import COMPETITION_IDS
@@ -19,6 +21,8 @@ from epl_forecast.data.collect import collect
 from epl_forecast.datasets import Dataset
 from epl_forecast.personnel import current_adjustments
 from epl_forecast.publication import (
+    activated_documents,
+    deployment_pending,
     derive_forecast,
     load_policy,
     publish_documents,
@@ -46,7 +50,7 @@ from epl_forecast.storage import (
     sha256_bytes,
     write_immutable,
 )
-from epl_forecast.verification import verify_result
+from epl_forecast.verification import verify_result, verify_result_revision
 
 PRODUCT_MODEL = "M10-xg-v1"
 PRODUCT_CONFIG = Path("configs/product.toml")
@@ -62,6 +66,7 @@ class PreparedSnapshot:
     database: Path
     manifest_path: Path
     manifest: dict
+    operation_http: dict | None = None
 
 
 @dataclass
@@ -85,6 +90,33 @@ def progress(event: str, **details) -> None:
     )
 
 
+def refresh_provenance(
+    snapshot: dict,
+    observed_at: datetime,
+    action: str,
+    market_quotes: list[dict],
+) -> dict:
+    execution = execution_provenance()
+    return {
+        "package_version": __version__,
+        "code_sha256": code_fingerprint(),
+        "execution": execution,
+        "requested_cutoff": observed_at.isoformat(),
+        "refresh_action": action,
+        "snapshot": {
+            key: snapshot.get(key)
+            for key in (
+                "source_revision",
+                "data_revision",
+                "database_sha256",
+                "manifest_sha256",
+            )
+            if snapshot.get(key) is not None
+        },
+        "market_quote_evidence": market_quotes,
+    }
+
+
 def operation_benchmark(
     result: dict,
     operation_started: float,
@@ -93,6 +125,7 @@ def operation_benchmark(
     *,
     actions: dict[str, str] | None = None,
     fit_states: dict[str, str | None] | None = None,
+    engine_http: dict | None = None,
 ) -> dict:
     stores = {"data": data_store.metrics(), "publication": publish_store.metrics()}
     combined = {
@@ -100,15 +133,26 @@ def operation_benchmark(
         for key in set().union(*(metrics.keys() for metrics in stores.values()))
         if key.endswith("_requests") or key in {"request_bytes", "response_bytes"}
     }
+    engine_http = engine_http or {}
+    engine_methods = {
+        row["method"].lower(): row["requests"] for row in engine_http.get("by_method", [])
+    }
+
+    def attempts(name: str) -> int:
+        sdk = sum(metrics.get(f"{name}_sdk_attempts", 0) for metrics in stores.values())
+        return sdk or combined.get(f"{name}_requests", 0)
+
     benchmark = {
         "wake_to_completion_seconds": round(time.monotonic() - operation_started, 3),
-        "class_a_operations": sum(combined.get(f"{name}_requests", 0) for name in ("put", "list")),
-        "class_b_operations": sum(combined.get(f"{name}_requests", 0) for name in ("get", "head")),
-        "request_bytes": combined.get("request_bytes", 0),
-        "response_bytes": combined.get("response_bytes", 0),
+        "class_a_operations": sum(attempts(name) for name in ("put", "list")),
+        "class_b_operations": sum(attempts(name) for name in ("get", "head"))
+        + sum(engine_methods.get(name, 0) for name in ("get", "head")),
+        "request_bytes": combined.get("request_bytes", 0) + engine_http.get("request_bytes", 0),
+        "response_bytes": combined.get("response_bytes", 0) + engine_http.get("response_bytes", 0),
         "recomputed_stages": actions or {},
         "fit_state_by_division": fit_states or {},
         "stores": stores,
+        "engine_http": engine_http,
     }
     result["benchmark"] = benchmark
     progress("operation_finished", status=result["status"], **benchmark)
@@ -446,7 +490,7 @@ def prepare_operation_snapshot(cutoff: datetime, data_store, workspace: Path) ->
     database = workspace / "canonical.duckdb"
     manifest_path = snapshot_manifest_path(database)
 
-    def restore(value: dict) -> PreparedSnapshot:
+    def restore(value: dict, operation_http: dict | None = None) -> PreparedSnapshot:
         data_store.download(value["database_key"], database)
         data_store.download(value["manifest_key"], manifest_path)
         data = SnapshotDataset(database, cutoff, manifest_path=manifest_path)
@@ -454,7 +498,11 @@ def prepare_operation_snapshot(cutoff: datetime, data_store, workspace: Path) ->
             data.close()
             raise ValueError("The restored snapshot does not match the canonical source revision")
         return PreparedSnapshot(
-            data, database, manifest_path, json.loads(manifest_path.read_text())
+            data,
+            database,
+            manifest_path,
+            json.loads(manifest_path.read_text()),
+            operation_http,
         )
 
     if pointer is not None and pointer.get("source_revision") == source_revision:
@@ -534,12 +582,13 @@ def prepare_operation_snapshot(cutoff: datetime, data_store, workspace: Path) ->
             raise
         database.unlink(missing_ok=True)
         manifest_path.unlink(missing_ok=True)
-        return restore(winner)
+        return restore(winner, manifest.get("source_http"))
     return PreparedSnapshot(
         SnapshotDataset(database, cutoff, manifest_path=manifest_path),
         database,
         manifest_path,
         manifest,
+        manifest.get("source_http"),
     )
 
 
@@ -706,7 +755,7 @@ def operate(
     progress("fingerprint_started", model_version=model_version)
     with tempfile.TemporaryDirectory(prefix="page324-operation-") as workspace:
         prepared = prepare_operation_snapshot(now, data_store, Path(workspace))
-        state = data_store.get_json("state/forecast.json", {})
+        state, state_version = data_store.get_json_versioned("state/forecast.json", {})
         try:
             identities = {
                 competition_id: production_identities(
@@ -746,15 +795,15 @@ def operate(
             result.update(
                 status="unchanged", reason="No new information since the last publication"
             )
-            previous = publish_store.get_json("record.json")
-            record = update_record(previous, [], outcomes, policy)
+            previous, record_version = publish_store.get_json_versioned("record.json")
+            record = update_record(previous, activated_documents(publish_store), outcomes, policy)
             record_changed = previous is None or {**previous, "updated_at": None} != {
                 **record,
                 "updated_at": None,
             }
             if record_changed:
-                publish_store.put_json("record.json", record)
-            result["public_changed"] = record_changed
+                publish_store.put_json_if("record.json", record, record_version)
+            result["public_changed"] = record_changed or deployment_pending(publish_store)
             result["scored_matches"] = record["summary"].get("overall", {}).get("scored", 0)
             return operation_benchmark(
                 result,
@@ -762,6 +811,7 @@ def operate(
                 data_store,
                 publish_store,
                 actions=actions,
+                engine_http=getattr(prepared, "operation_http", None),
             )
         run_id = forecast_id(now)
         return _forecast_and_publish(
@@ -776,6 +826,7 @@ def operate(
             partial_inputs,
             outcomes,
             state,
+            state_version,
             policy,
             simulations,
             data_store,
@@ -797,6 +848,7 @@ def _forecast_and_publish(
     partial_inputs: dict[str, dict[str, object]],
     outcomes,
     state: dict,
+    state_version: str | None,
     policy: dict,
     simulations: int,
     data_store,
@@ -804,59 +856,64 @@ def _forecast_and_publish(
     operation_started: float,
     prepared: PreparedSnapshot,
 ) -> dict:
-    impact_state = data_store.get_json("state/impacts.json", {"schema_version": 1, "matches": {}})
+    impact_state, impact_version = data_store.get_json_versioned(
+        "state/impacts.json", {"schema_version": 1, "matches": {}}
+    )
     documents, failures = [], []
+    current = None
     attempt.mkdir(parents=True)
     full = [league for league in pending if actions[league] == "full"]
     attempts = {}
     if full:
         with ThreadPoolExecutor(max_workers=min(4, len(full))) as pool:
-            attempts = {
-                row.league: row
-                for row in pool.map(
-                    lambda league: forecast_and_verify(
-                        league,
-                        now,
-                        attempt,
-                        run_id,
-                        simulations,
-                        prepared,
-                        data_store,
-                    ),
-                    full,
-                )
+            futures = {
+                pool.submit(
+                    forecast_and_verify,
+                    league,
+                    now,
+                    attempt,
+                    run_id,
+                    simulations,
+                    prepared,
+                    data_store,
+                ): league
+                for league in full
             }
-    for league in full:
-        row = attempts[league]
-        if row.failure:
-            failures.append(row.failure)
-            continue
-        document = update_impact_state(
-            derive_forecast(
-                read_forecast_result(row.result_store, run_id),
-                run_id,
-                public_model_version=policy["product"]["model_version"],
-            ),
-            impact_state,
-        )
-        store_public_projection(row.result_store, run_id, document)
-        try:
-            commit_result_store(data_store, league, row.result_store, row.result_version)
-        except ConditionalWriteFailed:
-            progress("result_commit_conflict", competition_id=league)
-            failures.append(
-                {
-                    "league": league,
-                    "stage": "result_commit",
-                    "detail": "A newer result database won the conditional commit",
-                }
-            )
-            continue
-        try:
-            commit_fit_store(data_store, league, row.fit_store, row.fit_version)
-        except ConditionalWriteFailed:
-            progress("fit_checkpoint_conflict", competition_id=league)
-        documents.append(document)
+            for future in as_completed(futures):
+                row = future.result()
+                league = row.league
+                attempts[league] = row
+                if row.failure:
+                    failures.append(row.failure)
+                    continue
+                document = update_impact_state(
+                    derive_forecast(
+                        read_forecast_result(row.result_store, run_id),
+                        run_id,
+                        public_model_version=policy["product"]["model_version"],
+                    ),
+                    impact_state,
+                )
+                store_public_projection(row.result_store, run_id, document)
+                try:
+                    commit_result_store(data_store, league, row.result_store, row.result_version)
+                except ConditionalWriteFailed:
+                    progress("result_commit_conflict", competition_id=league)
+                    failures.append(
+                        {
+                            "league": league,
+                            "stage": "result_commit",
+                            "detail": "A newer result database won the conditional commit",
+                        }
+                    )
+                    continue
+                try:
+                    commit_fit_store(data_store, league, row.fit_store, row.fit_version)
+                except ConditionalWriteFailed:
+                    progress("fit_checkpoint_conflict", competition_id=league)
+                progress("publication_started", forecasts=1, competition_id=league)
+                current = publish_documents(publish_store, [document], policy)
+                documents.append(document)
     market_pool = json.loads((REPOSITORY / "configs/market_pool.json").read_text())
     if market_pool.get("structural_model_id") != PRODUCT_MODEL:
         market_pool = None
@@ -877,7 +934,14 @@ def _forecast_and_publish(
                 source_result_id,
                 run_id,
                 generated_at=now,
+                observed_at=now,
                 input_revision=fingerprints[league],
+                software_provenance=refresh_provenance(
+                    prepared.manifest,
+                    now,
+                    action,
+                    values["market_quotes"],
+                ),
                 replace_market=action in {"market", "market_display"},
                 market_quotes=values["market_quotes"],
                 market_pool=market_pool,
@@ -885,6 +949,21 @@ def _forecast_and_publish(
                     values["team_names"] if action in {"display", "market_display"} else None
                 ),
             )
+            revision_verification = verify_result_revision(
+                result_store,
+                run_id,
+                source_result_id,
+                replace_market=action in {"market", "market_display"},
+                market_quotes=values["market_quotes"],
+                market_pool=market_pool,
+                team_names=(
+                    values["team_names"] if action in {"display", "market_display"} else None
+                ),
+            )
+            if revision_verification["failures"]:
+                raise ValueError(
+                    f"Typed result revision failed {revision_verification['failures']} checks"
+                )
             document = update_impact_state(
                 derive_forecast(
                     read_forecast_result(result_store, run_id),
@@ -908,6 +987,8 @@ def _forecast_and_publish(
                     }
                 ),
             )
+            progress("publication_started", forecasts=1, competition_id=league)
+            current = publish_documents(publish_store, [document], policy)
             documents.append(document)
         except (ConditionalWriteFailed, KeyError, ValueError) as error:
             progress("result_refresh_failed", competition_id=league, detail=str(error))
@@ -921,15 +1002,22 @@ def _forecast_and_publish(
             publish_store,
             actions=actions,
             fit_states={league: row.fit_state_status for league, row in attempts.items()},
+            engine_http=getattr(prepared, "operation_http", None),
         )
         write_immutable(attempt / "pipeline.json", json_bytes(result))
         return result
-    progress("publication_started", forecasts=len(documents))
-    current = publish_documents(publish_store, documents, policy)
-    record = update_record(publish_store.get_json("record.json"), documents, outcomes, policy)
-    publish_store.put_json("record.json", record)
+    if current is None:
+        raise RuntimeError("A published document did not produce a current index")
+    previous_record, record_version = publish_store.get_json_versioned("record.json")
+    record = update_record(
+        previous_record,
+        activated_documents(publish_store),
+        outcomes,
+        policy,
+    )
+    publish_store.put_json_if("record.json", record, record_version)
     result["public_changed"] = True
-    for document in documents:
+    for document in sorted(documents, key=lambda row: LEAGUES.index(row["competition_id"])):
         result["published"].append(f"{document['competition_id']}/{document['forecast_id']}")
     result.update(
         status="partial" if failures else "ok",
@@ -949,8 +1037,8 @@ def _forecast_and_publish(
             "result_id": document["forecast_id"],
             "origin_date": projection_day(now),
         }
-    data_store.put_json("state/forecast.json", state)
-    data_store.put_json("state/impacts.json", impact_state)
+    data_store.put_json_if("state/forecast.json", state, state_version)
+    data_store.put_json_if("state/impacts.json", impact_state, impact_version)
     result = operation_benchmark(
         result,
         operation_started,
@@ -958,6 +1046,7 @@ def _forecast_and_publish(
         publish_store,
         actions=actions,
         fit_states={league: row.fit_state_status for league, row in attempts.items()},
+        engine_http=getattr(prepared, "operation_http", None),
     )
     write_immutable(attempt / "pipeline.json", json_bytes(result))
     return result

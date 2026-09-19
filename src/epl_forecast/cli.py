@@ -46,6 +46,7 @@ def fitted_model(
     observations=None,
     fit_store: Path | None = None,
     input_revision: str | None = None,
+    requested_cutoff: datetime | None = None,
 ):
     specs = [spec for spec in config["models"] if spec["id"] == model_id]
     if len(specs) != 1:
@@ -65,6 +66,7 @@ def fitted_model(
             as_of,
             input_revision,
             observations=observations,
+            requested_cutoff=requested_cutoff,
         )
         checkpoint_id, _, _, _, _ = checkpoint_identity(
             specs[0], training, as_of, observations=observations
@@ -162,8 +164,6 @@ def forecast_result(args) -> tuple[dict, dict, dict]:
     config["competition_id"] = live.competition_id
     for model in config["models"]:
         model.setdefault("parameters", {})["competition_id"] = live.competition_id
-        if model.get("parameters", {}).get("canonical_xg"):
-            model["parameters"]["data_cutoff"] = live.observed_at.isoformat()
     history = [
         match
         for match in history
@@ -179,6 +179,7 @@ def forecast_result(args) -> tuple[dict, dict, dict]:
         observations=observations,
         fit_store=args.fits,
         input_revision=input_revision,
+        requested_cutoff=live.observed_at,
     )
     europe = (
         EuropeScenario(**json.loads(args.europe_scenario.read_text()))
@@ -338,7 +339,24 @@ def materialize_command(args) -> None:
         tuple(args.archive),
         args.hindcasts,
     )
+    desired = store.get_json("deployments/desired.json")
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        stream = Path(output)
+        with stream.open("a") as target:
+            target.write(f"revision_id={desired['revision_id'] if desired else 'legacy'}\n")
     print(json.dumps(result, indent=2))
+
+
+def activate_publication_command(args) -> None:
+    from epl_forecast.publication import activate_publication
+    from epl_forecast.storage import R2Store
+
+    activation = activate_publication(
+        R2Store.from_environment("R2_PUBLISH_BUCKET"),
+        args.revision_id,
+        page_url=args.page_url,
+    )
+    print(json.dumps(activation, indent=2))
 
 
 def hindcast_command(args) -> None:
@@ -443,6 +461,13 @@ def parser() -> argparse.ArgumentParser:
         help="Also materialize the hindcast index, season series and weekly documents",
     )
     materialize.set_defaults(func=materialize_command)
+    activate = commands.add_parser(
+        "activate-publication",
+        help="Record the publication revision after a successful public deployment",
+    )
+    activate.add_argument("--revision-id", required=True)
+    activate.add_argument("--page-url")
+    activate.set_defaults(func=activate_publication_command)
     hindcast = commands.add_parser(
         "hindcast", help="Make and publish weekly retrospective hindcasts of completed seasons"
     )

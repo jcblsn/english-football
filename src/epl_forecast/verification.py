@@ -10,6 +10,7 @@ paths as the table, and enough provenance to say what was known when.
 Every check reads only the typed result database. It fails loudly rather than reporting a score.
 """
 
+import json
 from datetime import date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -197,10 +198,16 @@ def verify_forecast(forecast: dict, run: dict) -> dict:
                 < 1e-12,
             )
 
-    personnel = forecast["personnel"]
+    personnel = forecast.get("personnel")
+    personnel_matches = [match for match in forecast["matches"] if match["personnel"] is not None]
+    checks.check(
+        "the personnel summary is retained when match personnel detail exists",
+        not personnel_matches or personnel is not None,
+        f"{len(personnel_matches)} detailed matches",
+    )
     for match in forecast["matches"]:
         record = match["personnel"]
-        if record is None:
+        if record is None or personnel is None:
             continue
         kickoff = timestamp(match["kickoff_time"])
         checks.check(
@@ -426,3 +433,118 @@ def verify_result(database: Path, result_id: str) -> dict:
         read_forecast_result(database, result_id),
         read_forecast_run(database, result_id),
     )
+
+
+def verify_result_revision(
+    database: Path,
+    result_id: str,
+    source_result_id: str,
+    *,
+    replace_market: bool,
+    market_quotes: list[dict],
+    market_pool: dict | None,
+    team_names: dict[str, str] | None,
+) -> dict:
+    """Check a lightweight result against its structural source and replacement inputs."""
+    import duckdb
+
+    from epl_forecast.market import market_assisted_probabilities
+    from epl_forecast.results import read_forecast_result, read_forecast_run
+
+    checks = Checks()
+    source = read_forecast_result(database, source_result_id)
+    result = read_forecast_result(database, result_id)
+    run = read_forecast_run(database, result_id)
+    checks.check(
+        "revision keeps the structural simulation", result["simulation"] == source["simulation"]
+    )
+    checks.check(
+        "revision keeps the structural team strengths",
+        result["team_strengths"] == source["team_strengths"],
+    )
+    source_matches = {row["match_id"]: row for row in source["matches"]}
+    result_matches = {row["match_id"]: row for row in result["matches"]}
+    checks.check(
+        "revision keeps the structural match set",
+        set(result_matches) == set(source_matches),
+    )
+    structural_fields = ("unadjusted", "personnel_adjusted")
+    checks.check(
+        "revision keeps every structural probability and score grid",
+        all(
+            result_matches[match_id]["stages"][stage] == source_match["stages"][stage]
+            for match_id, source_match in source_matches.items()
+            for stage in structural_fields
+        ),
+    )
+    selected = {
+        row["match_id"]: row
+        for row in market_quotes
+        if market_pool is not None and row["family"] == market_pool["market_family"]
+    }
+    market_matches = 0
+    for match_id, match in result_matches.items():
+        actual = match["market_assisted_probabilities"]
+        if replace_market:
+            quote = selected.get(match_id)
+            expected = (
+                None
+                if quote is None
+                else market_assisted_probabilities(
+                    tuple(match[f"p_{side}"] for side in ("home", "draw", "away")),
+                    quote,
+                    market_pool,
+                )
+            )
+        else:
+            expected = source_matches[match_id]["market_assisted_probabilities"]
+        if actual is not None:
+            actual = {
+                key: value
+                for key, value in actual.items()
+                if key not in {"parent_stage", "score_generating"}
+            }
+            market_matches += 1
+        checks.check(f"revision market replacement is exact: {match_id}", actual == expected)
+    assistance = result.get("market_assistance")
+    checks.check(
+        "revision refreshes aggregate market availability",
+        (assistance is None and market_matches == 0)
+        or (
+            assistance is not None and assistance.get("available_match_forecasts") == market_matches
+        ),
+        market_matches,
+    )
+    checks.check(
+        "revision applies the complete display replacement",
+        team_names is None or result["team_names"] == team_names,
+    )
+    checks.check(
+        "revision records its own requested cutoff",
+        run.get("requested_cutoff") == result["state_observed_at"],
+    )
+    checks.check(
+        "revision records current quote evidence",
+        run.get("market_quote_evidence") == json.loads(json.dumps(market_quotes, default=str)),
+    )
+    with duckdb.connect(str(database), read_only=True) as connection:
+        lineage = connection.execute(
+            "SELECT source_result_id, market_replacement FROM forecast_result.forecast_runs "
+            "WHERE result_id = ?",
+            [result_id],
+        ).fetchone()
+        source_root = connection.execute(
+            "WITH RECURSIVE lineage(result_id, source_result_id) AS ("
+            "SELECT result_id, source_result_id FROM forecast_result.forecast_runs "
+            "WHERE result_id = ? UNION ALL SELECT r.result_id, r.source_result_id "
+            "FROM forecast_result.forecast_runs r JOIN lineage l "
+            "ON r.result_id = l.source_result_id) "
+            "SELECT result_id FROM lineage WHERE source_result_id IS NULL",
+            [source_result_id],
+        ).fetchone()
+    checks.check(
+        "revision has one structural lineage level",
+        lineage == (source_root[0], True),
+        lineage,
+    )
+    return {"checks": checks.results, "failures": len(checks.failures)}

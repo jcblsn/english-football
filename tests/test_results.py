@@ -5,10 +5,12 @@ import duckdb
 import pytest
 from test_publication import sample_forecast, sample_run
 
+from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast
 from epl_forecast.results import (
     clone_forecast_result,
     read_forecast_result,
+    read_forecast_run,
     write_forecast_result,
 )
 
@@ -76,6 +78,17 @@ def result_forecast():
         ]
     }
     return forecast
+
+
+def revision_context(moment):
+    return {
+        "generated_at": moment,
+        "observed_at": moment,
+        "software_provenance": {
+            "execution": {"commit": "revision-commit"},
+            "requested_cutoff": moment.isoformat(),
+        },
+    }
 
 
 def test_forecast_result_is_written_at_declared_grains(tmp_path):
@@ -147,6 +160,109 @@ def test_legacy_forecast_preserves_only_its_known_probability_stages(tmp_path):
             }
 
 
+def test_reader_accepts_a_result_store_before_market_replacement_boundaries(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="legacy-input",
+        result_id="legacy-forecast",
+    )
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            "ALTER TABLE forecast_result.forecast_runs DROP COLUMN market_replacement"
+        )
+
+    restored = read_forecast_result(database, "legacy-forecast")
+
+    assert restored["matches"][0]["p_home"] == forecast["matches"][0]["p_home"]
+
+
+def test_exact_array_score_grid_prototype_preserves_every_cell_and_tail(tmp_path):
+    database = tmp_path / "results.duckdb"
+    write_forecast_result(
+        database,
+        result_forecast(),
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE compact_score_grids AS
+            SELECT score.result_id, score.match_id, score.stage,
+                   CAST(max(home_goals) + 1 AS USMALLINT) AS home_dimension,
+                   CAST(max(away_goals) + 1 AS USMALLINT) AS away_dimension,
+                   list(probability ORDER BY home_goals, away_goals)::DOUBLE[] AS probabilities,
+                   any_value(metadata.home_rate) AS home_rate,
+                   any_value(metadata.away_rate) AS away_rate,
+                   any_value(metadata.omitted_probability) AS omitted_probability,
+                   any_value(metadata.uncertainty_components) AS uncertainty_components
+            FROM forecast_result.forecast_scores AS score
+            JOIN forecast_result.forecast_score_metadata AS metadata
+            USING (result_id, match_id, stage)
+            GROUP BY score.result_id, score.match_id, score.stage
+            """
+        )
+        cells, exact_cells, dimensions, tails = connection.execute(
+            """
+            SELECT count(*),
+                   count(*) FILTER (
+                       WHERE score.probability = compact.probabilities[
+                           score.home_goals * compact.away_dimension + score.away_goals + 1
+                       ]
+                   ),
+                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
+                       WHERE array_length(compact.probabilities) =
+                           compact.home_dimension * compact.away_dimension
+                   ),
+                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
+                       WHERE compact.omitted_probability = metadata.omitted_probability
+                   )
+            FROM forecast_result.forecast_scores AS score
+            JOIN compact_score_grids AS compact USING (result_id, match_id, stage)
+            JOIN forecast_result.forecast_score_metadata AS metadata
+            USING (result_id, match_id, stage)
+            """
+        ).fetchone()
+        grids = connection.execute("SELECT count(*) FROM compact_score_grids").fetchone()[0]
+
+    assert exact_cells == cells
+    assert dimensions == grids
+    assert tails == grids
+
+
+def test_reader_recovers_exact_impact_times_from_legacy_date_columns(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    forecast["impact_window"] = {
+        "window_start": "2026-09-10T23:00:00+00:00",
+        "window_end": "2026-09-16T23:00:00+00:00",
+    }
+    forecast["simulation"]["match_impacts"].update(forecast["impact_window"])
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="legacy-input",
+        result_id="legacy-impact-window",
+    )
+    with duckdb.connect(str(database)) as connection:
+        for column in ("window_start", "window_end"):
+            connection.execute(
+                f"ALTER TABLE forecast_result.forecast_impact_metadata "
+                f"ALTER {column} TYPE DATE USING {column}::DATE"
+            )
+
+    restored = read_forecast_result(database, "legacy-impact-window")
+
+    assert restored["simulation"]["match_impacts"]["window_start"] == ("2026-09-10T23:00:00+00:00")
+    assert restored["simulation"]["match_impacts"]["window_end"] == ("2026-09-16T23:00:00+00:00")
+
+
 def test_result_identity_is_idempotent_and_cannot_name_different_content(tmp_path):
     database = tmp_path / "results.duckdb"
     forecast = result_forecast()
@@ -210,7 +326,7 @@ def test_display_refresh_reuses_all_forecast_values(tmp_path):
         database,
         "forecast-1",
         "forecast-2",
-        generated_at=datetime(2026, 9, 10, 13, tzinfo=UTC),
+        **revision_context(datetime(2026, 9, 10, 13, tzinfo=UTC)),
         input_revision="input-2",
         team_names={"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
     )
@@ -241,7 +357,7 @@ def test_display_refresh_reuses_all_forecast_values(tmp_path):
         database,
         "forecast-2",
         "forecast-3",
-        generated_at=datetime(2026, 9, 10, 14, tzinfo=UTC),
+        **revision_context(datetime(2026, 9, 10, 14, tzinfo=UTC)),
         input_revision="input-3",
     )
     chained = read_forecast_result(database, "forecast-3")
@@ -269,7 +385,7 @@ def test_quote_refresh_replaces_only_market_probabilities(tmp_path):
         database,
         "forecast-1",
         "forecast-2",
-        generated_at=datetime(2026, 9, 10, 13, tzinfo=UTC),
+        **revision_context(datetime(2026, 9, 10, 13, tzinfo=UTC)),
         input_revision="input-2",
         replace_market=True,
         market_quotes=[
@@ -302,6 +418,143 @@ def test_quote_refresh_replaces_only_market_probabilities(tmp_path):
         ).fetchone() == (1,)
 
 
+def test_market_revisions_are_complete_replacements_and_keep_one_level_lineage(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    pool = {"market_family": "closing", "market_weight": 0.5}
+
+    def quote(match_id, home_odds, observed_at):
+        return {
+            "match_id": match_id,
+            "family": "closing",
+            "home_odds": home_odds,
+            "draw_odds": 4.0,
+            "away_odds": 6.0,
+            "retrieved_at": observed_at,
+            "source_sha256": f"quote-{home_odds}",
+        }
+
+    def equivalent_markets(quotes, market_pool):
+        selected = {row["match_id"]: row for row in quotes}
+        values = {}
+        for match in forecast["matches"]:
+            current = selected.get(match["match_id"])
+            values[match["match_id"]] = (
+                None
+                if current is None or market_pool is None
+                else market_assisted_probabilities(
+                    (match["p_home"], match["p_draw"], match["p_away"]),
+                    current,
+                    market_pool,
+                )
+            )
+        return values
+
+    def restored_markets(result):
+        return {
+            row["match_id"]: (
+                None
+                if row["market_assisted_probabilities"] is None
+                else {
+                    key: value
+                    for key, value in row["market_assisted_probabilities"].items()
+                    if key not in {"parent_stage", "score_generating"}
+                }
+            )
+            for row in result["matches"]
+        }
+
+    first_id, second_id = (row["match_id"] for row in forecast["matches"])
+    original_second = quote(second_id, 2.1, datetime(2026, 9, 10, 10, tzinfo=UTC))
+    second_values = equivalent_markets([original_second], pool)[second_id]
+    forecast["matches"][1]["market_assisted_probabilities"] = second_values
+    forecast["matches"][1]["stages"]["market_assisted"] = {
+        "parent_stage": "personnel_adjusted",
+        "score_generating": False,
+        **second_values,
+    }
+    forecast["market_assistance"] = {
+        **pool,
+        "available_match_forecasts": 2,
+        "season_simulation_uses_market": False,
+    }
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="input-1",
+        result_id="forecast-a",
+    )
+
+    updated = quote(first_id, 1.6, datetime(2026, 9, 10, 12, tzinfo=UTC))
+    clone_forecast_result(
+        database,
+        "forecast-a",
+        "forecast-b",
+        **revision_context(datetime(2026, 9, 10, 13, tzinfo=UTC)),
+        input_revision="input-2",
+        replace_market=True,
+        market_quotes=[updated],
+        market_pool=pool,
+    )
+    result_b = read_forecast_result(database, "forecast-b")
+    expected_b = equivalent_markets([updated], pool)
+    assert restored_markets(result_b) == expected_b
+    assert result_b["market_assistance"]["available_match_forecasts"] == 1
+    assert result_b["state_observed_at"] == "2026-09-10T13:00:00+00:00"
+    assert read_forecast_run(database, "forecast-b")["execution"]["commit"] == "revision-commit"
+
+    clone_forecast_result(
+        database,
+        "forecast-b",
+        "forecast-c",
+        **revision_context(datetime(2026, 9, 10, 14, tzinfo=UTC)),
+        input_revision="input-3",
+        replace_market=True,
+        market_quotes=[],
+        market_pool=pool,
+    )
+    result_c = read_forecast_result(database, "forecast-c")
+    assert restored_markets(result_c) == equivalent_markets([], pool)
+    assert result_c["market_assistance"]["available_match_forecasts"] == 0
+
+    clone_forecast_result(
+        database,
+        "forecast-b",
+        "forecast-d",
+        **revision_context(datetime(2026, 9, 10, 15, tzinfo=UTC)),
+        input_revision="input-4",
+        replace_market=True,
+        market_quotes=[updated],
+        market_pool=None,
+    )
+    result_d = read_forecast_result(database, "forecast-d")
+    assert restored_markets(result_d) == equivalent_markets([updated], None)
+    assert result_d["market_assistance"] is None
+
+    clone_forecast_result(
+        database,
+        "forecast-d",
+        "forecast-e",
+        **revision_context(datetime(2026, 9, 10, 16, tzinfo=UTC)),
+        input_revision="input-5",
+        team_names={"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
+    )
+    result_e = read_forecast_result(database, "forecast-e")
+    assert restored_markets(result_e) == equivalent_markets([updated], None)
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT result_id, source_result_id, market_replacement "
+            "FROM forecast_result.forecast_runs WHERE result_id != 'forecast-a' "
+            "ORDER BY result_id"
+        ).fetchall() == [
+            ("forecast-b", "forecast-a", True),
+            ("forecast-c", "forecast-a", True),
+            ("forecast-d", "forecast-a", True),
+            ("forecast-e", "forecast-a", True),
+        ]
+
+
 def test_result_clone_is_idempotent_and_cannot_name_different_content(tmp_path):
     database = tmp_path / "results.duckdb"
     write_forecast_result(
@@ -312,7 +565,7 @@ def test_result_clone_is_idempotent_and_cannot_name_different_content(tmp_path):
         result_id="forecast-1",
     )
     arguments = {
-        "generated_at": datetime(2026, 9, 10, 13, tzinfo=UTC),
+        **revision_context(datetime(2026, 9, 10, 13, tzinfo=UTC)),
         "input_revision": "input-2",
         "team_names": {"arsenal": "Arsenal FC", "chelsea": "Chelsea FC"},
     }

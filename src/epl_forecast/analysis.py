@@ -14,13 +14,59 @@ import epl_forecast
 from epl_forecast import analysis_contract
 from epl_forecast.analysis_keys import CANONICAL_ROOTS, RESULT_ROOTS, publication_identities
 from epl_forecast.datasets import SESSION_TIME_ZONE, Dataset, timestamp
-from epl_forecast.storage import R2Store, json_bytes
+from epl_forecast.snapshot import SnapshotDataset, snapshot_manifest_path
+from epl_forecast.storage import R2Store, file_hash, json_bytes
 
 SESSION_DIRECTORY = Path(tempfile.gettempdir()) / "page324-analysis"
 # The hindcast archive keeps every published model version. An ordinary analysis reads the
 # current one, and asks for an older version, or for every version, only to compare versions.
 CURRENT_MODEL_VERSION = "current"
 ALL_MODEL_VERSIONS = "all"
+NO_HINDCAST_VERSIONS = "none"
+
+
+class _AnalysisSnapshot(SnapshotDataset):
+    def __init__(self, database, cutoff, manifest_path, temporary, store):
+        self._temporary = temporary
+        super().__init__(database, cutoff, manifest_path=manifest_path)
+        self.store = store
+
+    def close(self):
+        super().close()
+        self._temporary.cleanup()
+
+
+def _analysis_dataset(cutoff, store):
+    pointer = store.get_json("state/canonical-snapshot.json")
+    if pointer is None:
+        return Dataset(cutoff, store=store)
+    required = {
+        "source_revision",
+        "database_key",
+        "manifest_key",
+        "database_bytes",
+        "database_sha256",
+    }
+    if pointer.get("schema_version") != 1 or not required <= pointer.keys():
+        raise ValueError("The canonical snapshot pointer is incomplete or unsupported")
+    source_revision = store.identities(["state/manifests.json"])["state/manifests.json"]
+    if pointer["source_revision"] != source_revision:
+        raise ValueError("The canonical snapshot does not select the current manifest revision")
+    temporary = tempfile.TemporaryDirectory(prefix="page324-analysis-snapshot-")
+    try:
+        database = Path(temporary.name) / "canonical.duckdb"
+        manifest_path = snapshot_manifest_path(database)
+        store.download(pointer["database_key"], database)
+        store.download(pointer["manifest_key"], manifest_path)
+        if (
+            database.stat().st_size != pointer["database_bytes"]
+            or file_hash(database) != pointer["database_sha256"]
+        ):
+            raise ValueError("The restored canonical snapshot does not match its pointer")
+        return _AnalysisSnapshot(database, cutoff, manifest_path, temporary, store)
+    except Exception:
+        temporary.cleanup()
+        raise
 
 
 def _ident(value: str) -> str:
@@ -572,7 +618,10 @@ class AnalysisSession:
         self.path = path
 
     def close(self) -> None:
-        self.connection.close()
+        if self.dataset is not None:
+            self.dataset.close()
+        else:
+            self.connection.close()
 
     def rows(self, sql: str, parameters=None) -> list[dict]:
         result = self.connection.execute(sql, parameters or [])
@@ -1183,9 +1232,13 @@ def _install_column_catalog(connection) -> None:
 def normalize_hindcast_versions(hindcast_versions) -> str | tuple[str, ...]:
     """Normalize the hindcast version request into a value that names a session slot.
 
-    It is `CURRENT_MODEL_VERSION`, `ALL_MODEL_VERSIONS`, or distinct model version names.
+    It is a declared scope constant or distinct model version names.
     """
-    if hindcast_versions in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS):
+    if hindcast_versions in (
+        CURRENT_MODEL_VERSION,
+        ALL_MODEL_VERSIONS,
+        NO_HINDCAST_VERSIONS,
+    ):
         return hindcast_versions
     names = (
         [hindcast_versions] if isinstance(hindcast_versions, str) else list(hindcast_versions or ())
@@ -1193,7 +1246,8 @@ def normalize_hindcast_versions(hindcast_versions) -> str | tuple[str, ...]:
     versions = {name.strip() for name in names if isinstance(name, str) and name.strip()}
     if not versions or len(versions) != len(names):
         raise ValueError(
-            f"Hindcast versions must be {CURRENT_MODEL_VERSION!r}, {ALL_MODEL_VERSIONS!r}, or "
+            f"Hindcast versions must be {CURRENT_MODEL_VERSION!r}, {ALL_MODEL_VERSIONS!r}, "
+            f"{NO_HINDCAST_VERSIONS!r}, or "
             "distinct, nonempty model version names"
         )
     return tuple(sorted(versions))
@@ -1209,6 +1263,8 @@ def _selected_versions(publish_store, requested) -> frozenset | None:
         # No live forecast means no current version, and so no current hindcast generation. The
         # whole archive is what ALL_MODEL_VERSIONS asks for, and it is never an accidental default.
         return current_model_versions(publish_store)
+    if requested == NO_HINDCAST_VERSIONS:
+        return frozenset()
     return frozenset(requested)
 
 
@@ -1234,10 +1290,9 @@ def open_analysis_session(
 ) -> AnalysisSession:
     """Open the authoritative remote corpus and install its analytical namespace.
 
-    `hindcast_versions` selects the hindcast surface: `CURRENT_MODEL_VERSION` loads only the model
-    version of the newest live forecast, `ALL_MODEL_VERSIONS` loads the whole archive, and a name
-    or a sequence of names loads those versions. The archive keeps superseded versions, so an
-    ordinary session would otherwise pay for generations it does not analyze.
+    `hindcast_versions` selects the hindcast surface: `CURRENT_MODEL_VERSION` loads current public
+    model versions, `ALL_MODEL_VERSIONS` loads the whole archive, `NO_HINDCAST_VERSIONS` loads no
+    hindcasts, and a name or sequence of names loads those versions.
 
     With a session directory, the prepared namespace is kept as a read-only DuckDB file. The file
     name is the identity of the R2 state and the analysis code, so a changed input opens a new file.
@@ -1297,7 +1352,7 @@ def _build_analysis_session(
     requested,
     selected_forecasts,
 ) -> AnalysisSession:
-    dataset = Dataset(cutoff, store=data_store)
+    dataset = _analysis_dataset(cutoff, data_store)
     try:
         if include_derived:
             publish_store.configure_duckdb(dataset.con, name="page324_publish")
@@ -1386,7 +1441,7 @@ def _write_session_file(connection, path: Path) -> None:
         "SELECT schema_name, view_name, sql FROM duckdb_views() "
         "WHERE database_name = current_database() AND NOT internal ORDER BY view_oid"
     ).fetchall()
-    external = ("read_", "s3://", "http://", "https://")
+    external = ("read_", "s3://", "http://", "https://", "snapshot.", '"snapshot".')
     copied = tables + [
         (schema, name)
         for schema, name, sql in views

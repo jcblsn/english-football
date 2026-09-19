@@ -11,6 +11,7 @@ from pathlib import Path
 from epl_forecast.analysis import (
     ALL_MODEL_VERSIONS,
     CURRENT_MODEL_VERSION,
+    NO_HINDCAST_VERSIONS,
     SESSION_DIRECTORY,
     normalize_hindcast_versions,
     open_analysis_session,
@@ -56,7 +57,7 @@ def parser() -> argparse.ArgumentParser:
         "--hindcast-versions",
         default=CURRENT_MODEL_VERSION,
         metavar="SELECTION",
-        help="Hindcast model versions to load: current (default), all, or a comma-separated list.",
+        help="Hindcast model versions to load: current (default), none, all, or a comma-separated list.",
     )
     result.add_argument(
         "--forecast-id",
@@ -74,10 +75,12 @@ def parser() -> argparse.ArgumentParser:
 
 
 def hindcast_versions(value: str):
-    """`current`, `all`, or explicit model versions, which a session file keeps in its own slot."""
+    """A declared hindcast scope or explicit versions kept in one session slot."""
     try:
         return normalize_hindcast_versions(
-            value if value in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS) else value.split(",")
+            value
+            if value in (CURRENT_MODEL_VERSION, ALL_MODEL_VERSIONS, NO_HINDCAST_VERSIONS)
+            else value.split(",")
         )
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from None

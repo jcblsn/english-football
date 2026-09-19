@@ -3,6 +3,7 @@
 import argparse
 import json
 import tomllib
+from datetime import timedelta
 from pathlib import Path
 
 from epl_forecast.retention import build_retention_plan, retention_status
@@ -18,9 +19,14 @@ def main() -> None:
     load_environment()
     data_store = R2Store.from_environment("R2_DATA_BUCKET")
     publish_store = R2Store.from_environment("R2_PUBLISH_BUCKET")
-    plan = build_retention_plan(data_store)
     with args.policy.open("rb") as stream:
         policy = tomllib.load(stream)
+    retention = policy["retention"]
+    plan = build_retention_plan(
+        data_store,
+        object_grace=timedelta(hours=retention["object_grace_hours"]),
+        generation_grace=timedelta(days=retention["generation_grace_days"]),
+    )
     plan["retention_status"] = retention_status(
         plan,
         list(data_store.inventory()),
@@ -38,6 +44,7 @@ def main() -> None:
             f"- Product-only occupancy: {measures['product_bytes']} bytes in {measures['product_objects']} objects",
             f"- Research occupancy: {measures['research_bytes']} bytes; growth is {measures['research_byte_growth']} bytes",
             f"- Deletion candidates: {measures['candidate_objects']} objects and {measures['candidate_bytes']} bytes",
+            f"- Grace-protected objects: {plan['summary']['grace_protected']} objects and {plan['summary']['grace_protected_bytes']} bytes",
             f"- Superseded snapshot, fit, or result generations: {measures['superseded_generations']}",
             f"- Cleanup review required: {str(status['cleanup_review_required']).lower()}",
         ]

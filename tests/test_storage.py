@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -29,6 +30,20 @@ def test_r2_configuration_names_every_missing_setting(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="R2_ACCOUNT_ID.*R2_DATA_BUCKET"):
         R2Config.from_environment("R2_DATA_BUCKET")
+
+
+def test_sdk_attempt_metrics_count_retries_by_r2_operation():
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=object())
+
+    store._record_sdk_attempt(event_name="needs-retry.s3.GetObject")
+    store._record_sdk_attempt(event_name="needs-retry.s3.GetObject")
+    store._record_sdk_attempt(event_name="needs-retry.s3.PutObject")
+
+    assert store.metrics() == {
+        "get_sdk_attempts": 2,
+        "put_sdk_attempts": 1,
+        "sdk_attempts": 3,
+    }
 
 
 def test_dataset_reads_manifest_catalog_and_parquet_from_a_store(tmp_path):
@@ -144,6 +159,74 @@ def test_a_conditional_r2_write_sends_its_condition_and_reports_a_conflict():
         store.put_json_if("state/manifests.json", {"manifests": []}, "stale")
     assert calls[0]["IfNoneMatch"] == "*" and "IfMatch" not in calls[0]
     assert calls[1]["IfMatch"] == "current" and "IfNoneMatch" not in calls[1]
+
+
+def test_immutable_r2_creation_is_conditional_and_validates_a_conflict():
+    payload = b"immutable"
+    digest = hashlib.sha256(payload).hexdigest()
+    calls = []
+
+    class Client:
+        def __init__(self, existing_digest):
+            self.existing_digest = existing_digest
+
+        def put_object(self, **arguments):
+            calls.append(arguments)
+            raise ClientError(
+                {
+                    "Error": {"Code": "PreconditionFailed"},
+                    "ResponseMetadata": {"HTTPStatusCode": 412},
+                },
+                "PutObject",
+            )
+
+        def head_object(self, **arguments):
+            return {"Metadata": {"sha256": self.existing_digest}}
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client(digest))
+    store.put_bytes("objects/value", payload, immutable=True)
+    assert calls[0]["IfNoneMatch"] == "*"
+
+    conflict = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client("different"))
+    with pytest.raises(ValueError, match="immutable R2 object"):
+        conflict.put_bytes("objects/value", payload, immutable=True)
+
+
+def test_file_upload_and_download_stream_in_bounded_chunks(tmp_path):
+    payload = b"a" * (2 * 1024 * 1024 + 17)
+    source = tmp_path / "source.duckdb"
+    source.write_bytes(payload)
+    uploaded = bytearray()
+
+    class Body:
+        def __init__(self):
+            self.offset = 0
+            self.requests = []
+
+        def read(self, size):
+            self.requests.append(size)
+            chunk = payload[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+    body = Body()
+
+    class Client:
+        def put_object(self, **arguments):
+            assert not isinstance(arguments["Body"], bytes)
+            while chunk := arguments["Body"].read(1024 * 1024):
+                uploaded.extend(chunk)
+
+        def get_object(self, **arguments):
+            return {"Body": body}
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client())
+    store.upload(source, "results/value.duckdb")
+    destination = tmp_path / "restored.duckdb"
+    store.download("results/value.duckdb", destination)
+    assert bytes(uploaded) == payload
+    assert destination.read_bytes() == payload
+    assert body.requests and set(body.requests) == {1024 * 1024}
 
 
 def test_object_identities_use_one_head_request_and_report_absence():

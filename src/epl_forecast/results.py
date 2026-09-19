@@ -10,7 +10,7 @@ from epl_forecast.datasets import SESSION_TIME_ZONE
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.storage import json_bytes, sha256_bytes
 
-RESULT_SCHEMA_VERSION = 5
+RESULT_SCHEMA_VERSION = 6
 
 
 def install_result_schema(connection) -> None:
@@ -36,7 +36,8 @@ def install_result_schema(connection) -> None:
             schema_version INTEGER NOT NULL,
             stored_at TIMESTAMPTZ NOT NULL,
             forecast_metadata JSON,
-            source_result_id VARCHAR
+            source_result_id VARCHAR,
+            market_replacement BOOLEAN NOT NULL DEFAULT false
         )
         """
     )
@@ -265,6 +266,10 @@ def install_result_schema(connection) -> None:
     )
     connection.execute(
         "ALTER TABLE forecast_result.forecast_runs ADD COLUMN IF NOT EXISTS source_result_id VARCHAR"
+    )
+    connection.execute(
+        "ALTER TABLE forecast_result.forecast_runs ADD COLUMN IF NOT EXISTS "
+        "market_replacement BOOLEAN DEFAULT false"
     )
     connection.execute(
         "ALTER TABLE forecast_result.forecast_matches ADD COLUMN IF NOT EXISTS personnel_detail JSON"
@@ -662,7 +667,7 @@ def write_forecast_result(
         connection.execute("BEGIN TRANSACTION")
         try:
             connection.execute(
-                "INSERT INTO forecast_result.forecast_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO forecast_result.forecast_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     result_id,
                     forecast["competition_id"],
@@ -683,6 +688,7 @@ def write_forecast_result(
                     datetime.now(UTC),
                     _json(forecast_metadata),
                     None,
+                    False,
                 ],
             )
             counts = _insert_match_rows(connection, result_id, forecast["matches"])
@@ -776,6 +782,39 @@ def _result_lineage(connection, result_id: str) -> list[str]:
     return lineage
 
 
+def _is_market_replacement(connection, result_id: str) -> bool:
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info('forecast_result.forecast_runs')"
+        ).fetchall()
+    }
+    if "market_replacement" not in columns:
+        return False
+    row = connection.execute(
+        "SELECT coalesce(market_replacement, false) FROM forecast_result.forecast_runs "
+        "WHERE result_id = ?",
+        [result_id],
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def _effective_market_rows(connection, result_id: str) -> dict[str, tuple]:
+    effective = {}
+    for revision_id in reversed(_result_lineage(connection, result_id)):
+        if _is_market_replacement(connection, revision_id):
+            effective.clear()
+        for row in connection.execute(
+            "SELECT match_id, stage, parent_stage, score_generating, "
+            "p_home, p_draw, p_away, detail FROM "
+            "forecast_result.forecast_match_probabilities "
+            "WHERE result_id = ? AND stage = 'market_assisted'",
+            [revision_id],
+        ).fetchall():
+            effective[row[0]] = row
+    return effective
+
+
 def read_forecast_result(database: Path, result_id: str) -> dict:
     """Reconstruct the publication projection from typed result grains."""
     with duckdb.connect(str(database), read_only=True) as connection:
@@ -794,6 +833,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         lineage = _result_lineage(connection, result_id)
         structural_result_id = lineage[-1]
         settings, metadata = _decoded(run[6]), _decoded(run[7])
+        forecast_metadata = _decoded(run[9]) or {}
         context = metadata["publication_context"]
         names = {}
         for revision_id in lineage:
@@ -807,6 +847,10 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
                 break
         stage_values = {}
         for revision_id in reversed(lineage):
+            if _is_market_replacement(connection, revision_id):
+                stage_values = {
+                    key: value for key, value in stage_values.items() if key[1] != "market_assisted"
+                }
             stage_values.update(
                 {
                     (match_id, stage): {
@@ -995,7 +1039,11 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             "simulations": settings.get("simulations", metadata["simulations"]),
             "teams": teams,
             "state_uncertainty": metadata.get("state_uncertainty"),
-            "match_impacts": _read_impacts(connection, structural_result_id),
+            "match_impacts": _read_impacts(
+                connection,
+                structural_result_id,
+                forecast_metadata.get("impact_window") or context.get("impact_window"),
+            ),
         }
         strengths = [
             {
@@ -1038,7 +1086,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
             ).fetchall()
         ]
     return {
-        **(_decoded(run[9]) or {}),
+        **forecast_metadata,
         "competition_id": run[0],
         "competition_name": context["competition_name"],
         "season_id": run[1],
@@ -1055,7 +1103,7 @@ def read_forecast_result(database: Path, result_id: str) -> dict:
         "unscheduled_placeholder": context.get("unscheduled_placeholder"),
         "unsettled_placeholder": context.get("unsettled_placeholder"),
         "unsettled_fixtures": unsettled,
-        "impact_window": context.get("impact_window"),
+        "impact_window": forecast_metadata.get("impact_window") or context.get("impact_window"),
     }
 
 
@@ -1077,7 +1125,9 @@ def clone_forecast_result(
     result_id: str,
     *,
     generated_at: datetime,
+    observed_at: datetime,
     input_revision: str,
+    software_provenance: dict,
     replace_market: bool = False,
     market_quotes: list[dict] | None = None,
     market_pool: dict | None = None,
@@ -1090,7 +1140,9 @@ def clone_forecast_result(
                 "source_result_id": source_result_id,
                 "result_id": result_id,
                 "generated_at": generated_at.isoformat(),
+                "observed_at": observed_at.isoformat(),
                 "input_revision": input_revision,
+                "software_provenance": software_provenance,
                 "replace_market": replace_market,
                 "market_quotes": market_quotes,
                 "market_pool": market_pool,
@@ -1116,46 +1168,61 @@ def clone_forecast_result(
             raise KeyError(f"Unknown source forecast result: {source_result_id}")
         source_lineage = _result_lineage(connection, source_result_id)
         structural_result_id = source_lineage[-1]
+        source_metadata = _decoded(
+            connection.execute(
+                "SELECT forecast_metadata FROM forecast_result.forecast_runs WHERE result_id = ?",
+                [source_result_id],
+            ).fetchone()[0]
+        )
         connection.execute("BEGIN TRANSACTION")
         try:
             connection.execute(
                 """
-                INSERT INTO forecast_result.forecast_runs
-                SELECT ?, competition_id, season_id, state_observed_at, model_results_cutoff,
+                INSERT INTO forecast_result.forecast_runs (
+                    result_id, competition_id, season_id, state_observed_at,
+                    model_results_cutoff, generated_at, model_id, model_kind,
+                    input_revision, model_spec, simulation_settings, simulation_metadata,
+                    software_provenance, fit_diagnostics, source_document_sha256,
+                    schema_version, stored_at, forecast_metadata, source_result_id,
+                    market_replacement
+                )
+                SELECT ?, competition_id, season_id, ?, model_results_cutoff,
                        ?, model_id, model_kind, ?, model_spec, simulation_settings,
-                       simulation_metadata, software_provenance, fit_diagnostics, ?,
-                       schema_version, ?, forecast_metadata, ?
+                       simulation_metadata, ?, fit_diagnostics, ?, ?, ?, forecast_metadata, ?, true
                 FROM forecast_result.forecast_runs WHERE result_id = ?
                 """,
                 [
                     result_id,
+                    observed_at,
                     generated_at,
                     input_revision,
+                    _json(software_provenance),
                     identity,
+                    RESULT_SCHEMA_VERSION,
                     datetime.now(UTC),
                     structural_result_id,
                     source_result_id,
                 ],
             )
             if replace_market:
-                _insert_market_probabilities(
+                available = _insert_market_probabilities(
                     connection,
                     result_id,
                     market_quotes or [],
                     market_pool,
                     structural_result_id,
                 )
+                source_metadata["market_assistance"] = (
+                    None
+                    if market_pool is None
+                    else {
+                        **market_pool,
+                        "available_match_forecasts": available,
+                        "season_simulation_uses_market": False,
+                    }
+                )
             else:
-                effective_market = {}
-                for revision_id in reversed(source_lineage):
-                    for row in connection.execute(
-                        "SELECT match_id, stage, parent_stage, score_generating, "
-                        "p_home, p_draw, p_away, detail FROM "
-                        "forecast_result.forecast_match_probabilities "
-                        "WHERE result_id = ? AND stage = 'market_assisted'",
-                        [revision_id],
-                    ).fetchall():
-                        effective_market[row[0]] = row
+                effective_market = _effective_market_rows(connection, source_result_id)
                 if effective_market:
                     connection.executemany(
                         "INSERT INTO forecast_result.forecast_match_probabilities "
@@ -1165,6 +1232,11 @@ def clone_forecast_result(
                             for row in sorted(effective_market.values(), key=lambda item: item[0])
                         ],
                     )
+            connection.execute(
+                "UPDATE forecast_result.forecast_runs SET forecast_metadata = ? "
+                "WHERE result_id = ?",
+                [_json(source_metadata), result_id],
+            )
             if team_names is None:
                 for revision_id in source_lineage:
                     inherited_names = connection.execute(
@@ -1194,9 +1266,9 @@ def _insert_market_probabilities(
     market_quotes: list[dict],
     market_pool: dict | None,
     structural_result_id: str,
-) -> None:
+) -> int:
     if market_pool is None:
-        return
+        return 0
     selected = {}
     for quote in market_quotes:
         if quote["family"] != market_pool["market_family"]:
@@ -1236,9 +1308,10 @@ def _insert_market_probabilities(
             "INSERT INTO forecast_result.forecast_match_probabilities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
+    return len(rows)
 
 
-def _read_impacts(connection, result_id: str) -> dict | None:
+def _read_impacts(connection, result_id: str, impact_window: dict | None = None) -> dict | None:
     metadata = connection.execute(
         """
         SELECT simulations, horizon_days, window_start, window_end, coverage,
@@ -1295,11 +1368,12 @@ def _read_impacts(connection, result_id: str) -> dict | None:
                 "impacts": list(grouped.values()),
             }
         )
+    impact_window = impact_window or {}
     return {
         "simulations": metadata[0],
         "horizon_days": metadata[1],
-        "window_start": _iso(metadata[2]),
-        "window_end": _iso(metadata[3]),
+        "window_start": impact_window.get("window_start") or _iso(metadata[2]),
+        "window_end": impact_window.get("window_end") or _iso(metadata[3]),
         "coverage": metadata[4],
         "minimum_conditional_samples": metadata[5],
         "smallest_outcome_count": metadata[6],

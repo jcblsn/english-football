@@ -30,10 +30,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: retention-dry-run
-          path: |
-            retention-plan.json
-            retention-summary.md
+          name: retention-summary
+          path: retention-summary.md
           retention-days: 90
       - name: Require reviewed cleanup
         run: test "$(jq -r '.retention_status.cleanup_review_required' retention-plan.json)" = false

@@ -1,34 +1,60 @@
 """Build a read-only object disposition manifest for an authorized migration."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from epl_forecast.competitions import COMPETITION_IDS
 
 
 def _pointer_targets(store) -> set[str]:
     targets = set()
-    pointers = [store.get_json("state/canonical-snapshot.json")]
-    pointers.extend(
-        store.get_json(f"state/{kind}/{competition_id}.json")
+    pointer_rows = [
+        ("state/canonical-snapshot.json", store.get_json("state/canonical-snapshot.json"))
+    ]
+    pointer_rows.extend(
+        (
+            f"state/{kind}/{competition_id}.json",
+            store.get_json(f"state/{kind}/{competition_id}.json"),
+        )
         for kind in ("fits", "results")
         for competition_id in COMPETITION_IDS
     )
-    for pointer in pointers:
-        if not pointer:
-            continue
+    missing = [key for key, pointer in pointer_rows if not pointer]
+    if missing:
+        raise ValueError(f"Required retention pointers are absent: {', '.join(missing)}")
+    for key, pointer in pointer_rows:
+        if pointer.get("schema_version") != 1:
+            raise ValueError(f"Unsupported retention pointer: {key}")
         for field in ("database_key", "manifest_key"):
             if pointer.get(field):
                 targets.add(pointer[field])
     return targets
 
 
-def build_retention_plan(store) -> dict:
+def _exists(store, key: str) -> bool:
+    return store.exists(key)
+
+
+def build_retention_plan(
+    store,
+    *,
+    now: datetime | None = None,
+    object_grace: timedelta = timedelta(days=1),
+    generation_grace: timedelta = timedelta(days=7),
+) -> dict:
     """Return exact deletion candidates without changing remote state."""
-    catalog = store.get_json("state/manifests.json", {"manifests": []})
+    now = now or datetime.now(UTC)
+    catalog = store.get_json("state/manifests.json")
+    if not catalog or not catalog.get("manifests"):
+        raise ValueError("The selected canonical catalog is absent or empty")
     manifests = catalog.get("manifests", [])
     protected = _pointer_targets(store)
     protected.update(f"manifests/{item['batch_id']}.json" for item in manifests)
     protected.update(file["path"] for item in manifests for file in item.get("files", []))
+    missing_targets = sorted(key for key in protected if not _exists(store, key))
+    if missing_targets:
+        raise ValueError(
+            "Protected retention targets are absent: " + ", ".join(missing_targets[:10])
+        )
 
     reasons = {
         "parquet/": "not referenced by the selected canonical catalog",
@@ -40,23 +66,42 @@ def build_retention_plan(store) -> dict:
         "runs/snapshots/": "replaced by the verified canonical snapshot",
     }
     candidates = []
+    grace_protected = []
     for prefix, reason in reasons.items():
         for row in store.inventory(prefix):
-            if row["key"] not in protected:
+            if row["key"] in protected:
+                continue
+            age = now - datetime.fromisoformat(row["last_modified"])
+            grace = (
+                generation_grace if prefix in {"snapshots/", "fits/", "results/"} else object_grace
+            )
+            if age < grace:
+                grace_protected.append(
+                    {**row, "reason": reason, "eligible_after": (now + (grace - age)).isoformat()}
+                )
+            else:
                 candidates.append({**row, "reason": reason})
 
     review = list(store.inventory("research/"))
     candidates.sort(key=lambda row: row["key"])
+    grace_protected.sort(key=lambda row: row["key"])
     review.sort(key=lambda row: row["key"])
     return {
-        "schema_version": 1,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "schema_version": 2,
+        "generated_at": now.isoformat(),
         "mode": "read_only",
+        "grace": {
+            "object_seconds": int(object_grace.total_seconds()),
+            "generation_seconds": int(generation_grace.total_seconds()),
+        },
         "protected_objects": sorted(protected),
+        "grace_protected": grace_protected,
         "delete_candidates": candidates,
         "review_required": review,
         "summary": {
             "protected_objects": len(protected),
+            "grace_protected": len(grace_protected),
+            "grace_protected_bytes": sum(row["bytes"] for row in grace_protected),
             "delete_candidates": len(candidates),
             "delete_candidate_bytes": sum(row["bytes"] for row in candidates),
             "review_required": len(review),
@@ -67,9 +112,15 @@ def build_retention_plan(store) -> dict:
 
 def validate_retention_plan(plan: dict, current: dict) -> None:
     """Reject a saved deletion plan when any relevant live inventory changed."""
-    if plan.get("schema_version") != 1 or plan.get("mode") != "read_only":
+    if plan.get("schema_version") != 2 or plan.get("mode") != "read_only":
         raise ValueError("Retention plan is not an applicable read-only plan")
-    for field in ("protected_objects", "delete_candidates", "review_required"):
+    for field in (
+        "grace",
+        "protected_objects",
+        "grace_protected",
+        "delete_candidates",
+        "review_required",
+    ):
         if plan.get(field) != current.get(field):
             raise ValueError(f"Retention plan is stale: {field} changed")
 

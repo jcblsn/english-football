@@ -858,6 +858,8 @@ def _hindcast_rows(
         "hindcast_simulation_match_frequencies",
     )
     rows = {name: [] for name in names}
+    if model_versions == frozenset():
+        return rows, {}, set()
     index = publish_store.get_json(HINDCAST_INDEX_KEY)
     if index is None:
         return rows, {}, set()
@@ -939,6 +941,8 @@ def _match_hindcast_rows(
 ) -> tuple[dict[str, list], dict, set[str]]:
     """Retrospective match forecasts, from the season documents the match-hindcast index selects."""
     rows = {"match_hindcasts": [], "match_hindcast_score_grid": []}
+    if model_versions == frozenset():
+        return rows, {}, set()
     index = publish_store.get_json(MATCH_HINDCAST_INDEX_KEY)
     if index is None:
         return rows, {}, set()
