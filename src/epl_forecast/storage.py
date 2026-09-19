@@ -281,6 +281,26 @@ class R2Store:
                     "last_modified": row["LastModified"].isoformat(),
                 }
 
+    def delete_keys(self, keys, batch_size: int = 1000) -> int:
+        """Delete exact object keys in bounded S3 batches."""
+        keys = list(keys)
+        deleted = 0
+        for offset in range(0, len(keys), batch_size):
+            batch = keys[offset : offset + batch_size]
+            try:
+                response = self.client.delete_objects(
+                    Bucket=self.config.bucket,
+                    Delete={"Objects": [{"Key": key} for key in batch], "Quiet": False},
+                )
+            finally:
+                self._record("DELETE")
+            errors = response.get("Errors", [])
+            if errors:
+                detail = ", ".join(f"{row.get('Key')}: {row.get('Code')}" for row in errors[:5])
+                raise RuntimeError(f"R2 deletion failed: {detail}")
+            deleted += len(batch)
+        return deleted
+
     def configure_duckdb(self, connection, name: str = "page324_r2") -> None:
         def quote(value: str) -> str:
             return "'" + value.replace("'", "''") + "'"

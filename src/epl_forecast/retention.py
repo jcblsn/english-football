@@ -63,3 +63,12 @@ def build_retention_plan(store) -> dict:
             "review_required_bytes": sum(row["bytes"] for row in review),
         },
     }
+
+
+def validate_retention_plan(plan: dict, current: dict) -> None:
+    """Reject a saved deletion plan when any relevant live inventory changed."""
+    if plan.get("schema_version") != 1 or plan.get("mode") != "read_only":
+        raise ValueError("Retention plan is not an applicable read-only plan")
+    for field in ("protected_objects", "delete_candidates", "review_required"):
+        if plan.get(field) != current.get(field):
+            raise ValueError(f"Retention plan is stale: {field} changed")

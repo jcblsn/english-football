@@ -203,3 +203,30 @@ def test_inventory_returns_exact_list_metadata_and_counts_the_request():
         }
     ]
     assert store.metrics() == {"list_requests": 1, "request_bytes": 0, "response_bytes": 0}
+
+
+def test_exact_key_deletion_uses_bounded_batches_and_reports_errors():
+    calls = []
+
+    class Client:
+        def delete_objects(self, **arguments):
+            calls.append(arguments)
+            return {"Deleted": arguments["Delete"]["Objects"]}
+
+    store = R2Store(R2Config("account", "bucket", "key", "secret"), client=Client())
+    keys = [f"old/{index}" for index in range(5)]
+    assert store.delete_keys(keys, batch_size=2) == 5
+    assert [[row["Key"] for row in call["Delete"]["Objects"]] for call in calls] == [
+        ["old/0", "old/1"],
+        ["old/2", "old/3"],
+        ["old/4"],
+    ]
+    assert store.metrics()["delete_requests"] == 3
+
+    class FailingClient:
+        def delete_objects(self, **arguments):
+            return {"Errors": [{"Key": "old/0", "Code": "AccessDenied"}]}
+
+    failing = R2Store(R2Config("account", "bucket", "key", "secret"), client=FailingClient())
+    with pytest.raises(RuntimeError, match="old/0: AccessDenied"):
+        failing.delete_keys(["old/0"])

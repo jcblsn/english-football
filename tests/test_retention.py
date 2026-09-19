@@ -1,4 +1,6 @@
-from epl_forecast.retention import build_retention_plan
+import pytest
+
+from epl_forecast.retention import build_retention_plan, validate_retention_plan
 
 
 class Store:
@@ -73,3 +75,11 @@ def test_retention_plan_protects_live_targets_and_only_lists_candidates():
     assert "manifests/selected.json" in plan["protected_objects"]
     assert [row["key"] for row in plan["review_required"]] == ["research/keep-until-reviewed.json"]
     assert plan["mode"] == "read_only"
+
+
+def test_retention_plan_must_match_a_fresh_inventory_exactly():
+    plan = build_retention_plan(Store())
+    validate_retention_plan(plan, build_retention_plan(Store()))
+    changed = {**plan, "delete_candidates": plan["delete_candidates"][:-1]}
+    with pytest.raises(ValueError, match="delete_candidates changed"):
+        validate_retention_plan(changed, plan)
