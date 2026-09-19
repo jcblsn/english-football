@@ -22,7 +22,7 @@ Historical performance context: `reference/observed_runtimes.csv` is retained as
 
 ## Current milestone
 
-M3 — make typed results the reusable publication and analysis boundary.
+M4 — migrate production, cut over the scheduled writer and apply the reviewed retention plan.
 
 Completed evidence:
 
@@ -71,6 +71,13 @@ Completed evidence:
 - `docs/migration.md` defines the retention roots, deletion candidates, cutover prerequisites and bounded rollback. No production object was created, changed or deleted while collecting this evidence.
 - The read-only retention planner protected 2,721 current objects and listed 50,591 exact deletion candidates totaling 1,221,840,776 bytes. It separated 1,624 `research/` objects totaling 738,048,127 bytes for owner review. The ignored plan is `runs/refactor/m4/retention-plan.json`; it made no mutation.
 - Routine operation no longer uploads its temporary forecast renderings, logs or verification tree to `runs/forecasts/`. The typed result commits before public release, and a test proves that the legacy run prefix is not written.
+- The production workflow was disabled before mutation. No production run was active.
+- All 55 issued prospective forecasts that existed before cutover were reconciled against their private sources and public documents. The migration preserved every issued ID in four cumulative typed stores, preserved exact compact public projections and verified each available release receipt.
+- The live snapshot uses canonical catalog digest `21bde6f3f604d523abc6a2c7270a2d333758c9e5447e8f790f36e38fd696479f`, logical data revision `0f4e30cecdbcf48e5fd81086811aa017fad94c02ed4a83fe709da5a7bf2a204b` and database digest `4287e9ef7258def55f6a9332082136fa05c340d4e6d7aef8f6034aaa9a538165`.
+- The fixed-revision cutover operation created and verified the snapshot, ran all four 10,000-path forecasts, committed four fit stores and four result generations, and published run `2026-09-19T010319Z`. It completed successfully in 331.99 seconds with no division failure.
+- The live public surface contains 59 prospective forecast IDs after cutover. All four current pointers name the cutover run and its release receipts. The prospective record has five scored matches.
+- A fresh materialization validated every prospective document and archive. The retained hindcast path materialized 2,494 documents, and an unchanged repeat completed in three seconds through the local cache.
+- The exact-manifest deletion executor requires the saved plan to match a fresh inventory and deletes only listed keys in bounded batches. Its tests cover stale-plan rejection, batching and remote deletion errors.
 
 Selected first-slice design: Prove one immutable DuckDB snapshot that contains canonical typed observations, an explicit logical revision, and typed forecast results. Build it through one writer, checkpoint and close it before hashing or transfer, verify it before local replacement, and make calculations use local prepared inputs. Keep raw payloads separate. Do not create a second permanent storage backend.
 
@@ -91,20 +98,20 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 ## Known limits and decisions
 
 - The owner confirms that the private buckets and complete local directory are backed up. This workspace does not contain backup identifiers or evidence of an independent restore test.
-- The capacity model uses a measured recurring 44-batch delta and current bucket inventory. It is not live-certified because no staging prefix is authorized and no projected-size remote restore or upload has run.
+- The capacity model uses a measured recurring 44-batch delta and the pre-cutover bucket inventory. Update it with the final post-retention inventory before M4 closes.
 - The 12-month storage target depends on the reviewed cleanup and one steady physical generation per pointer. The current buckets still contain the superseded objects. The 24-month sensitivities exceed 7 GB.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
-- The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
+- The snapshot, fit and result pointer protocols now have a successful live cutover. Recovery tests still use isolated mock stores; the owner-confirmed bucket backups are the external rollback path.
 - Historical hindcast generation remains an explicit maintenance workflow. Its analysis reader still uses the selected public hindcast edition because hindcast results have not moved into the live cumulative result database.
 - Full live cutover and exact-manifest deletion are authorized. Correctness, reconciliation and capacity gates still apply before deletion.
 
 ## Restart point
 
-Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 417 tests in 45.81 seconds.
-Next action: Migrate every retained prospective forecast into the typed result stores, build the final snapshot and fit stores, and run the live cutover smoke checks.
-Next test/gate: Final reconciliation, clean-runner workflow smoke check and deletion-manifest execution.
+Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 420 tests in 49.08 seconds.
+Next action: Fast-forward `main`, run the clean-runner workflow smoke check, generate the final retention plan and apply it.
+Next test/gate: Final workflow, Pages deployment, post-deletion inventory and retained-history checks.
 Working files to inspect before cutover: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
-Remote objects created or modified by this agent: None.
+Remote objects created or modified by this agent: Four result-store generations and pointers for the legacy migration; one canonical snapshot database, manifest and pointer; four fit-store generations and pointers; four post-cutover result generations and pointers; public run `2026-09-19T010319Z`, its receipts, archives, current pointer and prospective record; operational forecast and impact state.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
 
 Update this file in place. Link to evidence without embedding raw data, logs, credentials, or the whole conversation.
