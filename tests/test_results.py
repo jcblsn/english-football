@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 
@@ -7,10 +8,13 @@ from test_publication import sample_forecast, sample_run
 
 from epl_forecast.market import market_assisted_probabilities
 from epl_forecast.publication import derive_forecast
+from epl_forecast.result_migration import migrate_result_database
 from epl_forecast.results import (
     clone_forecast_result,
     read_forecast_result,
     read_forecast_run,
+    read_public_projection,
+    store_public_projection,
     write_forecast_result,
 )
 
@@ -127,6 +131,117 @@ def test_forecast_result_is_written_at_declared_grains(tmp_path):
         ).fetchone() == (3,)
 
 
+def test_large_provenance_documents_are_content_addressed_and_restore_exactly(tmp_path):
+    database = tmp_path / "results.duckdb"
+    document = {"files": [f"parquet/{index}.parquet" for index in range(100)]}
+    dependencies = {f"package-{index}": f"{index}.0" for index in range(100)}
+    run = {
+        **sample_run(),
+        "data_manifest": document,
+        "live_snapshot": document,
+        "dependencies": dependencies,
+        "execution": {"commit": "c" * 40, "dependencies": dependencies},
+    }
+    for result_id in ("forecast-1", "forecast-2"):
+        write_forecast_result(
+            database,
+            result_forecast(),
+            run,
+            input_revision="input-1",
+            result_id=result_id,
+        )
+
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM forecast_result.forecast_documents"
+        ).fetchone() == (2,)
+        assert connection.execute(
+            "SELECT count(*) FROM forecast_result.forecast_run_documents"
+        ).fetchone() == (8,)
+    assert read_forecast_run(database, "forecast-2") == {
+        **run,
+        "result_schema_version": 7,
+    }
+
+
+def test_one_way_migration_reconstructs_a_legacy_store_exactly(tmp_path):
+    legacy = tmp_path / "legacy.duckdb"
+    compact = tmp_path / "compact.duckdb"
+    forecast = result_forecast()
+    run = sample_run()
+    write_forecast_result(
+        legacy,
+        forecast,
+        run,
+        input_revision="input-1",
+        result_id="forecast-1",
+    )
+    public = {"forecast_id": "forecast-1", "document": {"exact": [1.0, 0.0]}}
+    store_public_projection(legacy, "forecast-1", public)
+    with duckdb.connect(str(legacy)) as connection:
+        grids = connection.execute("SELECT * FROM forecast_result.forecast_score_grids").fetchall()
+        connection.execute(
+            "CREATE TABLE forecast_result.forecast_score_metadata "
+            "(result_id VARCHAR, match_id VARCHAR, stage VARCHAR, home_rate DOUBLE, "
+            "away_rate DOUBLE, omitted_probability DOUBLE, uncertainty_components JSON)"
+        )
+        connection.execute(
+            "CREATE TABLE forecast_result.forecast_scores "
+            "(result_id VARCHAR, match_id VARCHAR, stage VARCHAR, home_goals INTEGER, "
+            "away_goals INTEGER, probability DOUBLE)"
+        )
+        for row in grids:
+            result_id, match_id, stage, home_dimension, away_dimension, probabilities = row[:6]
+            connection.execute(
+                "INSERT INTO forecast_result.forecast_score_metadata VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [result_id, match_id, stage, *row[6:]],
+            )
+            connection.executemany(
+                "INSERT INTO forecast_result.forecast_scores VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        result_id,
+                        match_id,
+                        stage,
+                        index // away_dimension,
+                        index % away_dimension,
+                        probability,
+                    )
+                    for index, probability in enumerate(probabilities)
+                ],
+            )
+            assert len(probabilities) == home_dimension * away_dimension
+        connection.execute("DROP TABLE forecast_result.forecast_score_grids")
+        connection.execute("DROP TABLE forecast_result.forecast_run_documents")
+        connection.execute("DROP TABLE forecast_result.forecast_documents")
+        connection.execute(
+            "UPDATE forecast_result.forecast_runs SET software_provenance = ?, schema_version = 6",
+            [json.dumps(run)],
+        )
+        connection.execute("CHECKPOINT")
+
+    source_result = read_forecast_result(legacy, "forecast-1")
+    source_run = read_forecast_run(legacy, "forecast-1")
+    with pytest.raises(ValueError, match="Migrate the legacy result database"):
+        store_public_projection(legacy, "forecast-1", public)
+    assert read_forecast_result(legacy, "forecast-1") == source_result
+    counts = migrate_result_database(legacy, compact)
+
+    assert counts == {
+        "results": 1,
+        "grids": 4,
+        "cells": 16,
+        "provenance_documents": 1,
+    }
+    assert read_forecast_result(compact, "forecast-1") == source_result
+    assert {
+        key: value
+        for key, value in read_forecast_run(compact, "forecast-1").items()
+        if key != "result_schema_version"
+    } == {key: value for key, value in source_run.items() if key != "result_schema_version"}
+    assert read_public_projection(compact, "forecast-1") == public
+
+
 def test_legacy_forecast_preserves_only_its_known_probability_stages(tmp_path):
     database = tmp_path / "results.duckdb"
     forecast = result_forecast()
@@ -180,59 +295,36 @@ def test_reader_accepts_a_result_store_before_market_replacement_boundaries(tmp_
     assert restored["matches"][0]["p_home"] == forecast["matches"][0]["p_home"]
 
 
-def test_exact_array_score_grid_prototype_preserves_every_cell_and_tail(tmp_path):
+def test_compact_score_grid_preserves_every_cell_dimension_and_tail(tmp_path):
     database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
     write_forecast_result(
         database,
-        result_forecast(),
+        forecast,
         sample_run(),
         input_revision="input-1",
         result_id="forecast-1",
     )
-    with duckdb.connect(str(database)) as connection:
-        connection.execute(
-            """
-            CREATE TABLE compact_score_grids AS
-            SELECT score.result_id, score.match_id, score.stage,
-                   CAST(max(home_goals) + 1 AS USMALLINT) AS home_dimension,
-                   CAST(max(away_goals) + 1 AS USMALLINT) AS away_dimension,
-                   list(probability ORDER BY home_goals, away_goals)::DOUBLE[] AS probabilities,
-                   any_value(metadata.home_rate) AS home_rate,
-                   any_value(metadata.away_rate) AS away_rate,
-                   any_value(metadata.omitted_probability) AS omitted_probability,
-                   any_value(metadata.uncertainty_components) AS uncertainty_components
-            FROM forecast_result.forecast_scores AS score
-            JOIN forecast_result.forecast_score_metadata AS metadata
-            USING (result_id, match_id, stage)
-            GROUP BY score.result_id, score.match_id, score.stage
-            """
-        )
-        cells, exact_cells, dimensions, tails = connection.execute(
-            """
-            SELECT count(*),
-                   count(*) FILTER (
-                       WHERE score.probability = compact.probabilities[
-                           score.home_goals * compact.away_dimension + score.away_goals + 1
-                       ]
-                   ),
-                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
-                       WHERE array_length(compact.probabilities) =
-                           compact.home_dimension * compact.away_dimension
-                   ),
-                   count(DISTINCT (compact.match_id, compact.stage)) FILTER (
-                       WHERE compact.omitted_probability = metadata.omitted_probability
-                   )
-            FROM forecast_result.forecast_scores AS score
-            JOIN compact_score_grids AS compact USING (result_id, match_id, stage)
-            JOIN forecast_result.forecast_score_metadata AS metadata
-            USING (result_id, match_id, stage)
-            """
-        ).fetchone()
-        grids = connection.execute("SELECT count(*) FROM compact_score_grids").fetchone()[0]
+    with duckdb.connect(str(database), read_only=True) as connection:
+        grids = connection.execute(
+            "SELECT match_id, stage, home_dimension, away_dimension, probabilities, "
+            "omitted_probability "
+            "FROM forecast_result.forecast_score_grids ORDER BY match_id, stage"
+        ).fetchall()
 
-    assert exact_cells == cells
-    assert dimensions == grids
-    assert tails == grids
+    source = {
+        (match["match_id"], name): stage["score_distribution"]
+        for match in forecast["matches"]
+        for name, stage in match["stages"].items()
+        if stage is not None and stage.get("score_distribution") is not None
+    }
+    assert len(grids) == len(source)
+    for row in grids:
+        score = source[row[0], row[1]]
+        expected = score["grid_home_rows_away_columns"]
+        assert row[2:4] == (len(expected), len(expected[0]))
+        assert row[4] == [value for values in expected for value in values]
+        assert row[5] == score["omitted_probability"]
 
 
 def test_reader_recovers_exact_impact_times_from_legacy_date_columns(tmp_path):
@@ -342,7 +434,7 @@ def test_display_refresh_reuses_all_forecast_values(tmp_path):
     with duckdb.connect(str(database), read_only=True) as connection:
         for table in (
             "forecast_matches",
-            "forecast_scores",
+            "forecast_score_grids",
             "forecast_team_seasons",
             "forecast_team_events",
             "forecast_team_points",
