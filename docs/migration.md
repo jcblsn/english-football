@@ -1,23 +1,23 @@
 # Migration and rollback
 
-This page is the cutover runbook. It does not authorize a production write or deletion. Record the backup identifiers, final source revision, object manifest and operator before the first mutation.
+This page is the cutover runbook. The owner authorized production writes, workflow cutover and exact-manifest deletion on 2026-09-18, and confirmed backups of both buckets and the complete local directory. Record the final source revision, object manifest and operator before deletion.
 
 ## Preconditions
 
-1. Verify independent backups of `page324-data` and `page324-publish`. Record their immutable identifiers and test a restore into an isolated location.
+1. Confirm backups of `page324-data`, `page324-publish` and the complete local directory. Record immutable identifiers and test an isolated restore when the backup system exposes those operations.
 2. Run `scripts/verify.sh` on the selected code commit.
 3. Restore the selected canonical snapshot on a clean runner. Run all four 10,000-path forecasts and all product verifiers from that snapshot.
 4. Reconcile canonical table keys, logical hashes, null categories, provider coverage, capture intervals and reviewed identity/rules evidence.
 5. Reconcile every retained prospective forecast ID, model version and release receipt. Reconcile every retained hindcast edition and origin.
 6. Run the capacity checks in [capacity and retention](capacity.md) with the final inventory. The 12-month base and busy cases must remain below 7 GB.
-7. Obtain explicit authority for workflow changes, production writes and the reviewed deletion manifest.
+7. Record explicit authority for workflow changes, production writes and the reviewed deletion manifest.
 
 ## Cutover
 
 1. Disable `production.yml` and confirm that no production run is active.
 2. Record the final canonical catalog identity. Collect or preserve every capture that arrived after the rehearsal revision.
 3. Build and verify the final snapshot, four fit stores and four result stores. Upload immutable database and manifest objects before their conditional pointers.
-4. Run the unpublished four-division operation from the restored objects. Compare it with the selected reference and run the publication allowlist check.
+4. Run the four-division operation from the restored objects. Compare it with the selected reference and run the publication allowlist check before the first release.
 5. Enable the new schedule. Observe one complete operation and one Pages deployment. Confirm current pointers, release receipts and the prospective record.
 6. Keep the old objects until the smoke check and rollback window finish. Do not dual-write incompatible layouts.
 

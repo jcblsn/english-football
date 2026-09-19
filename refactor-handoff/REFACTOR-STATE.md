@@ -1,14 +1,14 @@
 # Refactor state
 
-Status: M0 through M3 pass for the local code path. M4 production migration, live restore, cutover and deletion remain external gates. This file records observed state only.
+Status: M0 through M3 pass for the local code path. M4 production migration and cutover are in progress. This file records observed state only.
 
 ## Assignment and authority
 
-Owner-approved scope: Local implementation, local tests, and read-only use of available repository evidence. The assignment does not authorize production writes, workflow cutover, bucket deletion, or a paid service.
+Owner-approved scope: On 2026-09-18, the owner granted blanket approval for breaking changes, production writes, workflow cutover and deletion. The owner stated that version control protects the code, the complete local directory is backed up, and both buckets are backed up.
 Local branch/worktree: `refactor-start`; implementation checkpoints are pushed to the branch after each verified slice. The checkout was clean before implementation started.
-Authorized remote reads/staging prefix: Read credentials for both private buckets are configured in the ignored `.env`. No staging prefix is designated, so no remote staging write is authorized.
-Production mutation/cutover/deletion authority: Not recorded.
-Verified backup and restore evidence: Not established.
+Authorized remote access: Credentials for both private buckets are configured in the ignored `.env`. Production writes and exact-manifest deletion are authorized.
+Production mutation/cutover/deletion authority: Recorded in the owner instruction on 2026-09-18. The production workflow was disabled before the first mutation and no run was active.
+Verified backup and restore evidence: The owner confirmed backups for the complete local directory and both buckets. Backup identifiers and an independent restore test are not available in this workspace.
 
 ## Baselines
 
@@ -90,19 +90,19 @@ Reason for this candidate: DuckDB is already pinned and used by the product. A l
 
 ## Known limits and decisions
 
-- No backup or restore claim exists. A local synthetic restore test is not evidence that the private buckets are backed up.
+- The owner confirms that the private buckets and complete local directory are backed up. This workspace does not contain backup identifiers or evidence of an independent restore test.
 - The capacity model uses a measured recurring 44-batch delta and current bucket inventory. It is not live-certified because no staging prefix is authorized and no projected-size remote restore or upload has run.
 - The 12-month storage target depends on the reviewed cleanup and one steady physical generation per pointer. The current buckets still contain the superseded objects. The 24-month sensitivities exceed 7 GB.
 - Public next-match selection depends on the projection time. The reconstructed public result had 15 available matches while the older issued artifact had 12. Private inputs and numerical outputs are the M1 equivalence evidence.
 - The snapshot and fit pointer protocol has only mock-store recovery evidence. A live staging-prefix trial is unverified because no remote staging write is authorized.
 - Historical hindcast generation remains an explicit maintenance workflow. Its analysis reader still uses the selected public hindcast edition because hindcast results have not moved into the live cumulative result database.
-- Full live cutover and workflow changes remain external gates until the owner authorizes them and backup, restore, correctness, and capacity prerequisites pass.
+- Full live cutover and exact-manifest deletion are authorized. Correctness, reconciliation and capacity gates still apply before deletion.
 
 ## Restart point
 
 Last successful full command and result: `scripts/verify.sh` passed format, lint, and all 417 tests in 45.81 seconds.
-Next action: Prepare the reviewed migration artifacts without making a production write.
-Next test/gate: Authorized staging restore/upload, backup restore R4, final reconciliation, workflow cutover and deletion-manifest execution.
+Next action: Migrate every retained prospective forecast into the typed result stores, build the final snapshot and fit stores, and run the live cutover smoke checks.
+Next test/gate: Final reconciliation, clean-runner workflow smoke check and deletion-manifest execution.
 Working files to inspect before cutover: `docs/capacity.md`, `docs/migration.md`, the final pointer inventory and the backup evidence.
 Remote objects created or modified by this agent: None.
 Temporary objects eligible for cleanup: `runs/refactor/m1/preflight-results.duckdb`, `runs/refactor/m1/offline-smoke-2/`, and the generated M2 cold, warm, all-four, and reference-rerun directories. They are ignored local evidence and have not been removed.
