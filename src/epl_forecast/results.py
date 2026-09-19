@@ -315,6 +315,30 @@ def _integer_distribution(values):
     )
 
 
+def _probability_stages(match: dict) -> dict:
+    if "stages" in match:
+        return match["stages"]
+    structural = {
+        "parent_stage": None,
+        "score_generating": True,
+        "p_home": match["p_home"],
+        "p_draw": match["p_draw"],
+        "p_away": match["p_away"],
+        "score_distribution": match["score_distribution"],
+    }
+    assisted = match.get("market_assisted_probabilities")
+    market = (
+        None
+        if assisted is None
+        else {
+            "parent_stage": "personnel_adjusted",
+            "score_generating": False,
+            **assisted,
+        }
+    )
+    return {"personnel_adjusted": structural, "market_assisted": market}
+
+
 def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[str, int]:
     match_rows, probability_rows, metadata_rows, score_rows = [], [], [], []
     for match in matches:
@@ -340,7 +364,7 @@ def _insert_match_rows(connection, result_id: str, matches: list[dict]) -> dict[
                 _json(match.get("personnel")) if match.get("personnel") is not None else None,
             )
         )
-        for stage, values in match["stages"].items():
+        for stage, values in _probability_stages(match).items():
             if values is None:
                 continue
             _validate_probability_set(values, f"{match['match_id']}:{stage}")

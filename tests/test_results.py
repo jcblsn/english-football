@@ -118,6 +118,39 @@ def test_forecast_result_is_written_at_declared_grains(tmp_path):
         ).fetchone() == (3,)
 
 
+def test_legacy_forecast_preserves_only_its_known_probability_stages(tmp_path):
+    database = tmp_path / "results.duckdb"
+    forecast = result_forecast()
+    for match in forecast["matches"]:
+        del match["stages"]
+    write_forecast_result(
+        database,
+        forecast,
+        sample_run(),
+        input_revision="legacy-input",
+        result_id="legacy-forecast",
+    )
+
+    restored = read_forecast_result(database, "legacy-forecast")
+    for source, match in zip(forecast["matches"], restored["matches"], strict=True):
+        assert match["stages"]["unadjusted"] is None
+        assert match["stages"]["personnel_adjusted"]["p_home"] == source["p_home"]
+        assert match["score_distribution"] == {
+            **source["score_distribution"],
+            "uncertainty_components": source["score_distribution"].get(
+                "uncertainty_components", {}
+            ),
+        }
+        expected_market = source["market_assisted_probabilities"]
+        restored_market = match["market_assisted_probabilities"]
+        if expected_market is None:
+            assert restored_market is None
+        else:
+            assert {key: restored_market[key] for key in ("p_home", "p_draw", "p_away")} == {
+                key: expected_market[key] for key in ("p_home", "p_draw", "p_away")
+            }
+
+
 def test_result_identity_is_idempotent_and_cannot_name_different_content(tmp_path):
     database = tmp_path / "results.duckdb"
     forecast = result_forecast()
